@@ -142,6 +142,7 @@ ReAct循环:
 - ✅ Stage1: ReAct循环，工具调用，多轮对话
 - ✅ Stage2: 流式输出，实时显示
 - ✅ 日志系统: 标签，颜色，对齐，摘要
+- ✅ 工具系统修复: 支持EnhancedInvokableTool接口
 
 ## 待实现
 
@@ -149,3 +150,36 @@ ReAct循环:
 - [ ] 上下文压缩（超长对话）
 - [ ] Skill注入
 - [ ] 长程任务管理
+
+---
+
+## 问题修复记录
+
+### 工具调用失败问题 (2026-04-18)
+
+**问题**: 工具执行时返回"tool exec_shell is not invokable"错误，导致LLM无法获取工具执行结果。
+
+**原因**: 
+- Eino框架有两种工具接口：`InvokableTool`和`EnhancedInvokableTool`
+- `InvokableTool.InvokableRun(ctx, argumentsInJSON string) (string, error)` - 接收JSON字符串，返回字符串
+- `EnhancedInvokableTool.InvokableRun(ctx, toolArgument *schema.ToolArgument) (*schema.ToolResult, error)` - 接收ToolArgument，返回ToolResult
+- 我们的工具使用`utils.InferEnhancedTool`创建，实现的是`EnhancedInvokableTool`接口
+- 但agent.go中只尝试断言为`InvokableTool`，导致断言失败
+
+**解决方案** (`agent.go:447-475`):
+1. 优先尝试断言为`EnhancedInvokableTool`
+2. 如果失败，再尝试`InvokableTool`
+3. 添加`formatToolResult()`函数将`*schema.ToolResult`转换为字符串
+4. 改进日志输出，显示工具参数和执行结果
+
+**关键代码**:
+```go
+// 优先尝试 EnhancedInvokableTool
+if enhancedInvokable, ok := t.(tool.EnhancedInvokableTool); ok {
+    toolArg := &schema.ToolArgument{Text: tc.Function.Arguments}
+    toolResult, err := enhancedInvokable.InvokableRun(ctx, toolArg)
+    result = formatToolResult(toolResult)
+} else if invokable, ok := t.(tool.InvokableTool); ok {
+    result, execErr = invokable.InvokableRun(ctx, tc.Function.Arguments)
+}
+```
