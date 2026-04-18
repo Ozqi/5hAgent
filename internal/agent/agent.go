@@ -24,10 +24,8 @@ type Agent struct {
 
 	// 配置
 	config *Config // Agent 配置
-
 	// 状态
 	state *State // Agent 状态
-
 	// 上下文管理器
 	ctxManager *agentctx.Manager // 复用Manager实例
 }
