@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -426,6 +427,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 
 		// 显示工具执行提示
 		fmt.Printf("\n%s\n", logger.Cyan(fmt.Sprintf("[执行工具 %d/%d: %s]", idx+1, len(toolCalls), tc.Function.Name)))
+		fmt.Printf("%s\n", logger.Gray(fmt.Sprintf("  参数: %s", tc.Function.Arguments)))
 		logger.InfoTag("TOOL", "[%d/%d] name=%s id=%s", idx+1, len(toolCalls), tc.Function.Name, tc.ID)
 		logger.InfoTag("TOOL", "  args: %s", tc.Function.Arguments)
 
@@ -444,9 +446,31 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 			continue
 		}
 
-		// 类型断言为 InvokableTool
-		invokable, ok := t.(tool.InvokableTool)
-		if !ok {
+		// 执行工具 - 优先尝试 EnhancedInvokableTool，然后尝试 InvokableTool
+		var result string
+		var execErr error
+
+		logger.InfoTag("TOOL", "Invoking: %s", tc.Function.Name)
+
+		// 尝试 EnhancedInvokableTool (返回 *schema.ToolResult)
+		if enhancedInvokable, ok := t.(tool.EnhancedInvokableTool); ok {
+			logger.DebugTag("TOOL", "Using EnhancedInvokableTool interface")
+			toolArg := &schema.ToolArgument{
+				Text: tc.Function.Arguments,
+			}
+			toolResult, err := enhancedInvokable.InvokableRun(ctx, toolArg)
+			if err != nil {
+				execErr = err
+			} else {
+				// 将 ToolResult 转换为字符串
+				result = formatToolResult(toolResult)
+			}
+		} else if invokable, ok := t.(tool.InvokableTool); ok {
+			// 尝试 InvokableTool (返回 string)
+			logger.DebugTag("TOOL", "Using InvokableTool interface")
+			result, execErr = invokable.InvokableRun(ctx, tc.Function.Arguments)
+		} else {
+			// 工具不支持任何可调用接口
 			errMsg := schema.ToolMessage(
 				fmt.Sprintf("tool %s is not invokable", tc.Function.Name),
 				tc.ID,
@@ -457,14 +481,11 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 			continue
 		}
 
-		// 执行工具
-		logger.InfoTag("TOOL", "Invoking: %s", tc.Function.Name)
-		result, err := invokable.InvokableRun(ctx, tc.Function.Arguments)
-		if err != nil {
-			// 工具执行失败
-			logger.ErrorTag("TOOL", "Failed: %s, err=%v", tc.Function.Name, err)
+		// 检查执行错误
+		if execErr != nil {
+			logger.ErrorTag("TOOL", "Failed: %s, err=%v", tc.Function.Name, execErr)
 			errMsg := schema.ToolMessage(
-				fmt.Sprintf("tool execution failed: %v", err),
+				fmt.Sprintf("tool execution failed: %v", execErr),
 				tc.ID,
 			)
 			if err := a.ctxManager.AddMessage(messageCtx, errMsg); err != nil {
@@ -475,7 +496,11 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 
 		// 工具执行成功，添加结果
 		logger.InfoTag("TOOL", "Success: %s", tc.Function.Name)
-		logger.DebugTag("TOOL", "  result: %s", result)
+		logger.DebugTag("TOOL", "  result: %s", logger.TruncateString(result, 200))
+
+		// 显示工具执行结果
+		fmt.Printf("%s\n", logger.Green(fmt.Sprintf("  结果: %s", logger.TruncateString(result, 150))))
+
 		resultMsg := schema.ToolMessage(result, tc.ID)
 		if err := a.ctxManager.AddMessage(messageCtx, resultMsg); err != nil {
 			return fmt.Errorf("failed to add tool result: %w", err)
@@ -484,6 +509,37 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 
 	logger.InfoTag("TOOL", "All tools executed")
 	return nil
+}
+
+// formatToolResult 将 ToolResult 转换为字符串
+// 参数:
+//   - toolResult: Eino 的 ToolResult 结构
+//
+// 返回: 格式化后的字符串
+// 功能: 将 ToolResult 的所有 Parts 合并为一个字符串
+func formatToolResult(toolResult *schema.ToolResult) string {
+	if toolResult == nil || len(toolResult.Parts) == 0 {
+		return ""
+	}
+
+	var parts []string
+	for _, part := range toolResult.Parts {
+		switch part.Type {
+		case schema.ToolPartTypeText:
+			parts = append(parts, part.Text)
+		case schema.ToolPartTypeImage:
+			// 图片类型，显示占位符
+			parts = append(parts, "[Image]")
+		case schema.ToolPartTypeAudio:
+			parts = append(parts, "[Audio]")
+		case schema.ToolPartTypeVideo:
+			parts = append(parts, "[Video]")
+		case schema.ToolPartTypeFile:
+			parts = append(parts, "[File]")
+		}
+	}
+
+	return strings.Join(parts, "\n")
 }
 
 // findTool 查找工具
