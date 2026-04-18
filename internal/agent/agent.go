@@ -427,7 +427,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		// 显示工具执行提示
 		fmt.Printf("\n%s\n", logger.Cyan(fmt.Sprintf("[执行工具 %d/%d: %s]", idx+1, len(toolCalls), tc.Function.Name)))
 		logger.InfoTag("TOOL", "[%d/%d] name=%s id=%s", idx+1, len(toolCalls), tc.Function.Name, tc.ID)
-		logger.DebugTag("TOOL", "  args: %s", tc.Function.Arguments)
+		logger.InfoTag("TOOL", "  args: %s", tc.Function.Arguments)
 
 		// 查找工具
 		t := a.findTool(tc.Function.Name)
