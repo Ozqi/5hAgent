@@ -134,22 +134,22 @@ func (a *Agent) Run(ctx context.Context, messageCtx *agentctx.Context, input str
 
 	for turn := 0; turn < a.config.MaxTurns; turn++ {
 		a.state.CurrentTurn = turn + 1
-		logger.Debug("ReAct turn %d/%d", turn+1, a.config.MaxTurns)
+		logger.DebugTag("REACT", "Turn %d/%d", turn+1, a.config.MaxTurns)
 
 		// a. 获取所有消息
 		messages, err := a.ctxManager.GetMessages(messageCtx)
 		if err != nil {
 			return "", fmt.Errorf("failed to get messages: %w", err)
 		}
-		logger.Debug("Message count: %d", len(messages))
+		logger.DebugTag("CTX", "Message count: %d", len(messages))
 
 		// b. 调用 LLM 生成响应
-		logger.Debug("Calling LLM.Generate")
+		logger.DebugTag("LLM", "Calling Generate")
 		resp, err := a.model.Generate(ctx, messages)
 		if err != nil {
 			return "", fmt.Errorf("LLM generation failed: %w", err)
 		}
-		logger.Debug("LLM response received, tool calls: %d", len(resp.ToolCalls))
+		logger.DebugTag("LLM", "Response received, tool_calls=%d", len(resp.ToolCalls))
 
 		// c. 检查是否有工具调用
 		if len(resp.ToolCalls) > 0 {
@@ -251,7 +251,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		for {
 			chunk, err := reader.Recv()
 			if err == io.EOF {
-				logger.Debug("Stream EOF, total chunks: %d", chunkCount)
+				logger.DebugTag("STREAM", "EOF, chunks=%d", chunkCount)
 				break
 			}
 			if err != nil {
@@ -261,7 +261,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 			chunkCount++
 			if chunkCount <= 3 {
-				logger.Debug("Chunk %d: content_len=%d, role=%s, toolcalls=%d",
+				logger.DebugTag("STREAM", "Chunk#%d: len=%d role=%s tools=%d",
 					chunkCount, len(chunk.Content), chunk.Role, len(chunk.ToolCalls))
 			}
 
@@ -280,7 +280,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		}
 		reader.Close()
 
-		logger.Debug("Full content length: %d", len(fullContent))
+		logger.DebugTag("STREAM", "Complete, total_len=%d", len(fullContent))
 
 		// 使用最后的完整消息，如果没有则构造一个
 		if finalMessage == nil {
@@ -334,12 +334,12 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 	for _, tc := range toolCalls {
 		// 显示工具执行提示
 		fmt.Printf("\n[执行工具: %s]\n", tc.Function.Name)
-		logger.Debug("Executing tool: %s, args: %s", tc.Function.Name, tc.Function.Arguments)
+		logger.DebugTag("TOOL", "Execute: %s, args=%s", tc.Function.Name, tc.Function.Arguments)
 
 		// 查找工具
 		t := a.findTool(tc.Function.Name)
 		if t == nil {
-			logger.Warn("Tool not found: %s", tc.Function.Name)
+			logger.WarnTag("TOOL", "Not found: %s", tc.Function.Name)
 			// 工具未找到，添加错误消息
 			errMsg := schema.ToolMessage(
 				fmt.Sprintf("tool not found: %s", tc.Function.Name),
@@ -368,7 +368,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		result, err := invokable.InvokableRun(ctx, tc.Function.Arguments)
 		if err != nil {
 			// 工具执行失败
-			logger.Error("Tool execution failed: %s, error: %v", tc.Function.Name, err)
+			logger.ErrorTag("TOOL", "Failed: %s, err=%v", tc.Function.Name, err)
 			errMsg := schema.ToolMessage(
 				fmt.Sprintf("tool execution failed: %v", err),
 				tc.ID,
@@ -380,7 +380,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		}
 
 		// 工具执行成功，添加结果
-		logger.Debug("Tool execution success: %s, result length: %d", tc.Function.Name, len(result))
+		logger.DebugTag("TOOL", "Success: %s, result_len=%d", tc.Function.Name, len(result))
 		resultMsg := schema.ToolMessage(result, tc.ID)
 		if err := a.ctxManager.AddMessage(messageCtx, resultMsg); err != nil {
 			return fmt.Errorf("failed to add tool result: %w", err)
