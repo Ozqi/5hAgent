@@ -67,9 +67,10 @@ func (l *Logger) log(level Level, tag string, format string, args ...interface{}
 
 	if tag != "" {
 		tagStr := colorTag(tag)
-		fmt.Fprintf(l.output, "[%s][%s][%s] %s\n", Gray(timestamp), levelStr, tagStr, msg)
+		// 固定宽度：时间8字符，级别5字符（对齐），标签6字符（对齐）
+		fmt.Fprintf(l.output, "[%s][%-5s][%-6s] %s\n", Gray(timestamp), levelStr, tagStr, msg)
 	} else {
-		fmt.Fprintf(l.output, "[%s][%s] %s\n", Gray(timestamp), levelStr, msg)
+		fmt.Fprintf(l.output, "[%s][%-5s] %s\n", Gray(timestamp), levelStr, msg)
 	}
 }
 
@@ -113,4 +114,22 @@ func WarnTag(tag string, format string, args ...interface{}) {
 // ErrorTag 输出带标签的 ERROR 日志
 func ErrorTag(tag string, format string, args ...interface{}) {
 	std.log(ERROR, tag, format, args...)
+}
+
+// TruncateString 截断字符串，显示前后部分
+// maxLen: 最大显示长度（rune数量）
+// 返回: "前面...后面" 或原字符串
+func TruncateString(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+
+	if maxLen <= 6 {
+		return string(runes[:maxLen]) + "..."
+	}
+
+	// 显示前后各一半
+	half := (maxLen - 3) / 2
+	return string(runes[:half]) + "..." + string(runes[len(runes)-half:])
 }

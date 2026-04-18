@@ -143,8 +143,9 @@ func (a *Agent) Run(ctx context.Context, messageCtx *agentctx.Context, input str
 		}
 		logger.DebugTag("CTX", "Messages=%d", len(messages))
 		for i, msg := range messages {
-			logger.DebugTag("CTX", "  [%d] role=%s content_len=%d tools=%d",
-				i, msg.Role, len(msg.Content), len(msg.ToolCalls))
+			contentPreview := logger.TruncateString(msg.Content, 40)
+			logger.DebugTag("CTX", "  [%d] role=%-9s tools=%d content=%s",
+				i, msg.Role, len(msg.ToolCalls), contentPreview)
 		}
 
 		// b. 调用 LLM 生成响应
@@ -247,8 +248,9 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		}
 		logger.DebugTag("CTX", "Messages=%d", len(messages))
 		for i, msg := range messages {
-			logger.DebugTag("CTX", "  [%d] role=%s content_len=%d tools=%d",
-				i, msg.Role, len(msg.Content), len(msg.ToolCalls))
+			contentPreview := logger.TruncateString(msg.Content, 40)
+			logger.DebugTag("CTX", "  [%d] role=%-9s tools=%d content=%s",
+				i, msg.Role, len(msg.ToolCalls), contentPreview)
 		}
 
 		// b. 调用 LLM 流式生成响应
