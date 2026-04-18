@@ -286,6 +286,15 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 					chunkCount, len(chunk.Content), chunk.Role, len(chunk.ToolCalls))
 			}
 
+			// 详细记录包含ToolCalls的chunk
+			if len(chunk.ToolCalls) > 0 {
+				logger.InfoTag("STREAM", "Chunk#%d contains ToolCalls: %d", chunkCount, len(chunk.ToolCalls))
+				for i, tc := range chunk.ToolCalls {
+					logger.InfoTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
+						i, tc.ID, tc.Function.Name, tc.Function.Arguments)
+				}
+			}
+
 			// 处理内容
 			if chunk.Content != "" {
 				fullContent += chunk.Content
