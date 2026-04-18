@@ -1,7 +1,7 @@
 # Agent - 核心模块
 
 ## 位置
-`internal/agent/agent.go` (~430行)
+`internal/agent/agent.go` (~650行)
 
 ## 结构
 ```go
@@ -30,34 +30,82 @@ ReAct循环：
    - 有工具 → exeTools() → 继续
    - 无工具 → 返回响应
 
-### RunStream(ctx, messageCtx, input, onToken) - 流式
+### RunStream(ctx, messageCtx, input, onToken) - 流式 ⭐
 流式ReAct循环：
 1. 注入SystemPrompt(首次)
 2. 添加用户消息
-3. 循环(最多MaxTurns):
+3. **上下文压缩检查** (agent.go:236-243)
+   - `ShouldCompress()` 检查是否超过50条消息
+   - `Compress()` 保留最近30条
+4. 循环(最多MaxTurns):
    - `reader, err := a.model.Stream(ctx, messages)` - 流式调用
    - 读取chunks: `chunk, err := reader.Recv()`
+   - **ToolCall合并** (agent.go:271-332)
+     - 使用列表+ID索引追踪工具调用
+     - 避免多工具调用时arguments错误合并
    - 每个chunk调用onToken回调
    - 收集完整响应和ToolCalls
    - 有工具 → exeTools() → 继续
    - 无工具 → 返回完整内容
 
-### exeTools(ctx, messageCtx, toolCalls)
-执行工具列表：
-1. 遍历toolCalls
-2. findTool(name) - O(1)查找
-3. `result, err := invokable.InvokableRun(ctx, args)` - 执行
+### exeTools(ctx, messageCtx, toolCalls) - 支持并发 ⭐
+执行工具列表（智能分类）：
+1. **分类工具** (agent.go:428-445)
+   - 只读工具: read_file, glob → 并发执行
+   - 写工具: edit, exec_shell → 串行执行
+2. 并发执行只读工具: `exeToolsConcurrent()`
+3. 串行执行写工具
 4. 添加结果到messageCtx
 
+### exeToolsConcurrent(ctx, messageCtx, toolCalls) - 新增 ⭐
+并发执行只读工具：
+1. 创建结果channel: `results := make(chan toolResult, len(toolCalls))`
+2. 为每个工具启动goroutine
+3. 收集结果并按原顺序添加到上下文
+
 ## 关键代码
-- `agent.go:152` - LLM Generate: `resp, err := a.model.Generate(ctx, messages)`
-- `agent.go:250` - LLM Stream: `reader, err := a.model.Stream(ctx, messages)`
-- `agent.go:265` - 读取chunk: `chunk, err := reader.Recv()`
-- `agent.go:412` - 工具执行: `result, err := invokable.InvokableRun(ctx, tc.Function.Arguments)`
+
+### 流式输出与ToolCall合并
+- `agent.go:265` - LLM Stream: `reader, err := a.model.Stream(ctx, messages)`
+- `agent.go:271-332` - ToolCall合并逻辑:
+  ```go
+  var toolCallsList []*schema.ToolCall
+  toolCallsIndex := make(map[string]int)
+  
+  if tc.ID != "" {
+      // 新工具调用
+      toolCallsList = append(toolCallsList, &tcCopy)
+      toolCallsIndex[tc.ID] = len(toolCallsList) - 1
+  } else {
+      // 合并到最后一个工具
+      lastTC := toolCallsList[len(toolCallsList)-1]
+      lastTC.Function.Arguments += tc.Function.Arguments
+  }
+  ```
+
+### 上下文压缩
+- `agent.go:236-243` - 压缩检查:
+  ```go
+  if a.ctxManager.ShouldCompress(messageCtx) {
+      before, after, err := a.ctxManager.Compress(messageCtx)
+      logger.InfoTag("CTX", "Context compressed: %d -> %d messages", before, after)
+  }
+  ```
+
+### 工具并发执行
+- `agent.go:428-445` - 工具分类
+- `agent.go:550-630` - 并发执行实现:
+  ```go
+  for idx, tc := range toolCalls {
+      go func(idx int, tc schema.ToolCall) {
+          // 执行工具
+          results <- toolResult{idx: idx, tc: tc, result: result, err: execErr}
+      }(idx, tc)
+  }
+  ```
 
 ## 日志集成
-- `agent.go:137` - ReAct轮次
-- `agent.go:144-148` - 消息详情(role对齐，内容摘要)
-- `agent.go:151-157` - LLM调用和响应
-- `agent.go:161-166` - 工具调用请求
-- `agent.go:378-390` - 工具执行流程
+- `agent.go:241` - 上下文压缩日志
+- `agent.go:296-299` - ToolCall chunk详情
+- `agent.go:355-358` - 合并后的ToolCall
+- `agent.go:437` - 并发工具执行标记
