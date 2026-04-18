@@ -268,8 +268,10 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		var fullContent string
 		chunkCount := 0
 
-		// 用于合并ToolCalls的map: id -> ToolCall
-		toolCallsMap := make(map[string]*schema.ToolCall)
+		// 用于合并ToolCalls的列表（保持顺序）
+		var toolCallsList []*schema.ToolCall
+		// 用于快速查找最后一个工具调用的 map: id -> index
+		toolCallsIndex := make(map[string]int)
 
 		// 读取流式响应
 		for {
@@ -296,24 +298,35 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 					logger.InfoTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
 						i, tc.ID, tc.Function.Name, tc.Function.Arguments)
 
-					// 合并ToolCall信息 - 使用索引作为key
-					key := fmt.Sprintf("_index_%d", i)
-
-					if existing, ok := toolCallsMap[key]; ok {
-						// 合并：补充空字段
-						if tc.ID != "" && existing.ID == "" {
-							existing.ID = tc.ID
+					// 如果有新的 ID，说明是新的工具调用
+					if tc.ID != "" {
+						// 检查是否已存在
+						if idx, exists := toolCallsIndex[tc.ID]; exists {
+							// 合并到已有的工具调用
+							existing := toolCallsList[idx]
+							if tc.Function.Name != "" && existing.Function.Name == "" {
+								existing.Function.Name = tc.Function.Name
+							}
+							if tc.Function.Arguments != "" {
+								existing.Function.Arguments += tc.Function.Arguments
+							}
+						} else {
+							// 新建工具调用
+							tcCopy := tc
+							toolCallsList = append(toolCallsList, &tcCopy)
+							toolCallsIndex[tc.ID] = len(toolCallsList) - 1
 						}
-						if tc.Function.Name != "" && existing.Function.Name == "" {
-							existing.Function.Name = tc.Function.Name
+					} else if tc.Function.Name != "" || tc.Function.Arguments != "" {
+						// 没有 ID，但有 name 或 args，合并到最后一个工具调用
+						if len(toolCallsList) > 0 {
+							lastTC := toolCallsList[len(toolCallsList)-1]
+							if tc.Function.Name != "" && lastTC.Function.Name == "" {
+								lastTC.Function.Name = tc.Function.Name
+							}
+							if tc.Function.Arguments != "" {
+								lastTC.Function.Arguments += tc.Function.Arguments
+							}
 						}
-						if tc.Function.Arguments != "" {
-							existing.Function.Arguments += tc.Function.Arguments
-						}
-					} else {
-						// 新建
-						tcCopy := tc
-						toolCallsMap[key] = &tcCopy
 					}
 				}
 			}
@@ -336,32 +349,27 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			Content: fullContent,
 		}
 
-		// 从map中提取合并后的ToolCalls
-		if len(toolCallsMap) > 0 {
-			mergedToolCalls := make([]schema.ToolCall, 0, len(toolCallsMap))
-			for _, tc := range toolCallsMap {
-				mergedToolCalls = append(mergedToolCalls, *tc)
-			}
-
+		// 从列表中提取合并后的ToolCalls
+		if len(toolCallsList) > 0 {
 			// 记录合并后的ToolCalls
-			logger.InfoTag("STREAM", "Merged ToolCalls: %d", len(mergedToolCalls))
-			for i, tc := range mergedToolCalls {
+			logger.InfoTag("STREAM", "Merged ToolCalls: %d", len(toolCallsList))
+			for i, tc := range toolCallsList {
 				logger.InfoTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
 					i, tc.ID, tc.Function.Name, tc.Function.Arguments)
 			}
 
 			// 过滤掉无效的 ToolCall（name 为空）
 			validToolCalls := make([]schema.ToolCall, 0)
-			for _, tc := range mergedToolCalls {
+			for _, tc := range toolCallsList {
 				if tc.Function.Name != "" {
-					validToolCalls = append(validToolCalls, tc)
+					validToolCalls = append(validToolCalls, *tc)
 				} else {
 					logger.WarnTag("STREAM", "Filtered invalid ToolCall with empty name, id=%s", tc.ID)
 				}
 			}
 			finalMessage.ToolCalls = validToolCalls
 			logger.DebugTag("STREAM", "Valid ToolCalls=%d (filtered from %d)",
-				len(validToolCalls), len(mergedToolCalls))
+				len(validToolCalls), len(toolCallsList))
 		}
 
 		// c. 检查是否有工具调用
