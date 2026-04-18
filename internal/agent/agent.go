@@ -158,6 +158,12 @@ func (a *Agent) Run(ctx context.Context, messageCtx *agentctx.Context, input str
 
 		// c. 检查是否有工具调用
 		if len(resp.ToolCalls) > 0 {
+			logger.InfoTag("LLM", "Tool calls requested: %d", len(resp.ToolCalls))
+			for i, tc := range resp.ToolCalls {
+				logger.InfoTag("LLM", "  [%d] id=%s name=%s args=%s",
+					i, tc.ID, tc.Function.Name, tc.Function.Arguments)
+			}
+
 			// d. 有工具调用 - 添加 assistant 消息
 			assistantMsg := &schema.Message{
 				Role:      schema.Assistant,
@@ -257,7 +263,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 		// 收集完整响应
 		var fullContent string
-		var finalMessage *schema.Message
+		var lastChunkWithToolCalls *schema.Message
 		chunkCount := 0
 
 		// 读取流式响应
@@ -286,25 +292,35 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 				}
 			}
 
-			// 保存最后一个完整的消息（包含完整的 ToolCalls）
-			if chunk.Role != "" {
-				finalMessage = chunk
+			// 保存包含 ToolCalls 的最后一个 chunk
+			if len(chunk.ToolCalls) > 0 {
+				lastChunkWithToolCalls = chunk
 			}
 		}
 		reader.Close()
 
 		logger.DebugTag("STREAM", "Complete, total_len=%d", len(fullContent))
 
-		// 使用最后的完整消息，如果没有则构造一个
-		if finalMessage == nil {
-			finalMessage = &schema.Message{
-				Role:    schema.Assistant,
-				Content: fullContent,
-			}
+		// 构造最终消息：始终使用累积的 fullContent
+		finalMessage := &schema.Message{
+			Role:    schema.Assistant,
+			Content: fullContent,
+		}
+
+		// 如果有工具调用，从最后的 chunk 中提取
+		if lastChunkWithToolCalls != nil {
+			finalMessage.ToolCalls = lastChunkWithToolCalls.ToolCalls
+			logger.DebugTag("STREAM", "ToolCalls=%d", len(finalMessage.ToolCalls))
 		}
 
 		// c. 检查是否有工具调用
 		if len(finalMessage.ToolCalls) > 0 {
+			logger.InfoTag("LLM", "Tool calls requested: %d", len(finalMessage.ToolCalls))
+			for i, tc := range finalMessage.ToolCalls {
+				logger.InfoTag("LLM", "  [%d] id=%s name=%s args=%s",
+					i, tc.ID, tc.Function.Name, tc.Function.Arguments)
+			}
+
 			// d. 有工具调用 - 添加 assistant 消息
 			if err := a.ctxManager.AddMessage(messageCtx, finalMessage); err != nil {
 				return "", fmt.Errorf("failed to add assistant message: %w", err)
@@ -320,8 +336,13 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		}
 
 		// e. 没有工具调用 - 返回响应
-		if err := a.ctxManager.AddMessage(messageCtx, finalMessage); err != nil {
-			return "", fmt.Errorf("failed to add assistant message: %w", err)
+		// 只有当内容不为空时才添加消息
+		if fullContent != "" {
+			if err := a.ctxManager.AddMessage(messageCtx, finalMessage); err != nil {
+				return "", fmt.Errorf("failed to add assistant message: %w", err)
+			}
+		} else {
+			logger.Warn("Skipping empty assistant message")
 		}
 
 		return fullContent, nil
@@ -344,10 +365,19 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 //  3. 执行工具
 //  4. 将结果添加到 messageCtx
 func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, toolCalls []schema.ToolCall) error {
-	for _, tc := range toolCalls {
+	logger.InfoTag("TOOL", "Executing %d tool(s)", len(toolCalls))
+
+	for idx, tc := range toolCalls {
+		// 跳过无效的 ToolCall
+		if tc.Function.Name == "" {
+			logger.WarnTag("TOOL", "Skipping tool call with empty name, id=%s", tc.ID)
+			continue
+		}
+
 		// 显示工具执行提示
-		fmt.Printf("\n[执行工具: %s]\n", tc.Function.Name)
-		logger.DebugTag("TOOL", "Execute: %s, args=%s", tc.Function.Name, tc.Function.Arguments)
+		fmt.Printf("\n[执行工具 %d/%d: %s]\n", idx+1, len(toolCalls), tc.Function.Name)
+		logger.InfoTag("TOOL", "[%d/%d] name=%s id=%s", idx+1, len(toolCalls), tc.Function.Name, tc.ID)
+		logger.DebugTag("TOOL", "  args: %s", tc.Function.Arguments)
 
 		// 查找工具
 		t := a.findTool(tc.Function.Name)
@@ -378,6 +408,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		}
 
 		// 执行工具
+		logger.InfoTag("TOOL", "Invoking: %s", tc.Function.Name)
 		result, err := invokable.InvokableRun(ctx, tc.Function.Arguments)
 		if err != nil {
 			// 工具执行失败
@@ -393,13 +424,15 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		}
 
 		// 工具执行成功，添加结果
-		logger.DebugTag("TOOL", "Success: %s, result_len=%d", tc.Function.Name, len(result))
+		logger.InfoTag("TOOL", "Success: %s", tc.Function.Name)
+		logger.DebugTag("TOOL", "  result: %s", result)
 		resultMsg := schema.ToolMessage(result, tc.ID)
 		if err := a.ctxManager.AddMessage(messageCtx, resultMsg); err != nil {
 			return fmt.Errorf("failed to add tool result: %w", err)
 		}
 	}
 
+	logger.InfoTag("TOOL", "All tools executed")
 	return nil
 }
 
