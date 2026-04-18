@@ -1,0 +1,18 @@
+# Environment
+.env
+
+# Python (legacy)
+__pycache__/
+*.pyc
+.mypy_cache/
+.venv/
+*.egg-info/
+
+# Go
+miniagent
+*.exe
+*.test
+*.out
+
+# Claude Code
+.claude/
