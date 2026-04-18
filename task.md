@@ -19,22 +19,23 @@
 **核心流程**: main → Agent.Run() → ReAct循环(LLM生成 → 工具执行 → 结果回传)
 
 **优化完成**:
+
 - SystemPrompt自动注入
 - Manager实例复用
 - 工具查找优化(map O(1))
 - 代码review文档: doc/stage1_review.md
 
-## Phase 2 计划（流式输出，上下文管理）
-
-**P2.1 工具扩展** (优先级高):
-
-- [ ] glob: 文件模式匹配
-- [ ] edit: 文件编辑（精确替换）
+## Phase 2 进行中（流式输出，工具扩展，上下文管理）
 
 **P2.2 性能优化**:
+- [x] Streaming输出（逐token显示）✅ 已实现基础版本
+  - 修复多工具调用合并bug (commit d1dafcc)
+  - TODO: 边输出边执行工具（参考 Claude Code StreamingToolExecutor）
 
-- [ ] Streaming输出（逐token显示）
-- [ ] 工具并发（只读工具并行执行）
+**P2.1 工具扩展** (优先级高):
+- [x] glob: 文件模式匹配 ✅
+- [x] edit: 文件编辑（精确替换）✅
+- [ ] 工具并发（只读工具并行执行）← 当前任务
 
 **P2.3 上下文管理**:
 

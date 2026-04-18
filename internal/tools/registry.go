@@ -25,6 +25,20 @@ func init() {
 		panic(fmt.Sprintf("failed to create exec_shell tool: %v", err))
 	}
 	registry = append(registry, execShellTool)
+
+	// Register glob tool
+	globTool, err := NewGlobTool()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create glob tool: %v", err))
+	}
+	registry = append(registry, globTool)
+
+	// Register edit tool
+	editTool, err := NewEditTool()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create edit tool: %v", err))
+	}
+	registry = append(registry, editTool)
 }
 
 // GetAllTools returns all registered tools
