@@ -411,7 +411,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 	return "", fmt.Errorf("reached max turns (%d) without final response", a.config.MaxTurns)
 }
 
-// exeTools 执行工具调用
+// exeTools 执行工具调用（支持并发）
 // 参数:
 //   - ctx: Go 标准上下文
 //   - messageCtx: 消息上下文
@@ -419,14 +419,43 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 //
 // 返回: 可能的错误
 // 功能:
-//  1. 遍历工具调用列表
+//  1. 分类工具：只读工具并发执行，写工具串行执行
 //  2. 查找对应的工具
 //  3. 执行工具
 //  4. 将结果添加到 messageCtx
 func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, toolCalls []schema.ToolCall) error {
 	logger.InfoTag("TOOL", "Executing %d tool(s)", len(toolCalls))
 
-	for idx, tc := range toolCalls {
+	// 定义只读工具列表
+	readOnlyTools := map[string]bool{
+		"read_file": true,
+		"glob":      true,
+	}
+
+	// 分类工具调用
+	var readOnlyCalls []schema.ToolCall
+	var writeCalls []schema.ToolCall
+
+	for _, tc := range toolCalls {
+		if tc.Function.Name == "" {
+			continue
+		}
+		if readOnlyTools[tc.Function.Name] {
+			readOnlyCalls = append(readOnlyCalls, tc)
+		} else {
+			writeCalls = append(writeCalls, tc)
+		}
+	}
+
+	// 并发执行只读工具
+	if len(readOnlyCalls) > 0 {
+		if err := a.exeToolsConcurrent(ctx, messageCtx, readOnlyCalls); err != nil {
+			return err
+		}
+	}
+
+	// 串行执行写工具
+	for idx, tc := range writeCalls {
 		// 跳过无效的 ToolCall
 		if tc.Function.Name == "" {
 			logger.WarnTag("TOOL", "Skipping tool call with empty name, id=%s", tc.ID)
@@ -516,6 +545,86 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 	}
 
 	logger.InfoTag("TOOL", "All tools executed")
+	return nil
+}
+
+// exeToolsConcurrent 并发执行只读工具
+func (a *Agent) exeToolsConcurrent(ctx context.Context, messageCtx *agentctx.Context, toolCalls []schema.ToolCall) error {
+	type toolResult struct {
+		idx    int
+		tc     schema.ToolCall
+		result string
+		err    error
+	}
+
+	results := make(chan toolResult, len(toolCalls))
+
+	// 并发执行
+	for idx, tc := range toolCalls {
+		go func(idx int, tc schema.ToolCall) {
+			// 显示工具执行提示
+			fmt.Printf("\n%s\n", logger.Cyan(fmt.Sprintf("[执行工具 %d/%d: %s (并发)]", idx+1, len(toolCalls), tc.Function.Name)))
+			fmt.Printf("%s\n", logger.Gray(fmt.Sprintf("  参数: %s", tc.Function.Arguments)))
+			logger.InfoTag("TOOL", "[%d/%d] name=%s id=%s (concurrent)", idx+1, len(toolCalls), tc.Function.Name, tc.ID)
+
+			// 查找工具
+			t := a.findTool(tc.Function.Name)
+			if t == nil {
+				results <- toolResult{idx: idx, tc: tc, err: fmt.Errorf("tool not found: %s", tc.Function.Name)}
+				return
+			}
+
+			// 执行工具
+			logger.InfoTag("TOOL", "Invoking: %s", tc.Function.Name)
+
+			var result string
+			var execErr error
+
+			if enhancedInvokable, ok := t.(tool.EnhancedInvokableTool); ok {
+				toolArg := &schema.ToolArgument{Text: tc.Function.Arguments}
+				toolResult, err := enhancedInvokable.InvokableRun(ctx, toolArg)
+				if err != nil {
+					execErr = err
+				} else {
+					result = formatToolResult(toolResult)
+				}
+			} else if invokable, ok := t.(tool.InvokableTool); ok {
+				result, execErr = invokable.InvokableRun(ctx, tc.Function.Arguments)
+			} else {
+				execErr = fmt.Errorf("tool %s is not invokable", tc.Function.Name)
+			}
+
+			results <- toolResult{idx: idx, tc: tc, result: result, err: execErr}
+		}(idx, tc)
+	}
+
+	// 收集结果
+	collectedResults := make([]toolResult, len(toolCalls))
+	for i := 0; i < len(toolCalls); i++ {
+		res := <-results
+		collectedResults[res.idx] = res
+	}
+
+	// 按顺序添加结果到上下文
+	for _, res := range collectedResults {
+		if res.err != nil {
+			logger.ErrorTag("TOOL", "Failed: %s, err=%v", res.tc.Function.Name, res.err)
+			errMsg := schema.ToolMessage(fmt.Sprintf("tool execution failed: %v", res.err), res.tc.ID)
+			if err := a.ctxManager.AddMessage(messageCtx, errMsg); err != nil {
+				return fmt.Errorf("failed to add error message: %w", err)
+			}
+			continue
+		}
+
+		logger.InfoTag("TOOL", "Success: %s", res.tc.Function.Name)
+		fmt.Printf("%s\n", logger.Green(fmt.Sprintf("  结果: %s", logger.TruncateString(res.result, 150))))
+
+		resultMsg := schema.ToolMessage(res.result, res.tc.ID)
+		if err := a.ctxManager.AddMessage(messageCtx, resultMsg); err != nil {
+			return fmt.Errorf("failed to add tool result: %w", err)
+		}
+	}
+
 	return nil
 }
 
