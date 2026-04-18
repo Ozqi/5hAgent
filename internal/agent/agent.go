@@ -295,12 +295,8 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 					logger.InfoTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
 						i, tc.ID, tc.Function.Name, tc.Function.Arguments)
 
-					// 合并ToolCall信息
-					// 如果有ID，使用ID作为key；否则使用索引
-					key := tc.ID
-					if key == "" {
-						key = fmt.Sprintf("_index_%d", i)
-					}
+					// 合并ToolCall信息 - 使用索引作为key
+					key := fmt.Sprintf("_index_%d", i)
 
 					if existing, ok := toolCallsMap[key]; ok {
 						// 合并：补充空字段
