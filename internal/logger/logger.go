@@ -53,7 +53,7 @@ func SetOutput(w io.Writer) {
 }
 
 // log 内部日志输出函数
-func (l *Logger) log(level Level, format string, args ...interface{}) {
+func (l *Logger) log(level Level, tag string, format string, args ...interface{}) {
 	if level < l.level {
 		return
 	}
@@ -65,25 +65,51 @@ func (l *Logger) log(level Level, format string, args ...interface{}) {
 	levelName := levelNames[level]
 	msg := fmt.Sprintf(format, args...)
 
-	fmt.Fprintf(l.output, "[%s] [%s] %s\n", timestamp, levelName, msg)
+	if tag != "" {
+		fmt.Fprintf(l.output, "[%s][%s][%s] %s\n", timestamp, levelName, tag, msg)
+	} else {
+		fmt.Fprintf(l.output, "[%s][%s] %s\n", timestamp, levelName, msg)
+	}
 }
 
 // Debug 输出 DEBUG 级别日志
 func Debug(format string, args ...interface{}) {
-	std.log(DEBUG, format, args...)
+	std.log(DEBUG, "", format, args...)
 }
 
 // Info 输出 INFO 级别日志
 func Info(format string, args ...interface{}) {
-	std.log(INFO, format, args...)
+	std.log(INFO, "", format, args...)
 }
 
 // Warn 输出 WARN 级别日志
 func Warn(format string, args ...interface{}) {
-	std.log(WARN, format, args...)
+	std.log(WARN, "", format, args...)
 }
 
 // Error 输出 ERROR 级别日志
 func Error(format string, args ...interface{}) {
-	std.log(ERROR, format, args...)
+	std.log(ERROR, "", format, args...)
+}
+
+// 带标签的日志函数
+
+// DebugTag 输出带标签的 DEBUG 日志
+func DebugTag(tag string, format string, args ...interface{}) {
+	std.log(DEBUG, tag, format, args...)
+}
+
+// InfoTag 输出带标签的 INFO 日志
+func InfoTag(tag string, format string, args ...interface{}) {
+	std.log(INFO, tag, format, args...)
+}
+
+// WarnTag 输出带标签的 WARN 日志
+func WarnTag(tag string, format string, args ...interface{}) {
+	std.log(WARN, tag, format, args...)
+}
+
+// ErrorTag 输出带标签的 ERROR 日志
+func ErrorTag(tag string, format string, args ...interface{}) {
+	std.log(ERROR, tag, format, args...)
 }
