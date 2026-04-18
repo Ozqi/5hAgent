@@ -311,6 +311,13 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 		// 如果有工具调用，从最后的 chunk 中提取并过滤无效的
 		if lastChunkWithToolCalls != nil {
+			// 记录原始ToolCalls（包括无效的）
+			logger.InfoTag("STREAM", "Raw ToolCalls from LLM: %d", len(lastChunkWithToolCalls.ToolCalls))
+			for i, tc := range lastChunkWithToolCalls.ToolCalls {
+				logger.InfoTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
+					i, tc.ID, tc.Function.Name, tc.Function.Arguments)
+			}
+
 			// 过滤掉无效的 ToolCall（name 为空）
 			validToolCalls := make([]schema.ToolCall, 0)
 			for _, tc := range lastChunkWithToolCalls.ToolCalls {
