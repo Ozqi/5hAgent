@@ -62,13 +62,14 @@ func (l *Logger) log(level Level, tag string, format string, args ...interface{}
 	defer l.mu.Unlock()
 
 	timestamp := time.Now().Format("15:04:05")
-	levelName := levelNames[level]
+	levelStr := colorLevel(level)
 	msg := fmt.Sprintf(format, args...)
 
 	if tag != "" {
-		fmt.Fprintf(l.output, "[%s][%s][%s] %s\n", timestamp, levelName, tag, msg)
+		tagStr := colorTag(tag)
+		fmt.Fprintf(l.output, "[%s][%s][%s] %s\n", Gray(timestamp), levelStr, tagStr, msg)
 	} else {
-		fmt.Fprintf(l.output, "[%s][%s] %s\n", timestamp, levelName, msg)
+		fmt.Fprintf(l.output, "[%s][%s] %s\n", Gray(timestamp), levelStr, msg)
 	}
 }
 

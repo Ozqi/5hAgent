@@ -307,10 +307,20 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			Content: fullContent,
 		}
 
-		// 如果有工具调用，从最后的 chunk 中提取
+		// 如果有工具调用，从最后的 chunk 中提取并过滤无效的
 		if lastChunkWithToolCalls != nil {
-			finalMessage.ToolCalls = lastChunkWithToolCalls.ToolCalls
-			logger.DebugTag("STREAM", "ToolCalls=%d", len(finalMessage.ToolCalls))
+			// 过滤掉无效的 ToolCall（name 为空）
+			validToolCalls := make([]schema.ToolCall, 0)
+			for _, tc := range lastChunkWithToolCalls.ToolCalls {
+				if tc.Function.Name != "" {
+					validToolCalls = append(validToolCalls, tc)
+				} else {
+					logger.WarnTag("STREAM", "Filtered invalid ToolCall with empty name, id=%s", tc.ID)
+				}
+			}
+			finalMessage.ToolCalls = validToolCalls
+			logger.DebugTag("STREAM", "ToolCalls=%d (filtered from %d)",
+				len(validToolCalls), len(lastChunkWithToolCalls.ToolCalls))
 		}
 
 		// c. 检查是否有工具调用
@@ -375,7 +385,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		}
 
 		// 显示工具执行提示
-		fmt.Printf("\n[执行工具 %d/%d: %s]\n", idx+1, len(toolCalls), tc.Function.Name)
+		fmt.Printf("\n%s\n", logger.Cyan(fmt.Sprintf("[执行工具 %d/%d: %s]", idx+1, len(toolCalls), tc.Function.Name)))
 		logger.InfoTag("TOOL", "[%d/%d] name=%s id=%s", idx+1, len(toolCalls), tc.Function.Name, tc.ID)
 		logger.DebugTag("TOOL", "  args: %s", tc.Function.Arguments)
 
