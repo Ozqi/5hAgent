@@ -141,12 +141,17 @@ func (a *Agent) Run(ctx context.Context, messageCtx *agentctx.Context, input str
 		if err != nil {
 			return "", fmt.Errorf("failed to get messages: %w", err)
 		}
-		logger.DebugTag("CTX", "Message count: %d", len(messages))
+		logger.DebugTag("CTX", "Messages=%d", len(messages))
+		for i, msg := range messages {
+			logger.DebugTag("CTX", "  [%d] role=%s content_len=%d tools=%d",
+				i, msg.Role, len(msg.Content), len(msg.ToolCalls))
+		}
 
 		// b. 调用 LLM 生成响应
 		logger.DebugTag("LLM", "Calling Generate")
 		resp, err := a.model.Generate(ctx, messages)
 		if err != nil {
+			logger.ErrorTag("LLM", "Generate failed: %v", err)
 			return "", fmt.Errorf("LLM generation failed: %w", err)
 		}
 		logger.DebugTag("LLM", "Response received, tool_calls=%d", len(resp.ToolCalls))
@@ -227,16 +232,24 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 	for turn := 0; turn < a.config.MaxTurns; turn++ {
 		a.state.CurrentTurn = turn + 1
+		logger.DebugTag("REACT", "Turn %d/%d", turn+1, a.config.MaxTurns)
 
 		// a. 获取所有消息
 		messages, err := a.ctxManager.GetMessages(messageCtx)
 		if err != nil {
 			return "", fmt.Errorf("failed to get messages: %w", err)
 		}
+		logger.DebugTag("CTX", "Messages=%d", len(messages))
+		for i, msg := range messages {
+			logger.DebugTag("CTX", "  [%d] role=%s content_len=%d tools=%d",
+				i, msg.Role, len(msg.Content), len(msg.ToolCalls))
+		}
 
 		// b. 调用 LLM 流式生成响应
+		logger.DebugTag("LLM", "Calling Stream")
 		reader, err := a.model.Stream(ctx, messages)
 		if err != nil {
+			logger.ErrorTag("LLM", "Stream failed: %v", err)
 			return "", fmt.Errorf("LLM stream failed: %w", err)
 		}
 
