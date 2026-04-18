@@ -1,11 +1,13 @@
 # miniAgent 架构文档
 
-> 代码量：~1000行 | 技术栈：Go 1.23 + Eino + Claude API
+> 代码量：~1500行 | 技术栈：Go 1.23 + Eino + Claude API
 
 **相关文档**:
 - [Eino框架使用说明](./eino_usage.md)
 - [Agent模块详解](./agent.md)
+- [Logger日志模块](./logger.md)
 - [Stage1代码Review](./stage1_review.md)
+- [Stage2流式输出](./stage2_streaming.md)
 
 ---
 
@@ -24,7 +26,7 @@
 
 ### 2. Agent 核心 (`internal/agent/`)
 
-**agent.go** (260行)
+**agent.go** (~430行)
 
 **结构体**:
 ```go
@@ -40,16 +42,13 @@ type Agent struct {
 
 **关键函数**:
 - `NewAgent(model, tools, config)`: 创建Agent实例，构建toolMap
-- `Run(ctx, messageCtx, input)`: ReAct循环主入口
-  1. 注入SystemPrompt(首次对话)
-  2. 添加用户消息到messageCtx
-  3. 循环(最多MaxTurns轮):
-     - 调用LLM生成响应
-     - 检查是否有工具调用
-     - 有工具调用 → 执行工具 → 继续循环
-     - 无工具调用 → 返回响应
+- `Run(ctx, messageCtx, input)`: 非流式ReAct循环
+  - 核心: `resp, err := a.model.Generate(ctx, messages)`
+- `RunStream(ctx, messageCtx, input, onToken)`: 流式ReAct循环
+  - 核心: `reader, err := a.model.Stream(ctx, messages)`
+  - 读取: `chunk, err := reader.Recv()`
 - `exeTools(ctx, messageCtx, toolCalls)`: 执行工具调用列表
-- `findTool(name)`: 从toolMap查找工具(O(1))
+  - 核心: `result, err := invokable.InvokableRun(ctx, args)`
 
 ---
 
@@ -76,20 +75,33 @@ type Agent struct {
 
 ---
 
-### 5. CLI (`internal/cli/` + `cmd/miniagent/`)
+### 5. 日志系统 (`internal/logger/`)
+
+**logger.go** (~130行): 核心日志
+- 4级日志(DEBUG/INFO/WARN/ERROR)，标签分类，格式对齐
+- `DebugTag(tag, format, args...)`: 带标签日志
+- `TruncateString(s, maxLen)`: 字符串摘要
+
+**color.go** (~120行): 颜色支持
+- ANSI颜色，级别/标签不同颜色
+- `Red/Green/Yellow/Blue/Cyan/Magenta/Gray/Bold`: 颜色函数
+
+---
+
+### 6. CLI (`internal/cli/` + `cmd/miniagent/`)
 
 **ui.go**: CLI输出函数
 - `PrintError(err)`: 打印错误
 - `PrintAssistantChunk(text)`: 打印助手响应
 
-**main.go** (160行): 主入口
+**main.go** (~166行): 主入口
 1. 加载.env配置
 2. 创建LLM客户端
-3. 注册工具
+3. 注册工具 - `main.go:68-70` 工具注册日志
 4. 创建Agent
 5. 创建上下文管理器
 6. 启动readline交互循环
-7. 处理用户输入 → Agent.Run() → 显示响应
+7. 处理用户输入 → Agent.RunStream() → 流式显示响应
 
 ---
 
@@ -100,15 +112,16 @@ type Agent struct {
   ↓
 main.go (readline)
   ↓
-Agent.Run(ctx, messageCtx, input)
+Agent.RunStream(ctx, messageCtx, input, onToken)
   ↓
 ReAct循环:
-  ├─ LLM.Generate(messages) → 生成响应
+  ├─ reader := LLM.Stream(messages) → 流式生成
+  ├─ 读取chunks → onToken回调 → 实时显示
   ├─ 检查ToolCalls
   ├─ 有工具调用 → exeTools() → 执行工具 → 添加结果 → 继续循环
-  └─ 无工具调用 → 返回响应
+  └─ 无工具调用 → 返回完整响应
   ↓
-显示响应
+显示完成
 ```
 
 ---
@@ -116,21 +129,23 @@ ReAct循环:
 ## 关键设计
 
 1. **ReAct模式**: Reasoning (LLM生成) + Acting (工具执行) 循环
-2. **上下文管理**: 所有消息存储在messageCtx，支持多轮对话
-3. **工具调用**: LLM返回ToolCalls → Agent查找工具 → 执行 → 结果回传
-4. **最大轮数**: 防止无限循环，默认10轮
+2. **流式输出**: Stream API + onToken回调，逐token显示
+3. **上下文管理**: 所有消息存储在messageCtx，支持多轮对话
+4. **工具调用**: LLM返回ToolCalls → Agent查找工具 → 执行 → 结果回传
+5. **日志系统**: 标签分类，彩色输出，格式对齐，内容摘要
+6. **最大轮数**: 防止无限循环，默认10轮
 
 ---
 
-## Stage1 完成优化
+## 已完成
 
-- ✅ SystemPrompt自动注入
-- ✅ Manager实例复用
-- ✅ 工具查找优化(map O(1))
+- ✅ Stage1: ReAct循环，工具调用，多轮对话
+- ✅ Stage2: 流式输出，实时显示
+- ✅ 日志系统: 标签，颜色，对齐，摘要
 
-## Phase2 计划
+## 待实现
 
-- Streaming输出（逐token显示）
-- 工具并发（只读工具并行）
-- 上下文压缩（超长对话）
-- 更多工具（glob, edit）
+- [ ] 工具并发（只读工具并行）
+- [ ] 上下文压缩（超长对话）
+- [ ] Skill注入
+- [ ] 长程任务管理
