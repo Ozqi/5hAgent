@@ -234,6 +234,16 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		return "", fmt.Errorf("failed to add user message: %w", err)
 	}
 
+	// 2.5 检查是否需要压缩上下文
+	if a.ctxManager.ShouldCompress(messageCtx) {
+		before, after, err := a.ctxManager.Compress(messageCtx)
+		if err != nil {
+			return "", fmt.Errorf("failed to compress context: %w", err)
+		}
+		logger.InfoTag("CTX", "Context compressed: %d -> %d messages", before, after)
+		fmt.Printf("\n%s\n", logger.Yellow(fmt.Sprintf("[上下文压缩: %d -> %d 条消息]", before, after)))
+	}
+
 	// 3. ReAct 循环
 	a.state.IsRunning = true
 	defer func() { a.state.IsRunning = false }()
