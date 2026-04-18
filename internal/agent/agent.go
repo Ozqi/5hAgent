@@ -4,11 +4,13 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	agentctx "github.com/lzq/miniAgent/internal/context"
+	"github.com/lzq/miniAgent/internal/logger"
 )
 
 // Agent AI Agent 核心结构体
@@ -132,18 +134,22 @@ func (a *Agent) Run(ctx context.Context, messageCtx *agentctx.Context, input str
 
 	for turn := 0; turn < a.config.MaxTurns; turn++ {
 		a.state.CurrentTurn = turn + 1
+		logger.Debug("ReAct turn %d/%d", turn+1, a.config.MaxTurns)
 
 		// a. 获取所有消息
 		messages, err := a.ctxManager.GetMessages(messageCtx)
 		if err != nil {
 			return "", fmt.Errorf("failed to get messages: %w", err)
 		}
+		logger.Debug("Message count: %d", len(messages))
 
 		// b. 调用 LLM 生成响应
+		logger.Debug("Calling LLM.Generate")
 		resp, err := a.model.Generate(ctx, messages)
 		if err != nil {
 			return "", fmt.Errorf("LLM generation failed: %w", err)
 		}
+		logger.Debug("LLM response received, tool calls: %d", len(resp.ToolCalls))
 
 		// c. 检查是否有工具调用
 		if len(resp.ToolCalls) > 0 {
@@ -182,6 +188,136 @@ func (a *Agent) Run(ctx context.Context, messageCtx *agentctx.Context, input str
 	return "", fmt.Errorf("reached max turns (%d) without final response", a.config.MaxTurns)
 }
 
+// TokenCallback 流式输出的回调函数类型
+type TokenCallback func(token string)
+
+// RunStream 运行 Agent 并流式输出响应
+// 参数:
+//   - ctx: Go 标准上下文
+//   - messageCtx: 消息上下文
+//   - input: 用户输入
+//   - onToken: token 回调函数（每个 token 会调用一次）
+//
+// 返回: 完整响应内容和可能的错误
+func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, input string, onToken TokenCallback) (string, error) {
+	// 1. 注入SystemPrompt（首次对话时）
+	messages, _ := a.ctxManager.GetMessages(messageCtx)
+	if len(messages) == 0 && a.config.SystemPrompt != "" {
+		systemMsg := &schema.Message{
+			Role:    schema.System,
+			Content: a.config.SystemPrompt,
+		}
+		if err := a.ctxManager.AddMessage(messageCtx, systemMsg); err != nil {
+			return "", fmt.Errorf("failed to add system prompt: %w", err)
+		}
+	}
+
+	// 2. 添加用户消息
+	userMsg := &schema.Message{
+		Role:    schema.User,
+		Content: input,
+	}
+	if err := a.ctxManager.AddMessage(messageCtx, userMsg); err != nil {
+		return "", fmt.Errorf("failed to add user message: %w", err)
+	}
+
+	// 3. ReAct 循环
+	a.state.IsRunning = true
+	defer func() { a.state.IsRunning = false }()
+
+	for turn := 0; turn < a.config.MaxTurns; turn++ {
+		a.state.CurrentTurn = turn + 1
+
+		// a. 获取所有消息
+		messages, err := a.ctxManager.GetMessages(messageCtx)
+		if err != nil {
+			return "", fmt.Errorf("failed to get messages: %w", err)
+		}
+
+		// b. 调用 LLM 流式生成响应
+		reader, err := a.model.Stream(ctx, messages)
+		if err != nil {
+			return "", fmt.Errorf("LLM stream failed: %w", err)
+		}
+
+		logger.Debug("Stream started, reading chunks...")
+
+		// 收集完整响应
+		var fullContent string
+		var finalMessage *schema.Message
+		chunkCount := 0
+
+		// 读取流式响应
+		for {
+			chunk, err := reader.Recv()
+			if err == io.EOF {
+				logger.Debug("Stream EOF, total chunks: %d", chunkCount)
+				break
+			}
+			if err != nil {
+				reader.Close()
+				return "", fmt.Errorf("stream read failed: %w", err)
+			}
+
+			chunkCount++
+			if chunkCount <= 3 {
+				logger.Debug("Chunk %d: content_len=%d, role=%s, toolcalls=%d",
+					chunkCount, len(chunk.Content), chunk.Role, len(chunk.ToolCalls))
+			}
+
+			// 处理内容
+			if chunk.Content != "" {
+				fullContent += chunk.Content
+				if onToken != nil {
+					onToken(chunk.Content)
+				}
+			}
+
+			// 保存最后一个完整的消息（包含完整的 ToolCalls）
+			if chunk.Role != "" {
+				finalMessage = chunk
+			}
+		}
+		reader.Close()
+
+		logger.Debug("Full content length: %d", len(fullContent))
+
+		// 使用最后的完整消息，如果没有则构造一个
+		if finalMessage == nil {
+			finalMessage = &schema.Message{
+				Role:    schema.Assistant,
+				Content: fullContent,
+			}
+		}
+
+		// c. 检查是否有工具调用
+		if len(finalMessage.ToolCalls) > 0 {
+			// d. 有工具调用 - 添加 assistant 消息
+			if err := a.ctxManager.AddMessage(messageCtx, finalMessage); err != nil {
+				return "", fmt.Errorf("failed to add assistant message: %w", err)
+			}
+
+			// 执行工具
+			if err := a.exeTools(ctx, messageCtx, finalMessage.ToolCalls); err != nil {
+				return "", fmt.Errorf("tool execution failed: %w", err)
+			}
+
+			// 继续循环
+			continue
+		}
+
+		// e. 没有工具调用 - 返回响应
+		if err := a.ctxManager.AddMessage(messageCtx, finalMessage); err != nil {
+			return "", fmt.Errorf("failed to add assistant message: %w", err)
+		}
+
+		return fullContent, nil
+	}
+
+	// 4. 达到最大轮数
+	return "", fmt.Errorf("reached max turns (%d) without final response", a.config.MaxTurns)
+}
+
 // exeTools 执行工具调用
 // 参数:
 //   - ctx: Go 标准上下文
@@ -196,9 +332,14 @@ func (a *Agent) Run(ctx context.Context, messageCtx *agentctx.Context, input str
 //  4. 将结果添加到 messageCtx
 func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, toolCalls []schema.ToolCall) error {
 	for _, tc := range toolCalls {
+		// 显示工具执行提示
+		fmt.Printf("\n[执行工具: %s]\n", tc.Function.Name)
+		logger.Debug("Executing tool: %s, args: %s", tc.Function.Name, tc.Function.Arguments)
+
 		// 查找工具
 		t := a.findTool(tc.Function.Name)
 		if t == nil {
+			logger.Warn("Tool not found: %s", tc.Function.Name)
 			// 工具未找到，添加错误消息
 			errMsg := schema.ToolMessage(
 				fmt.Sprintf("tool not found: %s", tc.Function.Name),
@@ -227,6 +368,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		result, err := invokable.InvokableRun(ctx, tc.Function.Arguments)
 		if err != nil {
 			// 工具执行失败
+			logger.Error("Tool execution failed: %s, error: %v", tc.Function.Name, err)
 			errMsg := schema.ToolMessage(
 				fmt.Sprintf("tool execution failed: %v", err),
 				tc.ID,
@@ -238,6 +380,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		}
 
 		// 工具执行成功，添加结果
+		logger.Debug("Tool execution success: %s, result length: %d", tc.Function.Name, len(result))
 		resultMsg := schema.ToolMessage(result, tc.ID)
 		if err := a.ctxManager.AddMessage(messageCtx, resultMsg); err != nil {
 			return fmt.Errorf("failed to add tool result: %w", err)
