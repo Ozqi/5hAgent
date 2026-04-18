@@ -265,8 +265,10 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 		// 收集完整响应
 		var fullContent string
-		var lastChunkWithToolCalls *schema.Message
 		chunkCount := 0
+
+		// 用于合并ToolCalls的map: id -> ToolCall
+		toolCallsMap := make(map[string]*schema.ToolCall)
 
 		// 读取流式响应
 		for {
@@ -292,6 +294,30 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 				for i, tc := range chunk.ToolCalls {
 					logger.InfoTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
 						i, tc.ID, tc.Function.Name, tc.Function.Arguments)
+
+					// 合并ToolCall信息
+					// 如果有ID，使用ID作为key；否则使用索引
+					key := tc.ID
+					if key == "" {
+						key = fmt.Sprintf("_index_%d", i)
+					}
+
+					if existing, ok := toolCallsMap[key]; ok {
+						// 合并：补充空字段
+						if tc.ID != "" && existing.ID == "" {
+							existing.ID = tc.ID
+						}
+						if tc.Function.Name != "" && existing.Function.Name == "" {
+							existing.Function.Name = tc.Function.Name
+						}
+						if tc.Function.Arguments != "" {
+							existing.Function.Arguments += tc.Function.Arguments
+						}
+					} else {
+						// 新建
+						tcCopy := tc
+						toolCallsMap[key] = &tcCopy
+					}
 				}
 			}
 
@@ -301,11 +327,6 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 				if onToken != nil {
 					onToken(chunk.Content)
 				}
-			}
-
-			// 保存包含 ToolCalls 的最后一个 chunk
-			if len(chunk.ToolCalls) > 0 {
-				lastChunkWithToolCalls = chunk
 			}
 		}
 		reader.Close()
@@ -318,18 +339,23 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			Content: fullContent,
 		}
 
-		// 如果有工具调用，从最后的 chunk 中提取并过滤无效的
-		if lastChunkWithToolCalls != nil {
-			// 记录原始ToolCalls（包括无效的）
-			logger.InfoTag("STREAM", "Raw ToolCalls from LLM: %d", len(lastChunkWithToolCalls.ToolCalls))
-			for i, tc := range lastChunkWithToolCalls.ToolCalls {
+		// 从map中提取合并后的ToolCalls
+		if len(toolCallsMap) > 0 {
+			mergedToolCalls := make([]schema.ToolCall, 0, len(toolCallsMap))
+			for _, tc := range toolCallsMap {
+				mergedToolCalls = append(mergedToolCalls, *tc)
+			}
+
+			// 记录合并后的ToolCalls
+			logger.InfoTag("STREAM", "Merged ToolCalls: %d", len(mergedToolCalls))
+			for i, tc := range mergedToolCalls {
 				logger.InfoTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
 					i, tc.ID, tc.Function.Name, tc.Function.Arguments)
 			}
 
 			// 过滤掉无效的 ToolCall（name 为空）
 			validToolCalls := make([]schema.ToolCall, 0)
-			for _, tc := range lastChunkWithToolCalls.ToolCalls {
+			for _, tc := range mergedToolCalls {
 				if tc.Function.Name != "" {
 					validToolCalls = append(validToolCalls, tc)
 				} else {
@@ -337,8 +363,8 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 				}
 			}
 			finalMessage.ToolCalls = validToolCalls
-			logger.DebugTag("STREAM", "ToolCalls=%d (filtered from %d)",
-				len(validToolCalls), len(lastChunkWithToolCalls.ToolCalls))
+			logger.DebugTag("STREAM", "Valid ToolCalls=%d (filtered from %d)",
+				len(validToolCalls), len(mergedToolCalls))
 		}
 
 		// c. 检查是否有工具调用
