@@ -159,9 +159,9 @@ func (a *Agent) Run(ctx context.Context, messageCtx *agentctx.Context, input str
 
 		// c. 检查是否有工具调用
 		if len(resp.ToolCalls) > 0 {
-			logger.InfoTag("LLM", "Tool calls requested: %d", len(resp.ToolCalls))
+			logger.DebugTag("LLM", "Tool calls requested: %d", len(resp.ToolCalls))
 			for i, tc := range resp.ToolCalls {
-				logger.InfoTag("LLM", "  [%d] id=%s name=%s args=%s",
+				logger.DebugTag("LLM", "  [%d] id=%s name=%s args=%s",
 					i, tc.ID, tc.Function.Name, tc.Function.Arguments)
 			}
 
@@ -234,12 +234,13 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 	}
 
 	// 2.5 检查是否需要压缩上下文
+	//  TODO: 这里只有一个按照消息条数压缩。
 	if a.ctxManager.ShouldCompress(messageCtx) {
 		before, after, err := a.ctxManager.Compress(messageCtx)
 		if err != nil {
 			return "", fmt.Errorf("failed to compress context: %w", err)
 		}
-		logger.InfoTag("CTX", "Context compressed: %d -> %d messages", before, after)
+		logger.DebugTag("CTX", "Context compressed: %d -> %d messages", before, after)
 		fmt.Printf("\n%s\n", logger.Yellow(fmt.Sprintf("[上下文压缩: %d -> %d 条消息]", before, after)))
 	}
 
@@ -348,10 +349,9 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 				if tc.ID != "" && tc.Function.Name != "" && !executedTools[tc.ID] {
 					// 尝试解析参数，判断是否完整
 					if isValidJSON(tc.Function.Arguments) {
-						logger.InfoTag("STREAM", "Tool ready for execution: id=%s name=%s", tc.ID, tc.Function.Name)
+						logger.DebugTag("STREAM", "Tool ready for execution: id=%s name=%s", tc.ID, tc.Function.Name)
 
-						// 标记为已执行
-						executedTools[tc.ID] = true
+						executedTools[tc.ID] = true // 标记为已执行
 
 						// 立即执行工具（在 goroutine 中异步执行，避免阻塞流式输出）
 						go func(toolCall *schema.ToolCall) {
@@ -404,9 +404,9 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 		// c. 检查是否有工具调用
 		if len(finalMessage.ToolCalls) > 0 {
-			logger.InfoTag("LLM", "Tool calls requested: %d", len(finalMessage.ToolCalls))
+			logger.DebugTag("LLM", "Tool calls requested: %d", len(finalMessage.ToolCalls))
 			for i, tc := range finalMessage.ToolCalls {
-				logger.InfoTag("LLM", "  [%d] id=%s name=%s args=%s",
+				logger.DebugTag("LLM", "  [%d] id=%s name=%s args=%s",
 					i, tc.ID, tc.Function.Name, tc.Function.Arguments)
 			}
 
@@ -454,7 +454,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 //  3. 执行工具
 //  4. 将结果添加到 messageCtx
 func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, toolCalls []schema.ToolCall) error {
-	logger.InfoTag("TOOL", "Executing %d tool(s)", len(toolCalls))
+	logger.DebugTag("TOOL", "Executing %d tool(s)", len(toolCalls))
 
 	// 定义只读工具列表
 	readOnlyTools := map[string]bool{
@@ -499,8 +499,8 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		// 显示工具执行提示
 		fmt.Printf("\n%s\n", logger.Cyan(fmt.Sprintf("[执行工具 %d/%d: %s]", idx+1, len(toolCalls), tc.Function.Name)))
 		fmt.Printf("%s\n", logger.Gray(fmt.Sprintf("  参数: %s", tc.Function.Arguments)))
-		logger.InfoTag("TOOL", "[%d/%d] name=%s id=%s", idx+1, len(toolCalls), tc.Function.Name, tc.ID)
-		logger.InfoTag("TOOL", "  args: %s", tc.Function.Arguments)
+		logger.DebugTag("TOOL", "[%d/%d] name=%s id=%s", idx+1, len(toolCalls), tc.Function.Name, tc.ID)
+		logger.DebugTag("TOOL", "  args: %s", tc.Function.Arguments)
 
 		// 查找工具
 		t := a.findTool(tc.Function.Name)
@@ -521,7 +521,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		var result string
 		var execErr error
 
-		logger.InfoTag("TOOL", "Invoking: %s", tc.Function.Name)
+		logger.DebugTag("TOOL", "Invoking: %s", tc.Function.Name)
 
 		// 尝试 EnhancedInvokableTool (返回 *schema.ToolResult)
 		if enhancedInvokable, ok := t.(tool.EnhancedInvokableTool); ok {
@@ -566,7 +566,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		}
 
 		// 工具执行成功，添加结果
-		logger.InfoTag("TOOL", "Success: %s", tc.Function.Name)
+		logger.DebugTag("TOOL", "Success: %s", tc.Function.Name)
 		logger.DebugTag("TOOL", "  result: %s", logger.TruncateString(result, 200))
 
 		// 显示工具执行结果
@@ -578,7 +578,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		}
 	}
 
-	logger.InfoTag("TOOL", "All tools executed")
+	logger.DebugTag("TOOL", "All tools executed")
 	return nil
 }
 
@@ -599,7 +599,7 @@ func (a *Agent) exeToolsConcurrent(ctx context.Context, messageCtx *agentctx.Con
 			// 显示工具执行提示
 			fmt.Printf("\n%s\n", logger.Cyan(fmt.Sprintf("[执行工具 %d/%d: %s (并发)]", idx+1, len(toolCalls), tc.Function.Name)))
 			fmt.Printf("%s\n", logger.Gray(fmt.Sprintf("  参数: %s", tc.Function.Arguments)))
-			logger.InfoTag("TOOL", "[%d/%d] name=%s id=%s (concurrent)", idx+1, len(toolCalls), tc.Function.Name, tc.ID)
+			logger.DebugTag("TOOL", "[%d/%d] name=%s id=%s (concurrent)", idx+1, len(toolCalls), tc.Function.Name, tc.ID)
 
 			// 查找工具
 			t := a.findTool(tc.Function.Name)
@@ -609,7 +609,7 @@ func (a *Agent) exeToolsConcurrent(ctx context.Context, messageCtx *agentctx.Con
 			}
 
 			// 执行工具
-			logger.InfoTag("TOOL", "Invoking: %s", tc.Function.Name)
+			logger.DebugTag("TOOL", "Invoking: %s", tc.Function.Name)
 
 			var result string
 			var execErr error
@@ -650,7 +650,7 @@ func (a *Agent) exeToolsConcurrent(ctx context.Context, messageCtx *agentctx.Con
 			continue
 		}
 
-		logger.InfoTag("TOOL", "Success: %s", res.tc.Function.Name)
+		logger.DebugTag("TOOL", "Success: %s", res.tc.Function.Name)
 		fmt.Printf("%s\n", logger.Green(fmt.Sprintf("  结果: %s", logger.TruncateString(res.result, 150))))
 
 		resultMsg := schema.ToolMessage(res.result, res.tc.ID)
@@ -718,7 +718,7 @@ func isValidJSON(s string) bool {
 // executeToolStreaming 在流式输出过程中执行单个工具
 // 这个函数会在 goroutine 中异步调用，避免阻塞流式输出
 func (a *Agent) executeToolStreaming(ctx context.Context, messageCtx *agentctx.Context, toolCall *schema.ToolCall) {
-	logger.InfoTag("STREAM-TOOL", "Executing tool: id=%s name=%s", toolCall.ID, toolCall.Function.Name)
+	logger.DebugTag("STREAM-TOOL", "Executing tool: id=%s name=%s", toolCall.ID, toolCall.Function.Name)
 
 	// 显示工具执行提示
 	fmt.Printf("\n%s\n", logger.Cyan(fmt.Sprintf("[流式执行工具: %s]", toolCall.Function.Name)))
@@ -754,7 +754,7 @@ func (a *Agent) executeToolStreaming(ctx context.Context, messageCtx *agentctx.C
 		logger.ErrorTag("STREAM-TOOL", "Failed: %s, err=%v", toolCall.Function.Name, execErr)
 		fmt.Printf("%s\n", logger.Red(fmt.Sprintf("  错误: %v", execErr)))
 	} else {
-		logger.InfoTag("STREAM-TOOL", "Success: %s", toolCall.Function.Name)
+		logger.DebugTag("STREAM-TOOL", "Success: %s", toolCall.Function.Name)
 		fmt.Printf("%s\n", logger.Green(fmt.Sprintf("  结果: %s", logger.TruncateString(result, 150))))
 	}
 }
