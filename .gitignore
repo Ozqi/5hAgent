@@ -16,3 +16,6 @@ miniagent
 
 # Claude Code
 .claude/
+
+# Workspace (SWE-bench test data)
+workspace/

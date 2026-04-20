@@ -439,6 +439,8 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 	readOnlyTools := map[string]bool{
 		"read_file": true,
 		"glob":      true,
+		"grep":      true,
+		"list_dir":  true,
 	}
 
 	// 分类工具调用
