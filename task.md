@@ -1,7 +1,7 @@
 # miniAgent 开发进度
 
-> 当前阶段：Phase 2 基本完成 ✅，准备进入 Phase 3
-> 代码量：2099 行（目标 < 4000 行）
+> 当前阶段：Phase 2 完成 ✅，Phase 3 工具补齐完成 ✅
+> 代码量：2570 行（目标 < 4000 行）
 
 ---
 
@@ -47,7 +47,17 @@
 
 ---
 
-## Phase 3 计划（长程任务）
+## Phase 3 进行中（长程任务 + SWE-bench 工具补齐）
+
+**P3.1 SWE-bench 基础工具** ✅:
+
+- [x] write_file: 创建/覆盖文件 ✅
+- [x] grep: 代码搜索（ripgrep + grep fallback）✅
+- [x] list_dir: 列出目录内容 ✅
+- [ ] git_diff: 查看修改（P1）
+- [ ] git_apply: 应用补丁（P1）
+
+**P3.2 长程任务管理**:
 
 - [ ] TaskList管理（持久化任务列表）
 - [ ] 自动规划（根据任务生成执行计划）

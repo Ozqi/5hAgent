@@ -39,6 +39,27 @@ func init() {
 		panic(fmt.Sprintf("failed to create edit tool: %v", err))
 	}
 	registry = append(registry, editTool)
+
+	// Register write_file tool
+	writeFileTool, err := NewWriteFileTool()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create write_file tool: %v", err))
+	}
+	registry = append(registry, writeFileTool)
+
+	// Register grep tool
+	grepTool, err := NewGrepTool()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create grep tool: %v", err))
+	}
+	registry = append(registry, grepTool)
+
+	// Register list_dir tool
+	listDirTool, err := NewListDirTool()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create list_dir tool: %v", err))
+	}
+	registry = append(registry, listDirTool)
 }
 
 // GetAllTools returns all registered tools
