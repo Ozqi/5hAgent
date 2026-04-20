@@ -19,3 +19,6 @@ miniagent
 
 # Workspace (SWE-bench test data)
 workspace/
+
+# miniAgent runtime data
+.miniagent/

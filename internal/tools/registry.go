@@ -60,6 +60,37 @@ func init() {
 		panic(fmt.Sprintf("failed to create list_dir tool: %v", err))
 	}
 	registry = append(registry, listDirTool)
+
+	// Register task management tools
+	taskCreateTool, err := NewTaskCreateTool()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create task_create tool: %v", err))
+	}
+	registry = append(registry, taskCreateTool)
+
+	taskUpdateTool, err := NewTaskUpdateTool()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create task_update tool: %v", err))
+	}
+	registry = append(registry, taskUpdateTool)
+
+	taskGetTool, err := NewTaskGetTool()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create task_get tool: %v", err))
+	}
+	registry = append(registry, taskGetTool)
+
+	taskListTool, err := NewTaskListTool()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create task_list tool: %v", err))
+	}
+	registry = append(registry, taskListTool)
+
+	taskDeleteTool, err := NewTaskDeleteTool()
+	if err != nil {
+		panic(fmt.Sprintf("failed to create task_delete tool: %v", err))
+	}
+	registry = append(registry, taskDeleteTool)
 }
 
 // GetAllTools returns all registered tools
