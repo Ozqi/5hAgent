@@ -360,16 +360,17 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 					}
 				}
 			}
+		}
 
-			// 处理内容
-			if chunk.Content != "" {
-				fullContent += chunk.Content
-				if onToken != nil {
-					onToken(chunk.Content)
-				}
+		// 处理内容
+		if chunk.Content != "" {
+			fullContent += chunk.Content
+			if onToken != nil {
+				onToken(chunk.Content)
 			}
 		}
-		reader.Close()
+	}
+	reader.Close()
 
 		logger.DebugTag("STREAM", "Complete, total_len=%d", len(fullContent))
 
