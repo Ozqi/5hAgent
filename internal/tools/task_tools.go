@@ -8,7 +8,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"
-	"github.com/lzq/miniAgent/internal/tasklist"
+	"github.com/lzq/miniAgent/internal/agent"
 )
 
 // TaskCreateInput defines the input for task_create tool
@@ -40,11 +40,11 @@ type TaskDeleteInput struct {
 }
 
 // Global task list instance
-var globalTaskList *tasklist.TaskList
+var globalTaskList *agent.TaskList
 
 // InitTaskList initializes the global task list
 func InitTaskList(filePath string) error {
-	tl, err := tasklist.NewTaskList(filePath)
+	tl, err := agent.NewTaskList(filePath)
 	if err != nil {
 		return err
 	}
@@ -87,7 +87,7 @@ func NewTaskUpdateTool() (tool.EnhancedInvokableTool, error) {
 				return nil, fmt.Errorf("task list not initialized")
 			}
 
-			status := tasklist.TaskStatus(input.Status)
+			status := agent.TaskStatus(input.Status)
 			if err := globalTaskList.UpdateTaskStatus(input.ID, status); err != nil {
 				return nil, err
 			}
@@ -138,9 +138,9 @@ func NewTaskListTool() (tool.EnhancedInvokableTool, error) {
 				return nil, fmt.Errorf("task list not initialized")
 			}
 
-			var tasks []*tasklist.Task
+			var tasks []*agent.Task
 			if input.Status != "" {
-				tasks = globalTaskList.ListTasksByStatus(tasklist.TaskStatus(input.Status))
+				tasks = globalTaskList.ListTasksByStatus(agent.TaskStatus(input.Status))
 			} else {
 				tasks = globalTaskList.ListTasks()
 			}
