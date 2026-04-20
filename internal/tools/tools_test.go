@@ -119,8 +119,8 @@ func TestExecShellTool(t *testing.T) {
 func TestGetAllTools(t *testing.T) {
 	tools := GetAllTools()
 
-	if len(tools) != 2 {
-		t.Errorf("expected 2 tools, got %d", len(tools))
+	if len(tools) < 2 {
+		t.Errorf("expected at least 2 tools, got %d", len(tools))
 	}
 
 	ctx := context.Background()

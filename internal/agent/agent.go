@@ -233,7 +233,6 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 	}
 
 	// 2.5 检查是否需要压缩上下文
-	// TODO:compress
 	if a.ctxManager.ShouldCompress(messageCtx) {
 		before, after, err := a.ctxManager.Compress(messageCtx)
 		if err != nil {

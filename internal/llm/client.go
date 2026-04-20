@@ -71,7 +71,7 @@ func NewClientFromEnv(ctx context.Context, envPath string) (*LLMClient, error) {
 		APIKey:    apiKey,
 		BaseURL:   baseURL,
 		Model:     modelName,
-		MaxTokens: 4096, // TODO: 这个值需要修改
+		MaxTokens: 4096,
 	}
 
 	return NewClient(ctx, config)
