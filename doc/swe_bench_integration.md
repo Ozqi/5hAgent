@@ -1,7 +1,7 @@
 # SWE-bench 接入计划
 
 ## 目标
-评估 miniAgent 在真实软件工程任务上的表现
+评估 5hAgent 在真实软件工程任务上的表现
 
 ## 当前能力评估
 
@@ -39,7 +39,7 @@
 
 使用 **SWE-bench Lite**（300 个任务）的子集：
 - 选择 10-20 个简单任务
-- 手动运行 miniAgent
+- 手动运行 5hAgent
 - 记录成功率和失败原因
 
 **评估指标**：
@@ -82,7 +82,7 @@ func (a *SWEBenchAdapter) SolveIssue(issue *Issue) (*Solution, error) {
 
 1. 从 SWE-bench Lite 选一个简单任务
 2. 手动准备环境
-3. 用 miniAgent 交互式解决
+3. 用 5hAgent 交互式解决
 4. 记录过程和结果
 
 ### 方法 2：使用 swekit

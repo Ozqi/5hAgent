@@ -71,7 +71,7 @@
 ### 任务管理 (Phase 3)
 
 所有任务工具基于 `internal/agent/tasklist.go` 的 TaskList 实现：
-- **存储**: JSON 文件持久化 (`.miniagent/tasks.json`)
+- **存储**: JSON 文件持久化 (`.5hagent/tasks.json`)
 - **并发**: `sync.RWMutex` 保证线程安全
 - **状态**: pending, in_progress, completed, failed
 

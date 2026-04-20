@@ -1,4 +1,4 @@
-miniAgent — 基于 Go + Eino 的轻量级 AI Agent，技术栈：Go 1.21 + Eino， API（默认是claude风格的，具体是MiniMax），代码量控制在几千行
+5hAgent — 基于 Go + Eino 的轻量级 AI Agent，技术栈：Go 1.21 + Eino， API（默认是claude风格的，具体是MiniMax），代码量控制在几千行
 
 注意，你不可能一次性完成整个工程，要拆分任务一步步实现。具体看task.md并配合git来管理进度。
 

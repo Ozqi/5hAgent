@@ -8,7 +8,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"
-	"github.com/lzq/miniAgent/internal/agent"
+	"github.com/lzq/5hAgent/internal/agent"
 )
 
 // TaskCreateInput defines the input for task_create tool
