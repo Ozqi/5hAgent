@@ -302,9 +302,9 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 			// 详细记录包含ToolCalls的chunk
 			if len(chunk.ToolCalls) > 0 {
-				logger.InfoTag("STREAM", "Chunk#%d contains ToolCalls: %d", chunkCount, len(chunk.ToolCalls))
+				logger.DebugTag("STREAM", "Chunk#%d contains ToolCalls: %d", chunkCount, len(chunk.ToolCalls))
 				for i, tc := range chunk.ToolCalls {
-					logger.InfoTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
+					logger.DebugTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
 						i, tc.ID, tc.Function.Name, tc.Function.Arguments)
 
 					// 如果有新的 ID，说明是新的工具调用
@@ -361,9 +361,9 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		// 从列表中提取合并后的ToolCalls
 		if len(toolCallsList) > 0 {
 			// 记录合并后的ToolCalls
-			logger.InfoTag("STREAM", "Merged ToolCalls: %d", len(toolCallsList))
+			logger.DebugTag("STREAM", "Merged ToolCalls: %d", len(toolCallsList))
 			for i, tc := range toolCallsList {
-				logger.InfoTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
+				logger.DebugTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
 					i, tc.ID, tc.Function.Name, tc.Function.Arguments)
 			}
 
