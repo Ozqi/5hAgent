@@ -11,8 +11,8 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	agentctx "github.com/lzq/miniAgent/internal/context"
-	"github.com/lzq/miniAgent/internal/logger"
+	agentctx "github.com/lzq/5hAgent/internal/context"
+	"github.com/lzq/5hAgent/internal/logger"
 )
 
 // Agent AI Agent 核心结构体

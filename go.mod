@@ -1,4 +1,4 @@
-module github.com/lzq/miniAgent
+module github.com/lzq/5hAgent
 
 go 1.23.0
 

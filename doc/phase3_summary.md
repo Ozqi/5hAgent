@@ -30,7 +30,7 @@
 - **核心模块** (`internal/tasklist/tasklist.go`, 268 行)
   - 任务 CRUD 操作
   - 4 种状态：pending, in_progress, completed, failed
-  - 持久化到 `.miniagent/tasks.json`
+  - 持久化到 `.5hagent/tasks.json`
   - 并发安全（sync.RWMutex）
   - 进度统计
 

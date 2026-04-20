@@ -106,7 +106,7 @@ internal/tasklist/
 internal/tools/
   └── task_tools.go        # 任务管理工具（Agent 可调用）
 
-.miniagent/
+.5hagent/
   └── tasks.json           # 任务持久化存储
 ```
 
@@ -156,7 +156,7 @@ Agent 可调用的 5 个工具:
 
 ```go
 // cmd/miniagent/main.go
-taskListPath := ".miniagent/tasks.json"
+taskListPath := ".5hagent/tasks.json"
 if err := tools.InitTaskList(taskListPath); err != nil {
     log.Fatal(err)
 }

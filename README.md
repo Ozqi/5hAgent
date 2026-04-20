@@ -1,6 +1,6 @@
 <!-- 项目介绍，如何安装和使用项目 -->
 
-# miniAgent
+# 5hAgent
 
 > 基于 Go + Eino 的轻量级 AI Agent，代码量 ~3000 行
 
@@ -93,7 +93,7 @@ go build -o miniagent cmd/miniagent/main.go
 
 **TaskList 管理系统**:
 - ✅ 任务 CRUD 操作（create, update, get, list, delete）
-- ✅ 持久化到 `.miniagent/tasks.json`
+- ✅ 持久化到 `.5hagent/tasks.json`
 - ✅ 并发安全（sync.RWMutex）
 - ✅ 进度统计
 
