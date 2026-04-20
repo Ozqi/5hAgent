@@ -47,11 +47,11 @@ func NewGrepTool() (tool.EnhancedInvokableTool, error) {
 
 			// Build ripgrep command
 			args := []string{
-				"--json",           // JSON output
-				"--no-heading",     // Don't group by file
-				"--line-number",    // Show line numbers
-				"--column",         // Show column numbers
-				"--smart-case",     // Smart case matching
+				"--json",          // JSON output
+				"--no-heading",    // Don't group by file
+				"--line-number",   // Show line numbers
+				"--column",        // Show column numbers
+				"--smart-case",    // Smart case matching
 				"--max-count=100", // Limit matches per file
 			}
 
@@ -174,9 +174,9 @@ func grepFallback(ctx context.Context, input GrepInput) (*schema.ToolResult, err
 
 	// Build grep command
 	args := []string{
-		"-r",           // Recursive
-		"-n",           // Line numbers
-		"-H",           // Show filename
+		"-r",              // Recursive
+		"-n",              // Line numbers
+		"-H",              // Show filename
 		"--max-count=100", // Limit matches
 		input.Pattern,
 		path,
