@@ -5,207 +5,110 @@
 
 ## 工具列表
 
-| 工具名 | 文件 | 行数 | 类型 | 并发 | 功能 |
-|--------|------|------|------|------|------|
-| read_file | read_file.go | 115 | 只读 | ✅ | 读取文件内容，支持分页 |
-| glob | glob.go | 120 | 只读 | ✅ | 文件模式匹配，支持 ** 递归 |
-| exec_shell | exec_shell.go | 90 | 写 | ❌ | 执行 shell 命令 |
-| edit | edit.go | 95 | 写 | ❌ | 精确字符串替换编辑文件 |
+| 工具名 | 文件 | 类型 | 并发 | 功能 |
+|--------|------|------|------|------|
+| read_file | read_file.go | 只读 | ✅ | 读取文件内容，支持分页 |
+| write_file | write_file.go | 写 | ❌ | 创建/覆盖文件 |
+| edit | edit.go | 写 | ❌ | 精确字符串替换编辑文件 |
+| glob | glob.go | 只读 | ✅ | 文件模式匹配，支持 ** 递归 |
+| grep | grep.go | 只读 | ✅ | 代码搜索（ripgrep/grep） |
+| list_dir | list_dir.go | 只读 | ✅ | 列出目录内容 |
+| exec_shell | exec_shell.go | 写 | ❌ | 执行 shell 命令 |
+| task_create | task_tools.go | 写 | ❌ | 创建任务 |
+| task_update | task_tools.go | 写 | ❌ | 更新任务状态 |
+| task_get | task_tools.go | 只读 | ✅ | 获取任务详情 |
+| task_list | task_tools.go | 只读 | ✅ | 列出所有任务 |
+| task_delete | task_tools.go | 写 | ❌ | 删除任务 |
 
-## 工具详解
+**总计**: 12 个工具（6 个只读，6 个写入）
 
-### 1. read_file - 文件读取
+## 核心工具详解
 
-**输入**：
-```json
-{
-  "path": "/path/to/file",
-  "offset": 1,     // 起始行号（默认1）
-  "limit": 100     // 读取行数（默认100）
-}
-```
+### 文件操作
 
-**输出**：
-```json
-{
-  "content": "1\tline1\n2\tline2\n...",
-  "total_lines": 150
-}
-```
-
-**实现要点**：
-- 使用 `bufio.Scanner` 逐行读取
+#### read_file - 文件读取
 - 支持 offset/limit 分页
-- 输出带行号（`行号\t内容`）
+- 输出带行号格式
+- 代码位置: `read_file.go`
 
-**代码位置**：`read_file.go:33-114`
+#### write_file - 文件写入 (Phase 3)
+- 创建/覆盖文件
+- 自动创建父目录
+- 代码位置: `write_file.go`
 
----
+#### edit - 文件编辑
+- 精确字符串替换
+- 替换所有匹配项
+- 代码位置: `edit.go`
 
-### 2. glob - 文件模式匹配 ⭐ 新增
+### 文件搜索
 
-**输入**：
-```json
-{
-  "pattern": "**/*.go",
-  "path": "."      // 基础目录（默认当前目录）
-}
-```
+#### glob - 文件模式匹配
+- 支持 `*`, `**`, `?` 通配符
+- 递归目录搜索
+- 代码位置: `glob.go`
 
-**输出**：
-```json
-{
-  "files": ["cmd/main.go", "internal/agent/agent.go", ...],
-  "count": 14
-}
-```
+#### grep - 代码搜索 (Phase 3)
+- 基于 ripgrep（自动降级到 grep）
+- 支持正则表达式和文件类型过滤
+- 返回文件、行号、列号、匹配文本
+- 代码位置: `grep.go`
 
-**支持的模式**：
-- `*`: 匹配任意字符（不含 `/`）
-- `**`: 递归匹配目录
-- `?`: 匹配单个字符
+#### list_dir - 目录列表 (Phase 3)
+- 列出目录内容
+- 支持递归遍历
+- 返回文件信息（名称、路径、类型、大小）
+- 代码位置: `list_dir.go`
 
-**实现要点**：
-- 简单模式：使用 `filepath.Glob()`
-- 递归模式（含 `**`）：使用 `filepath.Walk()` + 自定义匹配
-- 结果自动排序
+### 执行
 
-**代码位置**：
-- `glob.go:29-73` - NewGlobTool
-- `glob.go:76-110` - recursiveGlob 递归匹配
-
-**示例**：
-```bash
-# 查找所有 Go 文件
-{"pattern": "**/*.go"}
-
-# 查找 internal 目录下的 Go 文件
-{"pattern": "**/*.go", "path": "internal"}
-```
-
----
-
-### 3. exec_shell - Shell 命令执行
-
-**输入**：
-```json
-{
-  "command": "ls -la",
-  "timeout": 30    // 超时秒数（默认30）
-}
-```
-
-**输出**：
-```json
-{
-  "stdout": "...",
-  "stderr": "...",
-  "exit_code": 0
-}
-```
-
-**实现要点**：
-- 使用 `exec.CommandContext` 支持超时
+#### exec_shell - Shell 命令执行
+- 支持超时控制
 - 分别捕获 stdout/stderr
 - 返回退出码
+- 代码位置: `exec_shell.go`
 
-**代码位置**：`exec_shell.go:33-89`
+### 任务管理 (Phase 3)
 
----
+#### task_create - 创建任务
+- 输入: id, title, description
+- 输出: Task 对象
 
-### 4. edit - 文件编辑 ⭐ 新增
+#### task_update - 更新任务
+- 输入: id, status
+- 支持状态: pending, in_progress, completed, failed
 
-**输入**：
-```json
-{
-  "path": "/path/to/file",
-  "old_string": "exact string to replace",
-  "new_string": "replacement string"
-}
-```
+#### task_get - 获取任务
+- 输入: id
+- 输出: Task 详情
 
-**输出**：
-```json
-{
-  "success": true,
-  "message": "Replaced 2 occurrence(s)",
-  "replacements": 2
-}
-```
+#### task_list - 列出任务
+- 可选状态过滤
+- 返回任务列表 + 进度统计
 
-**实现要点**：
-- 使用 `os.ReadFile` 读取全文
-- 使用 `strings.ReplaceAll` 替换所有匹配
-- 使用 `os.WriteFile` 写回文件
-- 必须精确匹配（包括空格、换行）
+#### task_delete - 删除任务
+- 输入: id
+- 永久删除任务
 
-**代码位置**：`edit.go:29-95`
-
-**注意事项**：
-- `old_string` 必须完全匹配，否则返回 `success: false`
-- 替换所有出现的位置（不支持只替换一次）
-- 适合小文件，大文件可能内存占用高
-
----
+详见: `doc/tasklist.md`
 
 ## 工具注册
 
 **位置**：`registry.go`
 
-```go
-func init() {
-    // 按顺序注册所有工具
-    registry = append(registry, NewReadFileTool())
-    registry = append(registry, NewExecShellTool())
-    registry = append(registry, NewGlobTool())      // Phase 2 新增
-    registry = append(registry, NewEditTool())      // Phase 2 新增
-}
-
-func GetAllTools() []tool.BaseTool {
-    return registry
-}
-```
-
-## 工具接口
-
-所有工具实现 Eino 的 `tool.EnhancedInvokableTool` 接口：
-
-```go
-type EnhancedInvokableTool interface {
-    Info(ctx context.Context) (*schema.ToolInfo, error)
-    InvokableRun(ctx context.Context, argumentsInJSON *schema.ToolArgument) (*schema.ToolResult, error)
-}
-```
-
-**创建工具**：使用 `utils.InferEnhancedTool`
-```go
-return utils.InferEnhancedTool(
-    "tool_name",
-    "tool description",
-    func(ctx context.Context, input InputStruct) (*schema.ToolResult, error) {
-        // 实现逻辑
-        return &schema.ToolResult{...}, nil
-    },
-)
-```
+所有工具在 `init()` 函数中自动注册到全局 registry。
 
 ## 并发执行策略
 
-**只读工具**（可并发）：
-- `read_file`: 读取文件不修改状态
-- `glob`: 文件搜索不修改状态
+**只读工具**（支持并发）：
+- read_file, glob, grep, list_dir
+- task_get, task_list
 
 **写工具**（必须串行）：
-- `exec_shell`: 可能修改文件系统
-- `edit`: 直接修改文件
+- write_file, edit, exec_shell
+- task_create, task_update, task_delete
 
-**实现位置**：`agent.go:428-445`
-```go
-readOnlyTools := map[string]bool{
-    "read_file": true,
-    "glob":      true,
-}
-```
+**实现位置**：`agent.go:438-445`
 
 ## 添加新工具
 
@@ -242,3 +145,4 @@ func NewNewTool() (tool.EnhancedInvokableTool, error) {
     )
 }
 ```
+
