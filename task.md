@@ -1,7 +1,7 @@
 # miniAgent 开发进度
 
 > 当前阶段：Phase 2 基本完成 ✅，准备进入 Phase 3
-> 代码量：2099 行（目标 < 2000 行，略超）
+> 代码量：2099 行（目标 < 4000 行）
 
 ---
 
@@ -28,16 +28,19 @@
 ## Phase 2 基本完成 ✅（流式输出，工具扩展，上下文管理）
 
 **P2.2 性能优化**:
+
 - [x] Streaming输出（逐token显示）✅ 已实现基础版本
   - 修复多工具调用合并bug (commit d1dafcc)
   - TODO: 边输出边执行工具（参考 Claude Code StreamingToolExecutor）
 
 **P2.1 工具扩展**:
+
 - [x] glob: 文件模式匹配 ✅ (commit dd90511)
 - [x] edit: 文件编辑（精确替换）✅ (commit dd90511)
 - [x] 工具并发（只读工具并行执行）✅ (commit 7627673)
 
 **P2.3 上下文管理**:
+
 - [x] 上下文压缩（超长对话处理）✅ (commit c5d4e0f)
   - 超过 50 条消息时自动压缩，保留最近 30 条
 - [ ] Skill注入机制（暂缓，Phase 3 实现）
