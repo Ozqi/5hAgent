@@ -31,7 +31,7 @@
 
 - [x] Streaming输出（逐token显示）✅ 已实现基础版本
   - 修复多工具调用合并bug (commit d1dafcc)
-  - TODO: 边输出边执行工具（参考 Claude Code StreamingToolExecutor）
+  - [x] 边输出边执行工具 ✅ (commit 0a0b6c3)
 
 **P2.1 工具扩展**:
 
