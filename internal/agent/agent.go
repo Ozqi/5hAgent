@@ -441,6 +441,8 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		"glob":      true,
 		"grep":      true,
 		"list_dir":  true,
+		"task_get":  true,
+		"task_list": true,
 	}
 
 	// 分类工具调用

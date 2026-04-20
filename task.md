@@ -1,7 +1,7 @@
 # miniAgent 开发进度
 
-> 当前阶段：Phase 2 完成 ✅，Phase 3 工具补齐完成 ✅
-> 代码量：2570 行（目标 < 4000 行）
+> 当前阶段：Phase 3 TaskList 完成 ✅
+> 代码量：3073 行（目标 < 4000 行）
 
 ---
 
@@ -57,9 +57,15 @@
 - [ ] git_diff: 查看修改（P1）
 - [ ] git_apply: 应用补丁（P1）
 
-**P3.2 长程任务管理**:
+**P3.2 长程任务管理** ✅:
 
-- [ ] TaskList管理（持久化任务列表）
+- [x] TaskList管理（持久化任务列表）✅
+  - task_create: 创建任务
+  - task_update: 更新任务状态
+  - task_get: 获取任务详情
+  - task_list: 列出所有任务
+  - task_delete: 删除任务
+  - 持久化到 .miniagent/tasks.json
 - [ ] 自动规划（根据任务生成执行计划）
 - [ ] 进度追踪（5h稳定工作）
 
