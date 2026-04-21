@@ -1,7 +1,7 @@
 # 5hAgent 开发进度
 
-> 当前阶段：Phase 3 TaskList 完成 ✅
-> 代码量：3015 行（目标 < 4000 行）
+> 当前阶段：Phase 2 完成 ✅
+> 代码量：3298 行（目标 < 4000 行）
 
 ---
 
@@ -24,7 +24,7 @@
 - 工具查找优化(map O(1)) // @claude这个真的有价值吗
 - 代码review文档: doc/stage1_review.md
 
-## Phase 2 基本完成 ✅（流式输出，工具扩展，上下文管理）
+## Phase 2 完成 ✅（流式输出，工具扩展，上下文管理）
 
 **P2.1 流式**:
 
@@ -48,12 +48,15 @@
 - [ ] git_apply: 应用补丁（P1）
 - [ ] 规范测试流程：去workspace目录(测试场)跑指定的SWE-BENCH，并生成测试报告。
 
-**P2.3 上下文管理**:
+**P2.4 上下文管理**:
 
 - [x] 上下文压缩（超长对话处理）✅ (commit c5d4e0f)
   - 超过 50 条消息时自动压缩，保留最近 30 条
   - TODO: 更细节的压缩机制phase3实现
-- [ ] Skill注入机制
+- [x] Skill注入机制 ✅
+  - internal/skill/skill.go: 技能管理器
+  - .miniagent/skills/*.json: 技能定义文件
+  - /skill list|enable|disable: 命令支持
 
 ---
 
