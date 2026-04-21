@@ -16,8 +16,7 @@ internal/skill/
 
 internal/agent/
 ├── agent.go                # Agent 集成技能注入
-├── skill_inject.go         # 技能注入实现
-└── skill_commands.go       # /skill 命令处理
+└── skill.go                # 技能注入和命令处理
 ```
 
 ## 核心组件
@@ -104,7 +103,7 @@ type Skill struct {
 
 ### injectSkills() 函数
 
-位于 `internal/agent/skill_inject.go`，负责将启用的技能转换为 System 消息并插入到上下文中。
+位于 `internal/agent/skill.go`，负责将启用的技能转换为 System 消息并插入到上下文中。
 
 ```go
 func (a *Agent) injectSkills(messageCtx *agentctx.Context) error {
