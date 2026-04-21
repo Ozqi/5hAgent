@@ -6,7 +6,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="$SCRIPT_DIR/workspace"
-AGENT="$SCRIPT_DIR/miniagent"
+AGENT="$SCRIPT_DIR/5hagent"
 RESULTS_DIR="$SCRIPT_DIR/test_results"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
@@ -173,7 +173,7 @@ main() {
 
     # 检查 agent 是否存在
     if [ ! -f "$AGENT" ]; then
-        log_error "找不到 miniagent: $AGENT"
+        log_error "找不到 5hagent: $AGENT"
         exit 1
     fi
 

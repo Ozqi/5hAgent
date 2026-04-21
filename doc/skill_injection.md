@@ -9,7 +9,7 @@ Skill 注入机制允许动态加载和启用预定义的技能提示词，增�
 ## 架构
 
 ```
-.miniagent/skills/          # 技能定义目录
+.5hagent/skills/          # 技能定义目录
 ├── code-review/
 │   └── SKILL.md            # 代码审查技能
 ├── debug-helper/
@@ -87,13 +87,13 @@ type Skill struct {
 ### 2. Manager 技能管理器
 
 **功能**:
-- `LoadSkills()`: 从 `.miniagent/skills/*/SKILL.md` 加载技能定义
+- `LoadSkills()`: 从 `.5hagent/skills/*/SKILL.md` 加载技能定义
 - `EnableSkill(name)`: 启用指定技能
 - `DisableSkill(name)`: 禁用指定技能
 - `ListSkills()`: 列出所有技能
 
 **加载逻辑**:
-1. 遍历 `.miniagent/skills/` 下的所有子目录
+1. 遍历 `.5hagent/skills/` 下的所有子目录
 2. 查找每个子目录中的 `SKILL.md` 文件
 3. 解析 YAML frontmatter 和 Markdown 内容
 4. 默认状态为禁用
@@ -163,15 +163,15 @@ Available Skills:
 
 ### 创建新技能
 
-1. 在 `.miniagent/skills/` 下创建新目录
+1. 在 `.5hagent/skills/` 下创建新目录
 2. 创建 `SKILL.md` 文件
 3. 编写 YAML frontmatter 和 Markdown 内容
 4. 重启 Agent 自动加载
 
 **示例**:
 ```bash
-mkdir -p .miniagent/skills/my-skill
-cat > .miniagent/skills/my-skill/SKILL.md << 'EOF'
+mkdir -p .5hagent/skills/my-skill
+cat > .5hagent/skills/my-skill/SKILL.md << 'EOF'
 ---
 name: my-skill
 description: Use when user asks to "do something specific".

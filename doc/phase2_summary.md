@@ -106,19 +106,19 @@ internal/
 
 ### 1. 工具并发测试
 ```bash
-echo "同时读取task.md和.env文件的内容" | ./miniagent
+echo "同时读取task.md和.env文件的内容" | ./5hagent
 # 输出显示两个 read_file 工具并发执行
 ```
 
 ### 2. glob 工具测试
 ```bash
-echo "使用glob工具查找所有go文件" | ./miniagent
+echo "使用glob工具查找所有go文件" | ./5hagent
 # 找到 14 个 Go 文件
 ```
 
 ### 3. edit 工具测试
 ```bash
-echo "使用edit工具把/tmp/test_edit.txt文件中的test替换为hello" | ./miniagent
+echo "使用edit工具把/tmp/test_edit.txt文件中的test替换为hello" | ./5hagent
 # 成功替换，验证文件内容已修改
 ```
 

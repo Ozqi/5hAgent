@@ -1,0 +1,4 @@
+# 忽略测试生成的文件
+*-workspace/
+results/
+testspace/swebench_original/

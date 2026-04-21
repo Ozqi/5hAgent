@@ -23,7 +23,7 @@
 ### 自动化测试（推荐）
 
 ```bash
-cd /home/lzq/Proj/miniAgent
+cd /home/lzq/Proj/5hAgent
 
 # 测试单个任务
 ./test_swebench.sh 1  # 测试任务1
@@ -36,7 +36,7 @@ cd /home/lzq/Proj/miniAgent
 
 **脚本功能**：
 1. 自动恢复任务到初始状态
-2. 用预定义的 prompt 调用 miniAgent
+2. 用预定义的 prompt 调用 5hAgent
 3. 记录执行日志和 diff
 4. 生成测试报告
 
@@ -51,10 +51,10 @@ cd /home/lzq/Proj/miniAgent
 如果需要观察 Agent 的详细执行过程：
 
 ```bash
-cd /home/lzq/Proj/miniAgent/workspace/astropy
+cd /home/lzq/Proj/5hAgent/workspace/astropy
 
-# 启动 miniAgent
-../../miniagent
+# 启动 5hAgent
+../../5hagent
 
 # 输入任务描述
 修复 astropy/io/ascii/qdp.py 中的 bug：在 _line_type 函数中，
@@ -71,7 +71,7 @@ cd /home/lzq/Proj/miniAgent/workspace/astropy
 ### Debug 模式
 
 ```bash
-../../miniagent --debug
+../../5hagent --debug
 ```
 
 Debug 模式会显示：
