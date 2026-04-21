@@ -1,6 +1,8 @@
 5hAgent — 基于 Go + Eino 的轻量级 AI Agent，技术栈：Go 1.21 + Eino， API（默认是claude风格的，具体是MiniMax），代码量控制在几千行
 
 注意，你不可能一次性完成整个工程，要拆分任务一步步实现。具体看task.md并配合git来管理进度。
+另外, 你要意识到你作为ClaudeCode你也是一个Agent，我们在用Agent开发Agent，并且我们可能还要去参考cc的源码，你开发的时候注意区分彼此。
+另外，在实现的时候，有些事情可以用prompt做到，有些事情需要代码强制约束，规范执行，这是你要和我一起思考判断决定的。
 
 - 实现 ReAct 模式的 Agent 循环，支持多轮对话。
 - 支持 Streaming 输出，工具的并发调用。

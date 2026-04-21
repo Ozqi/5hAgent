@@ -33,19 +33,22 @@ func NewWriteFileTool() (tool.EnhancedInvokableTool, error) {
 		func(ctx context.Context, input WriteFileInput) (*schema.ToolResult, error) {
 			// Validate input
 			if input.Path == "" {
-				return nil, fmt.Errorf("path cannot be empty")
+				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'path' is required. You must provide the file path to write")
+			}
+			if input.Content == "" {
+				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'content' is required. You must provide the content to write")
 			}
 
 			// Create parent directories if they don't exist
 			dir := filepath.Dir(input.Path)
 			if err := os.MkdirAll(dir, 0755); err != nil {
-				return nil, fmt.Errorf("failed to create parent directories: %w", err)
+				return nil, fmt.Errorf("failed to create parent directories for '%s': %w", input.Path, err)
 			}
 
 			// Write file
 			err := os.WriteFile(input.Path, []byte(input.Content), 0644)
 			if err != nil {
-				return nil, fmt.Errorf("failed to write file: %w", err)
+				return nil, fmt.Errorf("failed to write file '%s': %w", input.Path, err)
 			}
 
 			// Build output

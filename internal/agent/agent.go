@@ -305,15 +305,11 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		var fullContent string
 		chunkCount := 0
 
-		// 用于合并ToolCalls的列表（保持顺序）
-		var toolCallsList []*schema.ToolCall
-		// 用于快速查找最后一个工具调用的 map: id -> index
-		toolCallsIndex := make(map[string]int)
-		// 记录已执行的工具（避免重复执行）
-		executedTools := make(map[string]bool)
+		var toolCallsList []*schema.ToolCall   // 用于合并ToolCalls的列表（保持顺序）
+		toolCallsIndex := make(map[string]int) // 用于快速查找最后一个工具调用的 map: id -> index
+		executedTools := make(map[string]bool) // 记录已执行的工具（避免重复执行）
 
-		// 读取流式响应
-		for {
+		for { // 读取流式响应
 			chunk, err := reader.Recv()
 			if err == io.EOF {
 				logger.DebugTag("STREAM", "EOF, chunks=%d", chunkCount)
@@ -325,12 +321,12 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			}
 
 			chunkCount++
-			if chunkCount <= 3 {
-				logger.DebugTag("STREAM", "Chunk#%d: len=%d role=%s tools=%d",
-					chunkCount, len(chunk.Content), chunk.Role, len(chunk.ToolCalls))
-			}
+			// if chunkCount <= 10 {
+			// 	logger.DebugTag("STREAM", "Chunk#%d: len=%d role=%s tools=%d",
+			// 		chunkCount, len(chunk.Content), chunk.Role, len(chunk.ToolCalls))
+			// }
 
-			// 详细记录包含ToolCalls的chunk
+			// *处理包含ToolCalls的chunk
 			if len(chunk.ToolCalls) > 0 {
 				logger.DebugTag("STREAM", "Chunk#%d contains ToolCalls: %d", chunkCount, len(chunk.ToolCalls))
 				for i, tc := range chunk.ToolCalls {
@@ -339,8 +335,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 					// 如果有新的 ID，说明是新的工具调用
 					if tc.ID != "" {
-						// 检查是否已存在
-						if idx, exists := toolCallsIndex[tc.ID]; exists {
+						if idx, exists := toolCallsIndex[tc.ID]; exists { // 检查是否已存在
 							// 合并到已有的工具调用
 							existing := toolCallsList[idx]
 							if tc.Function.Name != "" && existing.Function.Name == "" {
@@ -524,8 +519,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		}
 
 		// 显示工具执行提示
-		fmt.Printf("\n%s\n", logger.Cyan(fmt.Sprintf("[执行工具 %d/%d: %s]", idx+1, len(toolCalls), tc.Function.Name)))
-		fmt.Printf("%s\n", logger.Gray(fmt.Sprintf("  参数: %s", tc.Function.Arguments)))
+		logger.PrintToolCall(tc.Function.Name, tc.Function.Arguments, false)
 		logger.DebugTag("TOOL", "[%d/%d] name=%s id=%s", idx+1, len(toolCalls), tc.Function.Name, tc.ID)
 		logger.DebugTag("TOOL", "  args: %s", tc.Function.Arguments)
 
@@ -582,6 +576,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		// 检查执行错误
 		if execErr != nil {
 			logger.ErrorTag("TOOL", "Failed: %s, err=%v", tc.Function.Name, execErr)
+			logger.PrintToolError(execErr)
 			errMsg := schema.ToolMessage(
 				fmt.Sprintf("tool execution failed: %v", execErr),
 				tc.ID,
@@ -597,7 +592,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		logger.DebugTag("TOOL", "  result: %s", logger.TruncateString(result, 200))
 
 		// 显示工具执行结果
-		fmt.Printf("%s\n", logger.Green(fmt.Sprintf("  结果: %s", logger.TruncateString(result, 150))))
+		logger.PrintToolResult(result)
 
 		resultMsg := schema.ToolMessage(result, tc.ID)
 		if err := a.ctxManager.AddMessage(messageCtx, resultMsg); err != nil {
@@ -624,8 +619,7 @@ func (a *Agent) exeToolsConcurrent(ctx context.Context, messageCtx *agentctx.Con
 	for idx, tc := range toolCalls {
 		go func(idx int, tc schema.ToolCall) {
 			// 显示工具执行提示
-			fmt.Printf("\n%s\n", logger.Cyan(fmt.Sprintf("[执行工具 %d/%d: %s (并发)]", idx+1, len(toolCalls), tc.Function.Name)))
-			fmt.Printf("%s\n", logger.Gray(fmt.Sprintf("  参数: %s", tc.Function.Arguments)))
+			logger.PrintToolCall(tc.Function.Name, tc.Function.Arguments, true)
 			logger.DebugTag("TOOL", "[%d/%d] name=%s id=%s (concurrent)", idx+1, len(toolCalls), tc.Function.Name, tc.ID)
 
 			// 查找工具
@@ -670,6 +664,7 @@ func (a *Agent) exeToolsConcurrent(ctx context.Context, messageCtx *agentctx.Con
 	for _, res := range collectedResults {
 		if res.err != nil {
 			logger.ErrorTag("TOOL", "Failed: %s, err=%v", res.tc.Function.Name, res.err)
+			logger.PrintToolError(res.err)
 			errMsg := schema.ToolMessage(fmt.Sprintf("tool execution failed: %v", res.err), res.tc.ID)
 			if err := a.ctxManager.AddMessage(messageCtx, errMsg); err != nil {
 				return fmt.Errorf("failed to add error message: %w", err)
@@ -678,7 +673,7 @@ func (a *Agent) exeToolsConcurrent(ctx context.Context, messageCtx *agentctx.Con
 		}
 
 		logger.DebugTag("TOOL", "Success: %s", res.tc.Function.Name)
-		fmt.Printf("%s\n", logger.Green(fmt.Sprintf("  结果: %s", logger.TruncateString(res.result, 150))))
+		logger.PrintToolResult(res.result)
 
 		resultMsg := schema.ToolMessage(res.result, res.tc.ID)
 		if err := a.ctxManager.AddMessage(messageCtx, resultMsg); err != nil {
@@ -748,8 +743,7 @@ func (a *Agent) executeToolStreaming(ctx context.Context, messageCtx *agentctx.C
 	logger.DebugTag("STREAM-TOOL", "Executing tool: id=%s name=%s", toolCall.ID, toolCall.Function.Name)
 
 	// 显示工具执行提示
-	fmt.Printf("\n%s\n", logger.Cyan(fmt.Sprintf("[流式执行工具: %s]", toolCall.Function.Name)))
-	fmt.Printf("%s\n", logger.Gray(fmt.Sprintf("  参数: %s", toolCall.Function.Arguments)))
+	logger.PrintToolCall(toolCall.Function.Name, toolCall.Function.Arguments, false)
 
 	// 查找工具
 	t := a.findTool(toolCall.Function.Name)
@@ -779,9 +773,9 @@ func (a *Agent) executeToolStreaming(ctx context.Context, messageCtx *agentctx.C
 
 	if execErr != nil {
 		logger.ErrorTag("STREAM-TOOL", "Failed: %s, err=%v", toolCall.Function.Name, execErr)
-		fmt.Printf("%s\n", logger.Red(fmt.Sprintf("  错误: %v", execErr)))
+		logger.PrintToolError(execErr)
 	} else {
 		logger.DebugTag("STREAM-TOOL", "Success: %s", toolCall.Function.Name)
-		fmt.Printf("%s\n", logger.Green(fmt.Sprintf("  结果: %s", logger.TruncateString(result, 150))))
+		logger.PrintToolResult(result)
 	}
 }

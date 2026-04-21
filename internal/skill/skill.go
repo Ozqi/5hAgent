@@ -9,6 +9,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// skill.go - Skill 核心逻辑
+// 职责：
+//   1. 定义 Skill 数据结构
+//   2. 从文件系统加载 SKILL.md 文件
+//   3. 管理 skill 的启用/禁用状态
+//   4. 提供 skill 查询接口
+//
+// 注意：Skill 的使用（注入、命令处理）在 internal/agent/skill_handler.go 中
+
 // Skill 定义一个可注入的技能
 type Skill struct {
 	Name        string `yaml:"name"`
