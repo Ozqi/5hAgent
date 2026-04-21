@@ -8,6 +8,7 @@ require (
 	github.com/cloudwego/eino-ext/components/model/claude v0.1.17
 	github.com/joho/godotenv v1.5.1
 	github.com/spf13/cobra v1.10.2
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -84,5 +85,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240722135656-d784300faade // indirect
 	google.golang.org/grpc v1.64.1 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

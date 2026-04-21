@@ -115,7 +115,7 @@ go build -o miniagent cmd/miniagent/main.go
 - [ ] git_diff, git_apply 工具
 - [ ] SWE-bench 测试流程
 
-**代码量**: 3320 行
+**代码量**: 3359 行
 
 ## 工具清单
 
@@ -132,18 +132,34 @@ go build -o miniagent cmd/miniagent/main.go
 
 支持动态加载和启用技能提示词，增强 Agent 在特定场景下的能力。
 
+**格式**: Markdown + YAML frontmatter（遵循 Claude Code 规范）
+
 **使用方式**:
 ```bash
-/skill list              # 列出所有技能
-/skill enable debug_helper   # 启用调试助手
-/skill disable code_review   # 禁用代码审查
+/skill list                  # 列出所有技能
+/skill enable superpower     # 启用生产力提升技能
+/skill disable code-review   # 禁用代码审查技能
 ```
 
 **内置技能**:
-- `debug_helper`: 系统化调试方法论
-- `code_review`: 代码质量、安全性、性能审查
+- `code-review`: 代码质量、安全性、性能审查清单
+- `debug-helper`: 系统化调试方法论（五阶段流程）
+- `superpower`: 开发者生产力提升（命令行、Git、编辑器技巧）
 
-**扩展**: 在 `.miniagent/skills/` 目录下添加 JSON 文件即可
+**创建新技能**:
+```bash
+mkdir -p .miniagent/skills/my-skill
+cat > .miniagent/skills/my-skill/SKILL.md << 'EOF'
+---
+name: my-skill
+description: Use when user asks to "trigger phrase".
+---
+
+# My Skill
+
+Skill content here...
+EOF
+```
 
 详见 `doc/skill_injection.md`
 
