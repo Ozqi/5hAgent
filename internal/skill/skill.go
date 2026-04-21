@@ -1,18 +1,22 @@
 package skill
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Skill 定义一个可注入的技能
 type Skill struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Prompt      string `json:"prompt"`
-	Enabled     bool   `json:"enabled"`
+	Name        string `yaml:"name"`
+	Description string `yaml:"description"`
+	Version     string `yaml:"version,omitempty"`
+	Tools       string `yaml:"tools,omitempty"`
+	Content     string `yaml:"-"` // Markdown 内容（不在 frontmatter 中）
+	Enabled     bool   `yaml:"-"` // 运行时状态
 }
 
 // Manager 管理技能的加载和注入
@@ -29,7 +33,7 @@ func NewManager(skillsDir string) *Manager {
 	}
 }
 
-// LoadSkills 从目录加载所有技能
+// LoadSkills 从目录加载所有技能（SKILL.md 格式）
 func (m *Manager) LoadSkills() error {
 	if m.skillsDir == "" {
 		return nil
@@ -39,26 +43,61 @@ func (m *Manager) LoadSkills() error {
 		return nil
 	}
 
-	files, err := filepath.Glob(filepath.Join(m.skillsDir, "*.json"))
+	// 遍历 skills 目录下的所有子目录
+	entries, err := os.ReadDir(m.skillsDir)
 	if err != nil {
-		return fmt.Errorf("failed to glob skills: %w", err)
+		return fmt.Errorf("failed to read skills dir: %w", err)
 	}
 
-	for _, file := range files {
-		data, err := os.ReadFile(file)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		skillPath := filepath.Join(m.skillsDir, entry.Name(), "SKILL.md")
+		if _, err := os.Stat(skillPath); os.IsNotExist(err) {
+			continue
+		}
+
+		skill, err := m.loadSkillFile(skillPath)
 		if err != nil {
 			continue
 		}
 
-		var skill Skill
-		if err := json.Unmarshal(data, &skill); err != nil {
-			continue
-		}
-
-		m.skills[skill.Name] = &skill
+		m.skills[skill.Name] = skill
 	}
 
 	return nil
+}
+
+// loadSkillFile 加载单个 SKILL.md 文件
+func (m *Manager) loadSkillFile(path string) (*Skill, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read skill file: %w", err)
+	}
+
+	content := string(data)
+
+	// 解析 frontmatter
+	if !strings.HasPrefix(content, "---\n") {
+		return nil, fmt.Errorf("invalid skill format: missing frontmatter")
+	}
+
+	parts := strings.SplitN(content[4:], "\n---\n", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid skill format: malformed frontmatter")
+	}
+
+	var skill Skill
+	if err := yaml.Unmarshal([]byte(parts[0]), &skill); err != nil {
+		return nil, fmt.Errorf("failed to parse frontmatter: %w", err)
+	}
+
+	skill.Content = strings.TrimSpace(parts[1])
+	skill.Enabled = false // 默认禁用
+
+	return &skill, nil
 }
 
 // GetSkill 获取指定技能
@@ -74,12 +113,6 @@ func (m *Manager) ListSkills() []*Skill {
 		skills = append(skills, skill)
 	}
 	return skills
-}
-
-// InjectSkills 已废弃：技能现在作为独立消息注入，不再混入 system prompt
-// 保留此方法以保持向后兼容
-func (m *Manager) InjectSkills(basePrompt string) string {
-	return basePrompt
 }
 
 // EnableSkill 启用技能
@@ -100,4 +133,10 @@ func (m *Manager) DisableSkill(name string) error {
 	}
 	skill.Enabled = false
 	return nil
+}
+
+// InjectSkills 已废弃：技能现在作为独立消息注入，不再混入 system prompt
+// 保留此方法以保持向后兼容
+func (m *Manager) InjectSkills(basePrompt string) string {
+	return basePrompt
 }

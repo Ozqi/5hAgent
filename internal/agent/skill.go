@@ -15,7 +15,7 @@ func (a *Agent) injectSkills(messageCtx *agentctx.Context) error {
 		if skill.Enabled {
 			skillMsg := &schema.Message{
 				Role:    schema.System,
-				Content: fmt.Sprintf("# Skill: %s\n%s\n\n%s", skill.Name, skill.Description, skill.Prompt),
+				Content: fmt.Sprintf("# Skill: %s\n\n%s", skill.Name, skill.Content),
 			}
 			if err := a.ctxManager.AddMessage(messageCtx, skillMsg); err != nil {
 				return fmt.Errorf("failed to add skill %s: %w", skill.Name, err)
