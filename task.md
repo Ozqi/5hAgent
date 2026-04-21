@@ -55,7 +55,6 @@
   - TODO: 更细节的压缩机制phase3实现
 - [x] Skill注入机制 ✅
   - internal/skill/skill.go: 技能管理器
-  - .miniagent/skills/*.json: 技能定义文件
   - /skill list|enable|disable: 命令支持
 
 ---
