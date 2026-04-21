@@ -42,7 +42,7 @@ internal/
 ├── context/ctx.go      # 上下文管理、自动压缩
 ├── logger/logger.go    # 日志系统
 └── cli/ui.go           # CLI 输出
-cmd/miniagent/main.go   # 主入口
+cmd/5hagent/main.go   # 主入口
 ```
 
 **关键流程**: `main.go` → `Agent.RunStream()` → ReAct 循环（LLM 流式生成 → 工具并发执行 → 结果回传）
@@ -55,14 +55,14 @@ cp .env.example .env
 # 编辑 .env，设置 API_KEY
 
 # 2. 运行
-go run cmd/miniagent/main.go
+go run cmd/5hagent/main.go
 
 # 或编译后运行
-go build -o miniagent cmd/miniagent/main.go
-./miniagent
+go build -o 5hagent cmd/5hagent/main.go
+./5hagent
 
 # Debug 模式
-./miniagent --debug
+./5hagent --debug
 ```
 
 ## 功能特性
@@ -105,7 +105,7 @@ go build -o miniagent cmd/miniagent/main.go
 
 **TaskList 管理系统** ✅:
 - ✅ 任务 CRUD 操作（create, update, get, list, delete）
-- ✅ 持久化到 `.miniagent/tasks.json`
+- ✅ 持久化到 `.5hagent/tasks.json`
 - ✅ 并发安全（sync.RWMutex）
 - ✅ 进度统计
 
@@ -148,8 +148,8 @@ go build -o miniagent cmd/miniagent/main.go
 
 **创建新技能**:
 ```bash
-mkdir -p .miniagent/skills/my-skill
-cat > .miniagent/skills/my-skill/SKILL.md << 'EOF'
+mkdir -p .5hagent/skills/my-skill
+cat > .5hagent/skills/my-skill/SKILL.md << 'EOF'
 ---
 name: my-skill
 description: Use when user asks to "trigger phrase".

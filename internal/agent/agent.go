@@ -76,7 +76,7 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 	}
 
 	// 初始化技能管理器
-	skillMgr := skill.NewManager(".miniagent/skills")
+	skillMgr := skill.NewManager(".5hagent/skills")
 	if err := skillMgr.LoadSkills(); err != nil {
 		logger.DebugTag("SKILL", "Failed to load skills: %v", err)
 	}

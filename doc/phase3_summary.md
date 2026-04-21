@@ -146,7 +146,7 @@ db22733 feat: 实现 SWE-bench P0 工具集
 1. **工具测试**
    ```bash
    # 测试 write_file
-   miniagent
+   5hagent
    > 创建一个文件 test.txt，内容是 "Hello World"
    
    # 测试 grep

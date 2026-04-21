@@ -204,3 +204,30 @@
 [[90m07:05:47[0m][[32mINFO[0m][[36m[1mTOOL[0m] Success: read_file
 [32m  结果: {"content":"400\t    _format_name = \"fixed_width_no_header\"\n401\t    _...0\t        self.data.start_line = position_line + 1\n","total_lines":490}[0m
 [[90m07:05:47[0m][[32mINFO[0m][[36m[1mTOOL[0m] All tools executed
+                    [1m[36mAssistant: [0m[0m
+
+Now I have a clear understanding of both classes. Let me also check the tests for RST to understand the expected behavior:
+[[90m07:07:12[0m][[32mINFO[0m][[34mSTREAM[0m] Chunk#44 contains ToolCalls: 1
+[[90m07:07:12[0m][[32mINFO[0m][[34mSTREAM[0m]   [0] id='call_function_b62qwwn81x2o_1' name='exec_shell' args=''
+[[90m07:07:12[0m][[32mINFO[0m][[34mSTREAM[0m] Chunk#45 contains ToolCalls: 1
+[[90m07:07:12[0m][[32mINFO[0m][[34mSTREAM[0m]   [0] id='' name='' args=''
+[[90m07:07:13[0m][[32mINFO[0m][[34mSTREAM[0m] Chunk#46 contains ToolCalls: 1
+[[90m07:07:13[0m][[32mINFO[0m][[34mSTREAM[0m]   [0] id='' name='' args='{"command": "find /home/lzq/Proj/miniAgent/workspace/astropy-14182 -name \"*.py\" -path \"*/ascii/*\" | xargs grep -l -i \"rst\" 2>/dev/null | head -5"}'
+[[90m07:07:13[0m][[32mINFO[0m][[34mSTREAM[0m] Merged ToolCalls: 1
+[[90m07:07:13[0m][[32mINFO[0m][[34mSTREAM[0m]   [0] id='call_function_b62qwwn81x2o_1' name='exec_shell' args='{"command": "find /home/lzq/Proj/miniAgent/workspace/astropy-14182 -name \"*.py\" -path \"*/ascii/*\" | xargs grep -l -i \"rst\" 2>/dev/null | head -5"}'
+[[90m07:07:13[0m][[32mINFO[0m][[35mLLM[0m] Tool calls requested: 1
+[[90m07:07:13[0m][[32mINFO[0m][[35mLLM[0m]   [0] id=call_function_b62qwwn81x2o_1 name=exec_shell args={"command": "find /home/lzq/Proj/miniAgent/workspace/astropy-14182 -name \"*.py\" -path \"*/ascii/*\" | xargs grep -l -i \"rst\" 2>/dev/null | head -5"}
+[[90m07:07:13[0m][[32mINFO[0m][[36m[1mTOOL[0m] Executing 1 tool(s)
+
+[36m[执行工具 1/1: exec_shell][0m
+[90m  参数: {"command": "find /home/lzq/Proj/miniAgent/workspace/astropy-14182 -name \"*.py\" -path \"*/ascii/*\" | xargs grep -l -i \"rst\" 2>/dev/null | head -5"}[0m
+[[90m07:07:13[0m][[32mINFO[0m][[36m[1mTOOL[0m] [1/1] name=exec_shell id=call_function_b62qwwn81x2o_1
+[[90m07:07:13[0m][[32mINFO[0m][[36m[1mTOOL[0m]   args: {"command": "find /home/lzq/Proj/miniAgent/workspace/astropy-14182 -name \"*.py\" -path \"*/ascii/*\" | xargs grep -l -i \"rst\" 2>/dev/null | head -5"}
+[[90m07:07:13[0m][[32mINFO[0m][[36m[1mTOOL[0m] Invoking: exec_shell
+[[90m07:07:13[0m][[32mINFO[0m][[36m[1mTOOL[0m] Success: exec_shell
+[32m  结果: {"stdout":"/home/lzq/Proj/miniAgent/workspace/astropy-14182/astropy/io/as...y-14182/astropy/io/ascii/tests/test_qdp.py\n","stderr":"","returncode":0}[0m
+[[90m07:07:13[0m][[32mINFO[0m][[36m[1mTOOL[0m] All tools executed
+                    [[90m07:07:13[0m][[31m[1mERROR[0m][[33mAGENT[0m] Error: reached max turns (10) without final response
+[31mError: agent error: reached max turns (10) without final response[0m
+[33m
+Goodbye![0m

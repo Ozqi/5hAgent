@@ -27,8 +27,8 @@ fmt.Println(logger.Bold(logger.Cyan("Title")))
 - `logger.TruncateString(s, maxLen)` - 截断字符串显示摘要，支持中文
 
 ## 集成点
-- `cmd/miniagent/main.go:40-42` - 根据--debug设置级别
-- `cmd/miniagent/main.go:68-70` - 工具注册日志
+- `cmd/5hagent/main.go:40-42` - 根据--debug设置级别
+- `cmd/5hagent/main.go:68-70` - 工具注册日志
 - `internal/agent/agent.go:137` - ReAct循环轮次
 - `internal/agent/agent.go:144-148` - 消息上下文详情（role对齐，内容摘要）
 - `internal/agent/agent.go:250` - LLM Stream调用：`reader, err := a.model.Stream(ctx, messages)`

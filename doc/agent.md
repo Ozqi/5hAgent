@@ -25,7 +25,7 @@ type Agent struct {
 
 创建Agent，构建toolMap，初始化技能管理器
 
-**新增**: 加载 `.miniagent/skills/*/SKILL.md` 技能定义
+**新增**: 加载 `.5hagent/skills/*/SKILL.md` 技能定义
 
 ### Run(ctx, messageCtx, input) - 非流式
 
@@ -175,7 +175,7 @@ Agent 可调用的 5 个工具:
 ### 初始化
 
 ```go
-// cmd/miniagent/main.go
+// cmd/5hagent/main.go
 taskListPath := ".5hagent/tasks.json"
 if err := tools.InitTaskList(taskListPath); err != nil {
     log.Fatal(err)
@@ -275,5 +275,5 @@ Agent: 调用 task_list
 - `internal/tasklist/tasklist.go`: 核心实现
 - `internal/tools/task_tools.go`: Agent 工具
 - `internal/tools/registry.go`: 工具注册
-- `cmd/miniagent/main.go`: 初始化入口
+- `cmd/5hagent/main.go`: 初始化入口
 - `internal/agent/agent.go`: 并发工具列表配置

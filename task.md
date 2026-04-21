@@ -14,7 +14,7 @@
 - `internal/tools/` (3个工具): read_file, exec_shell, registry
 - `internal/context/ctx.go`: 上下文管理，Manager, Context
 - `internal/cli/ui.go`: CLI输出
-- `cmd/miniagent/main.go` (160行): 主入口，交互式循环
+- `cmd/5hagent/main.go` (160行): 主入口，交互式循环
 
 **核心流程**: main → Agent.Run() → ReAct循环(LLM生成 → 工具执行 → 结果回传)
 
@@ -55,15 +55,16 @@
   - TODO: 更细节的压缩机制phase3实现
 - [x] Skill注入机制 ✅
   - internal/skill/skill.go: 技能管理器
+  - .5hagent/skills/\*.json: 技能定义文件
   - /skill list|enable|disable: 命令支持
 
 ---
 
-## Phase 3 进行中（长程任务 + SWE-bench 工具补齐）
+## Phase 3 进行中（长程任务 + 持久记忆）
 
 **P3.2 长程任务管理** ✅:
 
-- [x] TaskList管理（持久化任务列表）✅
+- [x] TaskList管理（全局持久化任务列表）✅
   - task_create: 创建任务
   - task_update: 更新任务状态
   - task_get: 获取任务详情
@@ -72,6 +73,8 @@
   - 持久化到 .5hagent/tasks.json
 - [ ] 自动规划（根据任务生成执行计划）
 - [ ] 进度追踪（5h稳定工作）
+
+- [] 记忆持久化
 
 ---
 
