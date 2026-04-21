@@ -3,17 +3,19 @@
 ## 位置
 
 `internal/agent/agent.go` (~686行)
+`internal/agent/skill.go` (~90行) - Skill 命令处理
 
 ## 结构
 
 ```go
 type Agent struct {
-    model      model.ToolCallingChatModel  // LLM
-    tools      []tool.BaseTool             // 工具列表
-    toolMap    map[string]tool.BaseTool    // O(1)查找
-    config     *Config                     // 配置
-    state      *State                      // 状态
-    ctxManager *agentctx.Manager           // 上下文管理
+    model        model.ToolCallingChatModel  // LLM
+    tools        []tool.BaseTool             // 工具列表
+    toolMap      map[string]tool.BaseTool    // O(1)查找
+    config       *Config                     // 配置
+    state        *State                      // 状态
+    ctxManager   *agentctx.Manager           // 上下文管理
+    skillManager *skill.Manager              // 技能管理
 }
 ```
 
@@ -21,15 +23,18 @@ type Agent struct {
 
 ### NewAgent(model, tools, config)
 
-创建Agent，构建toolMap
+创建Agent，构建toolMap，初始化技能管理器
+
+**新增**: 加载 `.miniagent/skills/*/SKILL.md` 技能定义
 
 ### Run(ctx, messageCtx, input) - 非流式
 
 ReAct循环：
 
 1. 注入SystemPrompt(首次)
-2. 添加用户消息
-3. 循环(最多MaxTurns):
+2. **注入启用的Skills**（作为独立System消息）
+3. 添加用户消息
+4. 循环(最多MaxTurns):
    - 调用LLM生成响应
    - 检查ToolCalls
    - 有工具 → exeTools() → 继续
@@ -40,11 +45,12 @@ ReAct循环：
 流式ReAct循环：
 
 1. 注入SystemPrompt(首次)
-2. 添加用户消息
-3. **上下文压缩检查**
+2. **注入启用的Skills**（作为独立System消息）
+3. 添加用户消息
+4. **上下文压缩检查**
    - 超过50条消息时自动压缩
    - 保留最近30条
-4. 循环(最多MaxTurns):
+5. 循环(最多MaxTurns):
    - 流式调用LLM
    - 读取chunks并调用onToken回调
    - **ToolCall合并**（避免多工具调用时arguments错误合并）
@@ -73,9 +79,22 @@ ReAct循环：
 
 ## 关键特性
 
+### Skill 注入机制
+
+- 首次对话时，在 System Prompt 之后注入启用的技能
+- 每个技能作为独立的 System 消息
+- 技能格式：Markdown + YAML frontmatter（遵循 Claude Code 规范）
+- 命令：`/skill list|enable|disable`
+
+详见 `doc/skill_injection.md`
+
 ### 流式输出与ToolCall合并
 
 使用列表+ID索引追踪工具调用，避免多工具调用时arguments错误合并
+
+### 边输出边执行工具
+
+流式输出过程中，检测到完整的工具调用（valid JSON）时立即异步执行，无需等待整个流结束
 
 ### 上下文压缩
 
@@ -89,7 +108,8 @@ ReAct循环：
 
 - 工具系统: `doc/tools.md`
 - 上下文管理: `doc/context.md`
-- 流式输出: `doc/stage2_streaming.md`
+- Skill 注入: `doc/skill_injection.md`
+- Phase 2 总结: `doc/phase2_summary.md`
 
 # TaskList
 

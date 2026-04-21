@@ -1,0 +1,28 @@
+[1m[35mminiAgent - Interactive Mode (Stage 1)[0m[0m
+[90mType your message and press Enter. Ctrl+C or Ctrl+D to exit.[0m
+
+[90m
+[思考中...][0m[[90m07:04:53[0m][[32mINFO[0m][[34mSTREAM[0m] Chunk#6 contains ToolCalls: 1
+[[90m07:04:53[0m][[32mINFO[0m][[34mSTREAM[0m]   [0] id='call_function_qbdmqgz4ii39_1' name='read_file' args=''
+[[90m07:04:53[0m][[32mINFO[0m][[34mSTREAM[0m] Chunk#7 contains ToolCalls: 1
+[[90m07:04:53[0m][[32mINFO[0m][[34mSTREAM[0m]   [0] id='' name='' args='{'
+[[90m07:04:54[0m][[32mINFO[0m][[34mSTREAM[0m] Chunk#8 contains ToolCalls: 1
+[[90m07:04:54[0m][[32mINFO[0m][[34mSTREAM[0m]   [0] id='' name='' args='"path": "astropy/io/fits/fitsrec.py"}'
+[[90m07:04:54[0m][[32mINFO[0m][[34mSTREAM[0m] Merged ToolCalls: 1
+[[90m07:04:54[0m][[32mINFO[0m][[34mSTREAM[0m]   [0] id='call_function_qbdmqgz4ii39_1' name='read_file' args='{"path": "astropy/io/fits/fitsrec.py"}'
+[[90m07:04:54[0m][[32mINFO[0m][[35mLLM[0m] Tool calls requested: 1
+[[90m07:04:54[0m][[32mINFO[0m][[35mLLM[0m]   [0] id=call_function_qbdmqgz4ii39_1 name=read_file args={"path": "astropy/io/fits/fitsrec.py"}
+[[90m07:04:54[0m][[32mINFO[0m][[36m[1mTOOL[0m] Executing 1 tool(s)
+
+[36m[执行工具 1/1: read_file (并发)][0m
+[90m  参数: {"path": "astropy/io/fits/fitsrec.py"}[0m
+[[90m07:04:54[0m][[32mINFO[0m][[36m[1mTOOL[0m] [1/1] name=read_file id=call_function_qbdmqgz4ii39_1 (concurrent)
+[[90m07:04:54[0m][[32mINFO[0m][[36m[1mTOOL[0m] Invoking: read_file
+[[90m07:04:54[0m][[32mINFO[0m][[36m[1mTOOL[0m] Success: read_file
+[32m  结果: {"content":"1\t# Licensed under a 3-clause BSD style license - see PYFITS...d, self.step))\n99\t\n100\t    def __repr__(self):\n","total_lines":1331}[0m
+[[90m07:04:54[0m][[32mINFO[0m][[36m[1mTOOL[0m] All tools executed
+[[90m07:04:59[0m][[31m[1mERROR[0m][[35mLLM[0m] Stream failed: create new streaming message fail: POST "https://api.minimaxi.com/anthropic/v1/messages": 529  {"type":"error","error":{"type":"overloaded_error","message":"当前时段请求拥挤，极速版套餐可使用highspeed模型，享受更稳定的响应体验。https://platform.minimaxi.com/subscribe/token-plan (2064) (529)"},"request_id":"0636549a69591fc7431fda821e549026"}
+                    [[90m07:04:59[0m][[31m[1mERROR[0m][[33mAGENT[0m] Error: LLM stream failed: create new streaming message fail: POST "https://api.minimaxi.com/anthropic/v1/messages": 529  {"type":"error","error":{"type":"overloaded_error","message":"当前时段请求拥挤，极速版套餐可使用highspeed模型，享受更稳定的响应体验。https://platform.minimaxi.com/subscribe/token-plan (2064) (529)"},"request_id":"0636549a69591fc7431fda821e549026"}
+[31mError: agent error: LLM stream failed: create new streaming message fail: POST "https://api.minimaxi.com/anthropic/v1/messages": 529  {"type":"error","error":{"type":"overloaded_error","message":"当前时段请求拥挤，极速版套餐可使用highspeed模型，享受更稳定的响应体验。https://platform.minimaxi.com/subscribe/token-plan (2064) (529)"},"request_id":"0636549a69591fc7431fda821e549026"}[0m
+[33m
+Goodbye![0m
