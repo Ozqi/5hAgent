@@ -30,12 +30,23 @@ type EditOutput struct {
 func NewEditTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
 		"edit",
-		"Edit a file by replacing exact string matches. The old_string must match exactly (including whitespace and newlines). Returns the number of replacements made.",
+		"Edit a file by replacing exact string matches. REQUIRED: path (absolute file path), old_string (exact match), new_string (replacement). Returns the number of replacements made.",
 		func(ctx context.Context, input EditInput) (*schema.ToolResult, error) {
+			// Validate required parameters
+			if input.Path == "" {
+				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'path' is required. You must provide the absolute file path (e.g., '/home/user/project/file.py')")
+			}
+			if input.OldString == "" {
+				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'old_string' is required. You must provide the exact string to replace")
+			}
+			if input.NewString == "" {
+				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'new_string' is required. You must provide the replacement string")
+			}
+
 			// Read file content
 			content, err := os.ReadFile(input.Path)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read file: %w", err)
+				return nil, fmt.Errorf("failed to read file '%s': %w. Make sure the path is correct and the file exists. Use absolute paths like '/home/user/project/file.py'", input.Path, err)
 			}
 
 			originalContent := string(content)
@@ -44,7 +55,7 @@ func NewEditTool() (tool.EnhancedInvokableTool, error) {
 			if !strings.Contains(originalContent, input.OldString) {
 				output := EditOutput{
 					Success:      false,
-					Message:      "old_string not found in file",
+					Message:      fmt.Sprintf("old_string not found in file. The exact string you provided does not exist in '%s'. Make sure to match whitespace, indentation, and newlines exactly. Consider reading the file again to verify the exact content.", input.Path),
 					Replacements: 0,
 				}
 				outputJSON, _ := json.Marshal(output)

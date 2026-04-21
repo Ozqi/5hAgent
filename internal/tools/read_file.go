@@ -31,6 +31,11 @@ func NewReadFileTool() (tool.EnhancedInvokableTool, error) {
 		"read_file",
 		"Read file content from the specified path. Returns the content and total line count. Supports reading specific line ranges using offset and limit parameters.",
 		func(ctx context.Context, input ReadFileInput) (*schema.ToolResult, error) {
+			// Validate path
+			if input.Path == "" {
+				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'path' is required. You must provide the file path to read")
+			}
+
 			// Set default values
 			if input.Offset == 0 {
 				input.Offset = 1
@@ -47,7 +52,7 @@ func NewReadFileTool() (tool.EnhancedInvokableTool, error) {
 			// Open file
 			file, err := os.Open(input.Path)
 			if err != nil {
-				return nil, fmt.Errorf("failed to open file: %w", err)
+				return nil, fmt.Errorf("failed to open file '%s': %w. Make sure the path is correct and the file exists", input.Path, err)
 			}
 			defer file.Close()
 

@@ -8,6 +8,14 @@ import (
 	agentctx "github.com/lzq/5hAgent/internal/context"
 )
 
+// skill_handler.go - Agent 的 Skill 处理层
+// 职责：
+//   1. 将 skill 注入到 Agent 上下文
+//   2. 处理用户的 skill 命令（/skill list/enable/disable）
+//   3. 作为 Agent 和 skill.Manager 之间的桥接层
+//
+// 注意：Skill 的核心逻辑（加载、存储、管理）在 internal/skill/ 包中
+
 // injectSkills 将启用的技能作为独立消息注入到上下文
 func (a *Agent) injectSkills(messageCtx *agentctx.Context) error {
 	skills := a.skillManager.ListSkills()
