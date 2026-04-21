@@ -2,13 +2,13 @@
 
 # 5hAgent
 
-> 基于 Go + Eino 的轻量级 AI Agent，代码量 ~3000 行
+> 基于 Go + Eino 的轻量级 AI Agent，代码量 ~3300 行
 
 ## 目标
 
 - 核心循环完整可用（Phase 1 ✅）
 - 流式输出、工具扩展、上下文管理（Phase 2 ✅）
-- 长程任务管理、SWE-bench 工具补齐（Phase 3 ✅）
+- 长程任务管理、SWE-bench 工具补齐（Phase 3 进行中）
 - 参考 Claude Code 设计，逐步演进
 - 代码简洁（< 4000 行）
 
@@ -23,7 +23,9 @@
 
 ```
 internal/
-├── agent/agent.go      # Agent 核心：ReAct 循环、流式输出、工具并发
+├── agent/
+│   ├── agent.go        # Agent 核心：ReAct 循环、流式输出、工具并发
+│   └── skill.go        # Skill 注入和命令处理
 ├── llm/client.go       # LLM 客户端
 ├── tools/              # 工具系统（12 个工具）
 │   ├── read_file.go    # 文件读取
@@ -35,6 +37,7 @@ internal/
 │   ├── exec_shell.go   # Shell 执行
 │   ├── task_tools.go   # 任务管理（5 个工具）
 │   └── registry.go     # 工具注册
+├── skill/skill.go      # 技能管理器
 ├── tasklist/           # 任务列表管理
 ├── context/ctx.go      # 上下文管理、自动压缩
 ├── logger/logger.go    # 日志系统
@@ -76,30 +79,43 @@ go build -o miniagent cmd/miniagent/main.go
 
 ### Phase 2 ✅（流式输出，工具扩展，上下文管理）
 
+**P2.1 流式输出**:
 - ✅ Streaming 输出（逐 token 显示）
 - ✅ 多工具调用合并修复
-- ✅ 工具扩展（glob, edit）
+- ✅ 边输出边执行工具（异步执行）
+
+**P2.2 工具扩展**:
+- ✅ glob: 文件模式匹配
+- ✅ edit: 文件编辑（精确替换）
 - ✅ 工具并发执行（只读工具并行）
-- ✅ 上下文自动压缩（50→30 条消息）
 
-**代码量**: 2099 行
-
-### Phase 3 ✅（长程任务 + SWE-bench 工具补齐）
-
-**SWE-bench P0 工具集**:
+**P2.3 SWE-bench 工具**:
 - ✅ write_file: 创建/覆盖文件
 - ✅ grep: 代码搜索（ripgrep + grep fallback）
 - ✅ list_dir: 列出目录内容
 
-**TaskList 管理系统**:
+**P2.4 上下文管理**:
+- ✅ 上下文自动压缩（50→30 条消息）
+- ✅ Skill 注入机制（独立消息注入）
+- ✅ /skill list|enable|disable 命令
+
+**代码量**: 3320 行
+
+### Phase 3 进行中（长程任务 + SWE-bench 工具补齐）
+
+**TaskList 管理系统** ✅:
 - ✅ 任务 CRUD 操作（create, update, get, list, delete）
-- ✅ 持久化到 `.5hagent/tasks.json`
+- ✅ 持久化到 `.miniagent/tasks.json`
 - ✅ 并发安全（sync.RWMutex）
 - ✅ 进度统计
 
-**代码量**: 3073 行
+**待完成**:
+- [ ] 自动规划（根据任务生成执行计划）
+- [ ] 进度追踪（5h 稳定工作）
+- [ ] git_diff, git_apply 工具
+- [ ] SWE-bench 测试流程
 
-**详细文档**: `doc/phase3_summary.md`
+**代码量**: 3320 行
 
 ## 工具清单
 
@@ -112,12 +128,31 @@ go build -o miniagent cmd/miniagent/main.go
 
 **总计**: 12 个工具（6 个只读支持并发，6 个写入串行执行）
 
-## 下一步（Phase 3+）
+## Skill 系统
+
+支持动态加载和启用技能提示词，增强 Agent 在特定场景下的能力。
+
+**使用方式**:
+```bash
+/skill list              # 列出所有技能
+/skill enable debug_helper   # 启用调试助手
+/skill disable code_review   # 禁用代码审查
+```
+
+**内置技能**:
+- `debug_helper`: 系统化调试方法论
+- `code_review`: 代码质量、安全性、性能审查
+
+**扩展**: 在 `.miniagent/skills/` 目录下添加 JSON 文件即可
+
+详见 `doc/skill_injection.md`
+
+## 下一步
 
 - [ ] 自动规划（根据大任务生成子任务）
 - [ ] 进度追踪（5h+ 长程任务稳定执行）
-- [ ] SWE-bench P1 工具（git_diff, git_apply, run_tests）
-- [ ] SWE-bench 评估
+- [ ] git_diff, git_apply 工具
+- [ ] SWE-bench 评估流程
 - [ ] 自我内化（学习流程，生成 skill）
 
 ## 文档
@@ -126,6 +161,7 @@ go build -o miniagent cmd/miniagent/main.go
 - `doc/tools.md` - 工具系统
 - `doc/tasklist.md` - TaskList 管理
 - `doc/context.md` - 上下文管理
+- `doc/skill_injection.md` - Skill 注入机制
 - `doc/phase2_summary.md` - Phase 2 总结
 - `doc/phase3_summary.md` - Phase 3 总结
 - `doc/swe_bench_integration.md` - SWE-bench 接入计划
