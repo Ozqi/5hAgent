@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/chzyer/readline"
 	"github.com/cloudwego/eino/schema"
@@ -130,6 +131,17 @@ func runInteractive(cmd *cobra.Command, args []string) {
 		}
 
 		if line == "" {
+			continue
+		}
+
+		// 处理技能命令
+		if strings.HasPrefix(line, "/skill") {
+			result, err := ag.HandleSkillCommand(line)
+			if err != nil {
+				cli.PrintError(err)
+			} else {
+				fmt.Println(result)
+			}
 			continue
 		}
 
