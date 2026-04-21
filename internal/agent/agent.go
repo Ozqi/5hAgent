@@ -13,6 +13,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/logger"
+	"github.com/lzq/5hAgent/internal/skill"
 )
 
 // Agent AI Agent 核心结构体
@@ -29,6 +30,8 @@ type Agent struct {
 	state *State // Agent 状态
 	// 上下文管理器
 	ctxManager *agentctx.Manager // 复用Manager实例
+	// 技能管理器
+	skillManager *skill.Manager // 技能注入管理
 }
 
 // Config Agent 配置
@@ -56,6 +59,7 @@ type State struct {
 //  1. 初始化 Agent 结构体
 //  2. 初始化 Agent 状态
 //  3. 构建工具名称映射表
+//  4. 初始化技能管理器
 func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *Config) (*Agent, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
@@ -71,12 +75,19 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 		toolMap[info.Name] = t
 	}
 
+	// 初始化技能管理器
+	skillMgr := skill.NewManager(".miniagent/skills")
+	if err := skillMgr.LoadSkills(); err != nil {
+		logger.DebugTag("SKILL", "Failed to load skills: %v", err)
+	}
+
 	return &Agent{
-		model:      model,
-		tools:      tools,
-		toolMap:    toolMap,
-		config:     config,
-		ctxManager: agentctx.NewManager(),
+		model:        model,
+		tools:        tools,
+		toolMap:      toolMap,
+		config:       config,
+		ctxManager:   agentctx.NewManager(),
+		skillManager: skillMgr,
 		state: &State{
 			CurrentTurn: 0,
 			IsRunning:   false,
@@ -110,9 +121,11 @@ func (a *Agent) Run(ctx context.Context, messageCtx *agentctx.Context, input str
 	// 1. 注入SystemPrompt（首次对话时）
 	messages, _ := a.ctxManager.GetMessages(messageCtx)
 	if len(messages) == 0 && a.config.SystemPrompt != "" {
+		// 注入技能到 system prompt
+		finalPrompt := a.skillManager.InjectSkills(a.config.SystemPrompt)
 		systemMsg := &schema.Message{
 			Role:    schema.System,
-			Content: a.config.SystemPrompt,
+			Content: finalPrompt,
 		}
 		if err := a.ctxManager.AddMessage(messageCtx, systemMsg); err != nil {
 			return "", fmt.Errorf("failed to add system prompt: %w", err)
@@ -215,9 +228,11 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 	// 1. 注入SystemPrompt（首次对话时）
 	messages, _ := a.ctxManager.GetMessages(messageCtx)
 	if len(messages) == 0 && a.config.SystemPrompt != "" {
+		// 注入技能到 system prompt
+		finalPrompt := a.skillManager.InjectSkills(a.config.SystemPrompt)
 		systemMsg := &schema.Message{
 			Role:    schema.System,
-			Content: a.config.SystemPrompt,
+			Content: finalPrompt,
 		}
 		if err := a.ctxManager.AddMessage(messageCtx, systemMsg); err != nil {
 			return "", fmt.Errorf("failed to add system prompt: %w", err)
