@@ -118,17 +118,23 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 //     - 返回响应内容
 //  4. 如果达到最大轮数，返回错误
 func (a *Agent) Run(ctx context.Context, messageCtx *agentctx.Context, input string) (string, error) {
-	// 1. 注入SystemPrompt（首次对话时）
+	// 1. 注入SystemPrompt和Skills（首次对话时）
 	messages, _ := a.ctxManager.GetMessages(messageCtx)
-	if len(messages) == 0 && a.config.SystemPrompt != "" {
-		// 注入技能到 system prompt
-		finalPrompt := a.skillManager.InjectSkills(a.config.SystemPrompt)
-		systemMsg := &schema.Message{
-			Role:    schema.System,
-			Content: finalPrompt,
+	if len(messages) == 0 {
+		// 添加 system prompt
+		if a.config.SystemPrompt != "" {
+			systemMsg := &schema.Message{
+				Role:    schema.System,
+				Content: a.config.SystemPrompt,
+			}
+			if err := a.ctxManager.AddMessage(messageCtx, systemMsg); err != nil {
+				return "", fmt.Errorf("failed to add system prompt: %w", err)
+			}
 		}
-		if err := a.ctxManager.AddMessage(messageCtx, systemMsg); err != nil {
-			return "", fmt.Errorf("failed to add system prompt: %w", err)
+
+		// 注入启用的技能作为独立消息
+		if err := a.injectSkills(messageCtx); err != nil {
+			return "", fmt.Errorf("failed to inject skills: %w", err)
 		}
 	}
 
@@ -225,17 +231,23 @@ type TokenCallback func(token string)
 //
 // 返回: 完整响应内容和可能的错误
 func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, input string, onToken TokenCallback) (string, error) {
-	// 1. 注入SystemPrompt（首次对话时）
+	// 1. 注入SystemPrompt和Skills（首次对话时）
 	messages, _ := a.ctxManager.GetMessages(messageCtx)
-	if len(messages) == 0 && a.config.SystemPrompt != "" {
-		// 注入技能到 system prompt
-		finalPrompt := a.skillManager.InjectSkills(a.config.SystemPrompt)
-		systemMsg := &schema.Message{
-			Role:    schema.System,
-			Content: finalPrompt,
+	if len(messages) == 0 {
+		// 添加 system prompt
+		if a.config.SystemPrompt != "" {
+			systemMsg := &schema.Message{
+				Role:    schema.System,
+				Content: a.config.SystemPrompt,
+			}
+			if err := a.ctxManager.AddMessage(messageCtx, systemMsg); err != nil {
+				return "", fmt.Errorf("failed to add system prompt: %w", err)
+			}
 		}
-		if err := a.ctxManager.AddMessage(messageCtx, systemMsg); err != nil {
-			return "", fmt.Errorf("failed to add system prompt: %w", err)
+
+		// 注入启用的技能作为独立消息
+		if err := a.injectSkills(messageCtx); err != nil {
+			return "", fmt.Errorf("failed to inject skills: %w", err)
 		}
 	}
 

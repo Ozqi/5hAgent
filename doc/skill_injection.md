@@ -2,7 +2,7 @@
 
 ## 概述
 
-Skill 注入机制允许动态加载和启用预定义的技能提示词，增强 Agent 在特定场景下的能力。
+Skill 注入机制允许动态加载和启用预定义的技能提示词，增强 Agent 在特定场景下的能力。技能作为独立的 System 消息插入到对话上下文中，而不是混入主 System Prompt。
 
 ## 架构
 
@@ -16,6 +16,7 @@ internal/skill/
 
 internal/agent/
 ├── agent.go                # Agent 集成技能注入
+├── skill_inject.go         # 技能注入实现
 └── skill_commands.go       # /skill 命令处理
 ```
 
@@ -36,14 +37,30 @@ type Skill struct {
 
 **功能**:
 - `LoadSkills()`: 从 `.miniagent/skills/*.json` 加载技能定义
-- `InjectSkills(basePrompt)`: 将启用的技能注入到 system prompt
 - `EnableSkill(name)`: 启用指定技能
 - `DisableSkill(name)`: 禁用指定技能
 - `ListSkills()`: 列出所有技能
 
 ### 3. Agent 集成
 
-在 `NewAgent()` 中初始化技能管理器，在 `Run()` 和 `RunStream()` 中注入技能到 system prompt。
+**注入时机**: 在首次对话时，System Prompt 之后、User Message 之前
+
+**注入方式**: 每个启用的技能作为独立的 System 消息插入
+
+```go
+// 消息顺序示例
+[
+  {role: "system", content: "You are a helpful AI assistant."},
+  {role: "system", content: "# Skill: debug_helper\n..."},
+  {role: "system", content: "# Skill: code_review\n..."},
+  {role: "user", content: "用户输入"}
+]
+```
+
+**优势**:
+- 职责分离：System Prompt 和 Skill 独立管理
+- 动态性：可以在不修改 System Prompt 的情况下启用/禁用技能
+- 可追踪：每个技能作为独立消息，便于调试和日志记录
 
 ## 使用方式
 
@@ -82,3 +99,36 @@ type Skill struct {
 ## 扩展
 
 添加新技能只需在 `.miniagent/skills/` 目录下创建新的 JSON 文件，Agent 启动时会自动加载。
+
+## 实现细节
+
+### injectSkills() 函数
+
+位于 `internal/agent/skill_inject.go`，负责将启用的技能转换为 System 消息并插入到上下文中。
+
+```go
+func (a *Agent) injectSkills(messageCtx *agentctx.Context) error {
+    skills := a.skillManager.ListSkills()
+    for _, skill := range skills {
+        if skill.Enabled {
+            skillMsg := &schema.Message{
+                Role:    schema.System,
+                Content: fmt.Sprintf("# Skill: %s\n%s\n\n%s", 
+                    skill.Name, skill.Description, skill.Prompt),
+            }
+            if err := a.ctxManager.AddMessage(messageCtx, skillMsg); err != nil {
+                return fmt.Errorf("failed to add skill %s: %w", skill.Name, err)
+            }
+        }
+    }
+    return nil
+}
+```
+
+### 注入流程
+
+1. 检查是否为首次对话（消息列表为空）
+2. 添加主 System Prompt
+3. 调用 `injectSkills()` 添加启用的技能
+4. 添加用户消息
+5. 开始 ReAct 循环

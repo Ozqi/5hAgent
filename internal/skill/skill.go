@@ -76,20 +76,10 @@ func (m *Manager) ListSkills() []*Skill {
 	return skills
 }
 
-// InjectSkills 将启用的技能注入到 system prompt
+// InjectSkills 已废弃：技能现在作为独立消息注入，不再混入 system prompt
+// 保留此方法以保持向后兼容
 func (m *Manager) InjectSkills(basePrompt string) string {
-	if len(m.skills) == 0 {
-		return basePrompt
-	}
-
-	injected := basePrompt + "\n\n# Available Skills\n"
-	for _, skill := range m.skills {
-		if skill.Enabled {
-			injected += fmt.Sprintf("\n## %s\n%s\n\n%s\n", skill.Name, skill.Description, skill.Prompt)
-		}
-	}
-
-	return injected
+	return basePrompt
 }
 
 // EnableSkill 启用技能
