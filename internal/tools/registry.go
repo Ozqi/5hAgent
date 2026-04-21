@@ -5,92 +5,50 @@ import (
 	"fmt"
 
 	"github.com/cloudwego/eino/components/tool"
+	"github.com/lzq/5hAgent/internal/agent"
+	"github.com/lzq/5hAgent/internal/skill"
 )
 
 // registry holds all registered tools
 var registry []tool.BaseTool
 
-// init initializes the tool registry with all available tools
-func init() {
-	// Register read_file tool
-	readFileTool, err := NewReadFileTool()
-	if err != nil {
-		panic(fmt.Sprintf("failed to create read_file tool: %v", err))
-	}
-	registry = append(registry, readFileTool)
+// InitRegistry 初始化工具注册表（需要在 main 中调用）
+func InitRegistry(taskList *agent.TaskList, skillMgr *skill.Manager) error {
+	registry = nil // 清空
 
-	// Register exec_shell tool
-	execShellTool, err := NewExecShellTool()
-	if err != nil {
-		panic(fmt.Sprintf("failed to create exec_shell tool: %v", err))
+	// 基础文件工具
+	tools := []struct {
+		name string
+		fn   func() (tool.BaseTool, error)
+	}{
+		{"read_file", func() (tool.BaseTool, error) { return NewReadFileTool() }},
+		{"exec_shell", func() (tool.BaseTool, error) { return NewExecShellTool() }},
+		{"glob", func() (tool.BaseTool, error) { return NewGlobTool() }},
+		{"edit", func() (tool.BaseTool, error) { return NewEditTool() }},
+		{"write_file", func() (tool.BaseTool, error) { return NewWriteFileTool() }},
+		{"grep", func() (tool.BaseTool, error) { return NewGrepTool() }},
+		{"list_dir", func() (tool.BaseTool, error) { return NewListDirTool() }},
 	}
-	registry = append(registry, execShellTool)
 
-	// Register glob tool
-	globTool, err := NewGlobTool()
-	if err != nil {
-		panic(fmt.Sprintf("failed to create glob tool: %v", err))
+	for _, t := range tools {
+		tool, err := t.fn()
+		if err != nil {
+			return fmt.Errorf("failed to create %s tool: %w", t.name, err)
+		}
+		registry = append(registry, tool)
 	}
-	registry = append(registry, globTool)
 
-	// Register edit tool
-	editTool, err := NewEditTool()
-	if err != nil {
-		panic(fmt.Sprintf("failed to create edit tool: %v", err))
+	// Task 工具（统一入口）
+	if taskList != nil {
+		registry = append(registry, NewTaskTool(taskList))
 	}
-	registry = append(registry, editTool)
 
-	// Register write_file tool
-	writeFileTool, err := NewWriteFileTool()
-	if err != nil {
-		panic(fmt.Sprintf("failed to create write_file tool: %v", err))
+	// Skill 工具
+	if skillMgr != nil {
+		registry = append(registry, NewSkillTool(skillMgr))
 	}
-	registry = append(registry, writeFileTool)
 
-	// Register grep tool
-	grepTool, err := NewGrepTool()
-	if err != nil {
-		panic(fmt.Sprintf("failed to create grep tool: %v", err))
-	}
-	registry = append(registry, grepTool)
-
-	// Register list_dir tool
-	listDirTool, err := NewListDirTool()
-	if err != nil {
-		panic(fmt.Sprintf("failed to create list_dir tool: %v", err))
-	}
-	registry = append(registry, listDirTool)
-
-	// Register task management tools
-	taskCreateTool, err := NewTaskCreateTool()
-	if err != nil {
-		panic(fmt.Sprintf("failed to create task_create tool: %v", err))
-	}
-	registry = append(registry, taskCreateTool)
-
-	taskUpdateTool, err := NewTaskUpdateTool()
-	if err != nil {
-		panic(fmt.Sprintf("failed to create task_update tool: %v", err))
-	}
-	registry = append(registry, taskUpdateTool)
-
-	taskGetTool, err := NewTaskGetTool()
-	if err != nil {
-		panic(fmt.Sprintf("failed to create task_get tool: %v", err))
-	}
-	registry = append(registry, taskGetTool)
-
-	taskListTool, err := NewTaskListTool()
-	if err != nil {
-		panic(fmt.Sprintf("failed to create task_list tool: %v", err))
-	}
-	registry = append(registry, taskListTool)
-
-	taskDeleteTool, err := NewTaskDeleteTool()
-	if err != nil {
-		panic(fmt.Sprintf("failed to create task_delete tool: %v", err))
-	}
-	registry = append(registry, taskDeleteTool)
+	return nil
 }
 
 // GetAllTools returns all registered tools

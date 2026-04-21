@@ -779,3 +779,44 @@ func (a *Agent) executeToolStreaming(ctx context.Context, messageCtx *agentctx.C
 		logger.PrintToolResult(result)
 	}
 }
+
+// GetSkillManager 获取技能管理器
+func (a *Agent) GetSkillManager() *skill.Manager {
+	return a.skillManager
+}
+
+// SetModel 设置模型
+func (a *Agent) SetModel(model model.ToolCallingChatModel) {
+	a.model = model
+}
+
+// SetTools 设置工具列表
+func (a *Agent) SetTools(tools []tool.BaseTool) {
+	a.tools = tools
+	// 重建工具映射表
+	a.toolMap = make(map[string]tool.BaseTool)
+	for _, t := range tools {
+		info, err := t.Info(context.Background())
+		if err != nil {
+			continue
+		}
+		a.toolMap[info.Name] = t
+	}
+}
+
+// injectSkills 将启用的技能作为独立消息注入到上下文
+func (a *Agent) injectSkills(messageCtx *agentctx.Context) error {
+	skills := a.skillManager.ListSkills()
+	for _, skill := range skills {
+		if skill.Enabled {
+			skillMsg := &schema.Message{
+				Role:    schema.System,
+				Content: fmt.Sprintf("# Skill: %s\n\n%s", skill.Name, skill.Content),
+			}
+			if err := a.ctxManager.AddMessage(messageCtx, skillMsg); err != nil {
+				return fmt.Errorf("failed to add skill %s: %w", skill.Name, err)
+			}
+		}
+	}
+	return nil
+}

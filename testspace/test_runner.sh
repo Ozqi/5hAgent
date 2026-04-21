@@ -1,5 +1,5 @@
 #!/bin/bash
-# SWE-bench 纯净测试运行器
+# SWE-bench 测试运行器 - 3个新任务
 
 set -e
 
@@ -16,22 +16,26 @@ fi
 
 mkdir -p "$RESULTS_DIR"
 
-# 任务定义
+# 任务定义 - 3个新任务
 declare -A TASKS
-TASKS["1_id"]="astropy__astropy-14365"
-TASKS["1_dir"]="astropy"
-TASKS["1_file"]="astropy/io/ascii/qdp.py"
-TASKS["1_problem"]="ascii.qdp Table format assumes QDP commands are upper case. The parser should be case-insensitive. Fix the code so that lowercase commands like 'read serr 1 2' are recognized."
 
-TASKS["2_id"]="astropy__astropy-6938"
-TASKS["2_dir"]="astropy-6938"
-TASKS["2_file"]="astropy/io/fits/fitsrec.py"
-TASKS["2_problem"]="Possible bug in io.fits related to D exponents. The code 'output_field.replace(encode_ascii('E'), encode_ascii('D'))' doesn't work because replace() returns a copy. Fix this bug."
+# 任务 1: 字符串处理 - slugify 多空格问题
+TASKS["1_id"]="task1-slugify"
+TASKS["1_dir"]="task1"
+TASKS["1_file"]="utils/text.py"
+TASKS["1_problem"]="Fix slugify function to handle consecutive spaces correctly. Multiple consecutive spaces should be converted to a single dash, not multiple dashes. For example, 'hello  world' should become 'hello-world', not 'hello--world'."
 
-TASKS["3_id"]="astropy__astropy-14182"
-TASKS["3_dir"]="astropy-14182"
-TASKS["3_file"]="astropy/io/ascii/rst.py"
-TASKS["3_problem"]="Please support header_rows parameter in RestructuredText output. The RST class should accept header_rows like FixedWidth does."
+# 任务 2: HTTP 请求 - timeout 参数未使用
+TASKS["2_id"]="task2-timeout"
+TASKS["2_dir"]="task2"
+TASKS["2_file"]="http/client.py"
+TASKS["2_problem"]="Fix make_request function to actually use the timeout parameter. The timeout parameter is accepted but not used in the response. Add 'timeout': timeout to the response dictionary."
+
+# 任务 3: 列表工具 - 去重保持顺序
+TASKS["3_id"]="task3-dedup"
+TASKS["3_dir"]="task3"
+TASKS["3_file"]="utils/lists.py"
+TASKS["3_problem"]="Fix remove_duplicates function to preserve the order of first occurrence. Currently using set() which loses order. Use a different approach that maintains the original order while removing duplicates."
 
 # 运行单个任务
 run_task() {
@@ -47,6 +51,24 @@ run_task() {
     echo "=========================================="
     echo "任务 $task_num: $task_id"
     echo "=========================================="
+
+    # 检查原始目录是否存在
+    if [ ! -d "$ORIGINAL_DIR/$task_dir" ]; then
+        echo "✗ 跳过 - 原始代码不存在: $ORIGINAL_DIR/$task_dir"
+        cat > "$result_file" << EOF
+{
+  "task_id": "$task_id",
+  "status": "SKIPPED",
+  "duration_seconds": 0,
+  "changes_lines": 0,
+  "exit_code": 1,
+  "workspace": "$workspace",
+  "timestamp": "$TIMESTAMP",
+  "error": "Original code not found"
+}
+EOF
+        return 1
+    fi
 
     # 清理并创建 workspace
     rm -rf "$workspace"
@@ -110,7 +132,7 @@ EOF
 # 主函数
 main() {
     echo "=========================================="
-    echo "SWE-bench 纯净测试"
+    echo "SWE-bench 测试 - 3个新任务"
     echo "=========================================="
     echo ""
 
