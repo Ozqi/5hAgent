@@ -326,12 +326,33 @@ ReAct循环：
 
 ## 相关文档
 
-- 工具系统: `doc/tools.md`
-- 工具执行详解: 本文档 - exeTools 部分
-- 上下文管理: `doc/context.md`
-- Skill 注入: `doc/skill_injection.md`
-- 命令处理: `doc/commonds.md`
-- 日志系统: `doc/logger.md`
+- 工具系统: `doc/tools.md` - 工具实现和注册
+- 上下文管理: `doc/context.md` - 消息存储和压缩
+- Skill 注入: `doc/skill_injection.md` - 技能管理
+- 命令处理: `doc/commonds.md` - 斜杠命令
+- 日志系统: `doc/logger.md` - 日志和调试
+
+## 工具执行系统详解
+
+### 双轨执行策略
+
+只读工具并发执行，写工具串行执行：
+
+```
+ToolCalls → 分类 → ┌─只读工具(并发)─┐
+                   └─写工具(串行)──┘ → 按顺序添加到上下文
+```
+
+### 接口适配机制
+
+自动适配两种工具接口：
+
+1. **EnhancedInvokableTool** (新接口) - 支持富媒体（图片、音频等）
+2. **InvokableTool** (旧接口) - 仅支持文本
+
+**适配流程**：优先尝试新接口 → 降级到旧接口 → 都不支持则报错
+
+详见 `invokeTool()` 函数：[tool_executor.go:181-207](../internal/agent/tool_executor.go#L181-L207)
 
 ## 代码文件
 
