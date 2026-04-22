@@ -49,11 +49,11 @@ type Loader struct {
 ```
 
 关键函数：
-- [`Load()`](../../internal/prompt/loader.go#L46) - 遍历目录加载所有 .md 文件
-- [`loadPromptFile()`](../../internal/prompt/loader.go#L83) - 解析单个文件的 frontmatter 和内容
-- [`GetContentWithVars()`](../../internal/prompt/loader.go#L139) - 替换 `{{var}}` 变量
+- [`Load()`](../../internal/prompt/loader.go#L47) - 遍历目录加载所有 .md 文件
+- [`loadPromptFile()`](../../internal/prompt/loader.go#L88) - 解析单个文件的 frontmatter 和内容
+- [`GetContentWithVars()`](../../internal/prompt/loader.go#L151) - 替换 `{{var}}` 变量
 
-### 2. Prompt 结构 ([loader.go](../../internal/prompt/loader.go#L12))
+### 2. Prompt 结构 ([loader.go](../../internal/prompt/loader.go#L13))
 
 ```go
 type Prompt struct {
@@ -78,7 +78,7 @@ variables:
 
 ## 使用方式
 
-### 基本用法 ([main.go](../../cmd/5hagent/main.go#L69))
+### 基本用法 ([main.go](../../cmd/5hagent/main.go#L72))
 
 ```go
 loader := prompt.NewLoader("prompt")
