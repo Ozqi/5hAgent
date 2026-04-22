@@ -2,8 +2,9 @@
 
 ## 位置
 
-`internal/agent/agent.go` (~686行)
-`internal/agent/skill.go` (~90行) - Skill 命令处理
+`internal/agent/agent.go` (~822行)
+`internal/commands/skill.go` (~68行) - Skill 命令处理
+`internal/commands/task.go` (~112行) - Task 命令处理
 
 ## 结构
 
@@ -19,6 +20,8 @@ type Agent struct {
 }
 ```
 
+**代码链接**: [agent.go:19-35](../internal/agent/agent.go#L19-L35)
+
 ## 核心函数
 
 ### NewAgent(model, tools, config)
@@ -26,6 +29,8 @@ type Agent struct {
 创建Agent，构建toolMap，初始化技能管理器
 
 **新增**: 加载 `.5hagent/skills/*/SKILL.md` 技能定义
+
+**代码链接**: [agent.go:63-118](../internal/agent/agent.go#L63-L118)
 
 ### Run(ctx, messageCtx, input) - 非流式
 
@@ -39,6 +44,8 @@ ReAct循环：
    - 检查ToolCalls
    - 有工具 → exeTools() → 继续
    - 无工具 → 返回响应
+
+**代码链接**: [agent.go:120-231](../internal/agent/agent.go#L120-L231)
 
 ### RunStream(ctx, messageCtx, input, onToken) - 流式
 
@@ -58,13 +65,17 @@ ReAct循环：
    - 有工具 → exeTools() → 继续
    - 无工具 → 返回完整内容
 
+**代码链接**: [agent.go:233-476](../internal/agent/agent.go#L233-L476)
+
 ### exeTools(ctx, messageCtx, toolCalls) - 多路执行
 
 **核心思想**: 只读工具可以并发执行（无副作用），写工具必须串行执行（避免竞态条件）
 
+**代码链接**: [agent.go:478-605](../internal/agent/agent.go#L478-L605)
+
 **执行流程**:
 
-1. **工具分类** (agent.go:482-504)
+1. **工具分类** [agent.go:482-504](../internal/agent/agent.go#L482-L504)
 
    ```go
    readOnlyTools := map[string]bool{
@@ -76,7 +87,7 @@ ReAct循环：
    - 遍历 `toolCalls`，根据工具名分类到 `readOnlyCalls` 或 `writeCalls`
    - 跳过 `Function.Name` 为空的无效调用
 
-2. **并发执行只读工具** (agent.go:507-511)
+2. **并发执行只读工具** [agent.go:507-511](../internal/agent/agent.go#L507-L511)
 
    ```go
    if len(readOnlyCalls) > 0 {
@@ -87,7 +98,7 @@ ReAct循环：
    - 调用 `exeToolsConcurrent()` 并发执行所有只读工具
    - 例如：同时读取 3 个文件，而不是依次读取
 
-3. **串行执行写工具** (agent.go:514-601)
+3. **串行执行写工具** [agent.go:514-601](../internal/agent/agent.go#L514-L601)
 
    ```go
    for idx, tc := range writeCalls {
@@ -142,9 +153,11 @@ ReAct循环：
 
 **并发模型**: 使用 goroutine + channel 收集结果，保证结果顺序
 
+**代码链接**: [agent.go:608-685](../internal/agent/agent.go#L608-L685)
+
 **执行流程**:
 
-1. **创建结果通道** (agent.go:609-616)
+1. **创建结果通道** [agent.go:609-616](../internal/agent/agent.go#L609-L616)
 
    ```go
    type toolResult struct {
@@ -156,7 +169,7 @@ ReAct循环：
    results := make(chan toolResult, len(toolCalls))
    ```
 
-2. **启动 goroutine 并发执行** (agent.go:619-654)
+2. **启动 goroutine 并发执行** [agent.go:619-654](../internal/agent/agent.go#L619-L654)
 
    ```go
    for idx, tc := range toolCalls {
@@ -190,7 +203,7 @@ ReAct循环：
    - 每个工具在独立的 goroutine 中执行
    - 通过闭包捕获 `idx` 和 `tc`，避免循环变量问题
 
-3. **收集结果** (agent.go:657-661)
+3. **收集结果** [agent.go:657-661](../internal/agent/agent.go#L657-L661)
 
    ```go
    collectedResults := make([]toolResult, len(toolCalls))
@@ -203,7 +216,7 @@ ReAct循环：
    - 从 channel 接收所有结果
    - 使用 `res.idx` 恢复原始顺序（重要！）
 
-4. **按顺序添加到上下文** (agent.go:664-682)
+4. **按顺序添加到上下文** [agent.go:664-682](../internal/agent/agent.go#L664-L682)
    ```go
    for _, res := range collectedResults {
        if res.err != nil {
@@ -256,7 +269,8 @@ ReAct循环：
 - 工具系统: `doc/tools.md`
 - 上下文管理: `doc/context.md`
 - Skill 注入: `doc/skill_injection.md`
-- Phase 2 总结: `doc/phase2_summary.md`
+- 命令处理: `doc/commonds.md`
+- 日志系统: `doc/logger.md`
 
 # TaskList
 

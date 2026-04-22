@@ -228,7 +228,7 @@ func (m *Manager) loadSkillFile(path string) (*Skill, error) {
 
 ### injectSkills() 函数
 
-位于 `internal/agent/skill.go`，负责将启用的技能转换为 System 消息：
+位于 `internal/agent/agent.go:808`，负责将启用的技能转换为 System 消息：
 
 ```go
 func (a *Agent) injectSkills(messageCtx *agentctx.Context) error {

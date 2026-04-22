@@ -24,6 +24,8 @@ const (
 )
 ```
 
+**代码链接**: [ctx.go:8-11](../internal/context/ctx.go#L8-L11)
+
 ## 核心函数
 
 ### NewManager() *Manager
@@ -52,6 +54,8 @@ const (
 检查是否需要压缩
 - 返回 `len(ctx.messages) > MaxMessages`
 
+**代码链接**: [ctx.go:111-113](../internal/context/ctx.go#L111-L113)
+
 ### Compress(ctx *Context) (int, int, error) ⭐ Phase 2 新增
 压缩上下文，保留最近的消息
 - **输入**：Context 实例
@@ -64,6 +68,8 @@ const (
   keepStart := len(messages) - KeepRecentMessages
   ctx.messages = ctx.messages[keepStart:]
   ```
+
+**代码链接**: [ctx.go:91-109](../internal/context/ctx.go#L91-L109)
 
 ## 使用场景
 
@@ -165,11 +171,11 @@ type Message struct {
 
 ## 代码位置
 
-- `ctx.go:1-23` - 结构定义和常量
-- `ctx.go:25-32` - NewManager, CreateContext
-- `ctx.go:34-46` - CloneContext
-- `ctx.go:48-66` - GetMessages, AddMessage, Clear
-- `ctx.go:68-110` - ShouldCompress, Compress（Phase 2 新增）
+- [ctx.go:1-23](../internal/context/ctx.go#L1-L23) - 结构定义和常量
+- [ctx.go:25-32](../internal/context/ctx.go#L25-L32) - NewManager, CreateContext
+- [ctx.go:34-46](../internal/context/ctx.go#L34-L46) - CloneContext
+- [ctx.go:48-66](../internal/context/ctx.go#L48-L66) - GetMessages, AddMessage, Clear
+- [ctx.go:91-113](../internal/context/ctx.go#L91-L113) - Compress, ShouldCompress（Phase 2 新增）
 
 ## 与 Agent 的集成
 
