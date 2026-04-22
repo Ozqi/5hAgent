@@ -58,37 +58,42 @@ ReAct循环：
    - 有工具 → exeTools() → 继续
    - 无工具 → 返回完整内容
 
-### exeTools(ctx, messageCtx, toolCalls) - 智能并发执行
+### exeTools(ctx, messageCtx, toolCalls) - 多路执行
 
 **核心思想**: 只读工具可以并发执行（无副作用），写工具必须串行执行（避免竞态条件）
 
 **执行流程**:
 
 1. **工具分类** (agent.go:482-504)
+
    ```go
    readOnlyTools := map[string]bool{
        "read_file": true,  "glob": true,      "grep": true,
        "list_dir": true,   "task_get": true,  "task_list": true,
    }
    ```
+
    - 遍历 `toolCalls`，根据工具名分类到 `readOnlyCalls` 或 `writeCalls`
    - 跳过 `Function.Name` 为空的无效调用
 
 2. **并发执行只读工具** (agent.go:507-511)
+
    ```go
    if len(readOnlyCalls) > 0 {
        a.exeToolsConcurrent(ctx, messageCtx, readOnlyCalls)
    }
    ```
+
    - 调用 `exeToolsConcurrent()` 并发执行所有只读工具
    - 例如：同时读取 3 个文件，而不是依次读取
 
 3. **串行执行写工具** (agent.go:514-601)
+
    ```go
    for idx, tc := range writeCalls {
        // 1. 显示工具执行提示
        logger.PrintToolCall(tc.Function.Name, tc.Function.Arguments, false)
-       
+
        // 2. 查找工具
        t := a.findTool(tc.Function.Name)
        if t == nil {
@@ -97,7 +102,7 @@ ReAct循环：
            a.ctxManager.AddMessage(messageCtx, errMsg)
            continue
        }
-       
+
        // 3. 执行工具（支持两种接口）
        if enhancedInvokable, ok := t.(tool.EnhancedInvokableTool); ok {
            // 返回 *schema.ToolResult（支持多媒体）
@@ -107,7 +112,7 @@ ReAct循环：
            // 返回 string（简单文本）
            result, err = invokable.InvokableRun(ctx, tc.Function.Arguments)
        }
-       
+
        // 4. 处理结果
        if err != nil {
            // 添加错误消息
@@ -119,6 +124,7 @@ ReAct循环：
        a.ctxManager.AddMessage(messageCtx, resultMsg)
    }
    ```
+
    - 按顺序执行每个写工具（避免文件冲突、数据竞争）
    - 每个工具执行完毕后立即将结果添加到上下文
    - 错误不会中断流程，会记录错误消息并继续
@@ -128,6 +134,7 @@ ReAct循环：
    - LLM 在下一轮会看到这些结果，决定下一步操作
 
 **为什么这样设计**:
+
 - 只读工具并发 → 提升性能（读取 5 个文件从 5s 降到 1s）
 - 写工具串行 → 保证安全（避免同时修改同一文件导致冲突）
 
@@ -138,6 +145,7 @@ ReAct循环：
 **执行流程**:
 
 1. **创建结果通道** (agent.go:609-616)
+
    ```go
    type toolResult struct {
        idx    int              // 原始索引（用于排序）
@@ -149,19 +157,20 @@ ReAct循环：
    ```
 
 2. **启动 goroutine 并发执行** (agent.go:619-654)
+
    ```go
    for idx, tc := range toolCalls {
        go func(idx int, tc schema.ToolCall) {
            // 1. 显示工具执行提示（标记为 concurrent）
            logger.PrintToolCall(tc.Function.Name, tc.Function.Arguments, true)
-           
+
            // 2. 查找工具
            t := a.findTool(tc.Function.Name)
            if t == nil {
                results <- toolResult{idx: idx, tc: tc, err: fmt.Errorf("tool not found")}
                return
            }
-           
+
            // 3. 执行工具（同样支持两种接口）
            var result string
            var execErr error
@@ -171,16 +180,18 @@ ReAct循环：
            } else if invokable, ok := t.(tool.InvokableTool); ok {
                result, execErr = invokable.InvokableRun(ctx, tc.Function.Arguments)
            }
-           
+
            // 4. 发送结果到 channel
            results <- toolResult{idx: idx, tc: tc, result: result, err: execErr}
        }(idx, tc)
    }
    ```
+
    - 每个工具在独立的 goroutine 中执行
    - 通过闭包捕获 `idx` 和 `tc`，避免循环变量问题
 
 3. **收集结果** (agent.go:657-661)
+
    ```go
    collectedResults := make([]toolResult, len(toolCalls))
    for i := 0; i < len(toolCalls); i++ {
@@ -188,6 +199,7 @@ ReAct循环：
        collectedResults[res.idx] = res  // 按原始索引存储
    }
    ```
+
    - 从 channel 接收所有结果
    - 使用 `res.idx` 恢复原始顺序（重要！）
 
@@ -202,10 +214,12 @@ ReAct循环：
        a.ctxManager.AddMessage(messageCtx, resultMsg)
    }
    ```
+
    - 按原始调用顺序添加结果（保证上下文的逻辑一致性）
    - LLM 看到的结果顺序与请求顺序一致
 
 **关键设计点**:
+
 - **保序**: 虽然并发执行，但结果按原始顺序添加到上下文
 - **错误隔离**: 一个工具失败不影响其他工具执行
 - **性能提升**: 3 个 `read_file` 并发执行，总耗时 = max(t1, t2, t3)，而非 t1+t2+t3
