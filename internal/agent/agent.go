@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -220,6 +221,128 @@ func (a *Agent) Run(ctx context.Context, messageCtx *agentctx.Context, input str
 // TokenCallback 流式输出的回调函数类型
 type TokenCallback func(token string)
 
+type streamToolState struct {
+	call       schema.ToolCall
+	dispatched bool
+}
+
+type streamToolCollector struct {
+	states []*streamToolState
+	byID   map[string]int
+}
+
+func newStreamToolCollector() *streamToolCollector {
+	return &streamToolCollector{
+		byID: make(map[string]int),
+	}
+}
+
+func (c *streamToolCollector) Add(chunks []schema.ToolCall) []schema.ToolCall {
+	if len(chunks) == 0 {
+		return nil
+	}
+
+	for _, tc := range chunks {
+		c.merge(tc)
+	}
+
+	ready := make([]schema.ToolCall, 0)
+	for _, state := range c.states {
+		if state.dispatched || !isRunnableToolCall(state.call) {
+			continue
+		}
+		state.dispatched = true
+		ready = append(ready, state.call)
+	}
+
+	return ready
+}
+
+func (c *streamToolCollector) merge(tc schema.ToolCall) {
+	if tc.ID != "" {
+		if idx, exists := c.byID[tc.ID]; exists {
+			mergeToolCall(&c.states[idx].call, tc)
+			return
+		}
+
+		if len(c.states) > 0 {
+			last := c.states[len(c.states)-1]
+			if last.call.ID == "" {
+				mergeToolCall(&last.call, tc)
+				c.byID[tc.ID] = len(c.states) - 1
+				return
+			}
+		}
+
+		c.states = append(c.states, &streamToolState{call: tc})
+		c.byID[tc.ID] = len(c.states) - 1
+		return
+	}
+
+	if len(c.states) == 0 {
+		c.states = append(c.states, &streamToolState{call: tc})
+		return
+	}
+
+	mergeToolCall(&c.states[len(c.states)-1].call, tc)
+}
+
+func (c *streamToolCollector) RunnableCalls() []schema.ToolCall {
+	toolCalls := make([]schema.ToolCall, 0, len(c.states))
+	for _, state := range c.states {
+		if isRunnableToolCall(state.call) {
+			toolCalls = append(toolCalls, state.call)
+		}
+	}
+	return toolCalls
+}
+
+func mergeToolCall(dst *schema.ToolCall, src schema.ToolCall) {
+	if dst.ID == "" && src.ID != "" {
+		dst.ID = src.ID
+	}
+	if src.Function.Name != "" && dst.Function.Name == "" {
+		dst.Function.Name = src.Function.Name
+	}
+	if src.Function.Arguments != "" {
+		dst.Function.Arguments += src.Function.Arguments
+	}
+}
+
+func isRunnableToolCall(tc schema.ToolCall) bool {
+	if tc.ID == "" || tc.Function.Name == "" {
+		return false
+	}
+
+	return isValidJSON(tc.Function.Arguments)
+}
+
+type streamToolResult struct {
+	idx    int
+	tc     schema.ToolCall
+	result string
+	err    error
+}
+
+type streamToolRequest struct {
+	idx int
+	tc  schema.ToolCall
+}
+
+func (a *Agent) executeToolCall(ctx context.Context, tc schema.ToolCall, idx, total int) (string, error) {
+	logger.PrintToolCall(tc.Function.Name, tc.Function.Arguments, false)
+	logger.DebugTag("TOOL", "[%d/%d] name=%s id=%s", idx+1, total, tc.Function.Name, tc.ID)
+	logger.DebugTag("TOOL", "  args: %s", tc.Function.Arguments)
+
+	t := a.findTool(tc.Function.Name)
+	if t == nil {
+		logger.WarnTag("TOOL", "Not found: %s", tc.Function.Name)
+		return "", fmt.Errorf("tool not found: %s", tc.Function.Name)
+	}
+
+	return a.invokeTool(ctx, t, tc)
+}
+
 // RunStream 运行 Agent 并流式输出响应
 // 参数:
 //   - ctx: Go 标准上下文
@@ -259,9 +382,8 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 	}
 
 	// 2.5 检查是否需要压缩上下文
-	//  TODO: 这里只有一个按照消息条数压缩。
 	if a.ctxManager.ShouldCompress(messageCtx) {
-		before, after, err := a.ctxManager.Compress(messageCtx)
+		before, after, err := a.ctxManager.LMCompress(ctx, messageCtx, a.model, "prompt")
 		if err != nil {
 			return "", fmt.Errorf("failed to compress context: %w", err)
 		}
@@ -299,13 +421,21 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 		logger.Debug("Stream started, reading chunks...")
 
-		// 收集完整响应
-		var fullContent string
+		var fullContent strings.Builder
 		chunkCount := 0
+		collector := newStreamToolCollector()
 
-		var toolCallsList []*schema.ToolCall   // 用于合并ToolCalls的列表（保持顺序）
-		toolCallsIndex := make(map[string]int) // 用于快速查找最后一个工具调用的 map: id -> index
-		executedTools := make(map[string]bool) // 记录已执行的工具（避免重复执行）
+		toolQueue := make(chan streamToolRequest, 8)
+		toolResultCh := make(chan streamToolResult, 8)
+		queuedCalls := make([]schema.ToolCall, 0)
+
+		go func() {
+			for req := range toolQueue {
+				result, execErr := a.executeToolCall(ctx, req.tc, req.idx, req.idx+1)
+				toolResultCh <- streamToolResult{idx: req.idx, tc: req.tc, result: result, err: execErr}
+			}
+			close(toolResultCh)
+		}()
 
 		for { // 读取流式响应
 			chunk, err := reader.Recv()
@@ -330,96 +460,39 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 				for i, tc := range chunk.ToolCalls {
 					logger.DebugTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
 						i, tc.ID, tc.Function.Name, tc.Function.Arguments)
-
-					// 如果有新的 ID，说明是新的工具调用
-					if tc.ID != "" {
-						if idx, exists := toolCallsIndex[tc.ID]; exists { // 检查是否已存在
-							// 合并到已有的工具调用
-							existing := toolCallsList[idx]
-							if tc.Function.Name != "" && existing.Function.Name == "" {
-								existing.Function.Name = tc.Function.Name
-							}
-							if tc.Function.Arguments != "" {
-								existing.Function.Arguments += tc.Function.Arguments
-							}
-						} else {
-							// 新建工具调用
-							tcCopy := tc
-							toolCallsList = append(toolCallsList, &tcCopy)
-							toolCallsIndex[tc.ID] = len(toolCallsList) - 1
-						}
-					} else if tc.Function.Name != "" || tc.Function.Arguments != "" {
-						// 没有 ID，但有 name 或 args，合并到最后一个工具调用
-						if len(toolCallsList) > 0 {
-							lastTC := toolCallsList[len(toolCallsList)-1]
-							if tc.Function.Name != "" && lastTC.Function.Name == "" {
-								lastTC.Function.Name = tc.Function.Name
-							}
-							if tc.Function.Arguments != "" {
-								lastTC.Function.Arguments += tc.Function.Arguments
-							}
-						}
-					}
 				}
-			}
 
-			// 边输出边执行：检查是否有完整的工具调用可以执行
-			for _, tc := range toolCallsList {
-				// 检查工具调用是否完整且未执行
-				if tc.ID != "" && tc.Function.Name != "" && !executedTools[tc.ID] {
-					// 尝试解析参数，判断是否完整
-					if isValidJSON(tc.Function.Arguments) {
-						logger.DebugTag("STREAM", "Tool ready for execution: id=%s name=%s", tc.ID, tc.Function.Name)
-
-						executedTools[tc.ID] = true // 标记为已执行
-
-						// 立即执行工具（在 goroutine 中异步执行，避免阻塞流式输出）
-						go func(toolCall *schema.ToolCall) {
-							a.executeToolStreaming(ctx, messageCtx, toolCall)
-						}(tc)
-					}
+				for _, tc := range collector.Add(chunk.ToolCalls) {
+					idx := len(queuedCalls)
+					queuedCalls = append(queuedCalls, tc)
+					toolQueue <- streamToolRequest{idx: idx, tc: tc}
 				}
 			}
 
 			// 处理内容
 			if chunk.Content != "" {
-				fullContent += chunk.Content
+				fullContent.WriteString(chunk.Content)
 				if onToken != nil {
 					onToken(chunk.Content)
 				}
 			}
 		}
 		reader.Close()
+		close(toolQueue)
 
-		logger.DebugTag("STREAM", "Complete, total_len=%d", len(fullContent))
+		content := fullContent.String()
+		logger.DebugTag("STREAM", "Complete, total_len=%d", len(content))
 
-		// 构造最终消息：始终使用累积的 fullContent
-		finalMessage := &schema.Message{
-			Role:    schema.Assistant,
-			Content: fullContent,
+		toolCalls := collector.RunnableCalls()
+		toolResults := make([]streamToolResult, len(queuedCalls))
+		for res := range toolResultCh {
+			toolResults[res.idx] = res
 		}
 
-		// 从列表中提取合并后的ToolCalls
-		if len(toolCallsList) > 0 {
-			// 记录合并后的ToolCalls
-			logger.DebugTag("STREAM", "Merged ToolCalls: %d", len(toolCallsList))
-			for i, tc := range toolCallsList {
-				logger.DebugTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
-					i, tc.ID, tc.Function.Name, tc.Function.Arguments)
-			}
-
-			// 过滤掉无效的 ToolCall（name 为空）
-			validToolCalls := make([]schema.ToolCall, 0)
-			for _, tc := range toolCallsList {
-				if tc.Function.Name != "" {
-					validToolCalls = append(validToolCalls, *tc)
-				} else {
-					logger.WarnTag("STREAM", "Filtered invalid ToolCall with empty name, id=%s", tc.ID)
-				}
-			}
-			finalMessage.ToolCalls = validToolCalls
-			logger.DebugTag("STREAM", "Valid ToolCalls=%d (filtered from %d)",
-				len(validToolCalls), len(toolCallsList))
+		finalMessage := &schema.Message{
+			Role:      schema.Assistant,
+			Content:   content,
+			ToolCalls: toolCalls,
 		}
 
 		// c. 检查是否有工具调用
@@ -435,9 +508,10 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 				return "", fmt.Errorf("failed to add assistant message: %w", err)
 			}
 
-			// 执行工具
-			if err := a.exeTools(ctx, messageCtx, finalMessage.ToolCalls); err != nil {
-				return "", fmt.Errorf("tool execution failed: %w", err)
+			for _, res := range toolResults {
+				if err := a.addToolResultToContext(messageCtx, res.tc, res.result, res.err); err != nil {
+					return "", fmt.Errorf("tool execution failed: %w", err)
+				}
 			}
 
 			// 继续循环
@@ -446,7 +520,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 		// e. 没有工具调用 - 返回响应
 		// 只有当内容不为空时才添加消息
-		if fullContent != "" {
+		if content != "" {
 			if err := a.ctxManager.AddMessage(messageCtx, finalMessage); err != nil {
 				return "", fmt.Errorf("failed to add assistant message: %w", err)
 			}
@@ -454,7 +528,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			logger.Warn("Skipping empty assistant message")
 		}
 
-		return fullContent, nil
+		return content, nil
 	}
 
 	// 4. 达到最大轮数
@@ -465,6 +539,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 // 参数:
 //   - ctx: Go 标准上下文
 //   - messageCtx: 消息上下文
+//
 // GetSkillManager 获取技能管理器
 func (a *Agent) GetSkillManager() *skill.Manager {
 	return a.skillManager

@@ -129,34 +129,6 @@ func (a *Agent) exeToolsConcurrent(ctx context.Context, messageCtx *agentctx.Con
 	return nil
 }
 
-// executeToolStreaming 在流式输出过程中执行单个工具
-// 这个函数会在 goroutine 中异步调用，避免阻塞流式输出
-// 参数:
-//   - ctx: 上下文
-//   - messageCtx: 消息上下文
-//   - toolCall: 工具调用
-//
-// 功能: 异步执行工具，不返回错误（错误会记录到日志）
-func (a *Agent) executeToolStreaming(ctx context.Context, messageCtx *agentctx.Context, toolCall *schema.ToolCall) {
-	logger.DebugTag("STREAM-TOOL", "Executing tool: id=%s name=%s", toolCall.ID, toolCall.Function.Name)
-
-	// 显示工具执行提示
-	logger.PrintToolCall(toolCall.Function.Name, toolCall.Function.Arguments, false)
-
-	// 查找工具
-	t := a.findTool(toolCall.Function.Name)
-	if t == nil {
-		logger.WarnTag("STREAM-TOOL", "Tool not found: %s", toolCall.Function.Name)
-		return
-	}
-
-	// 执行工具
-	result, execErr := a.invokeTool(ctx, t, *toolCall)
-
-	// 添加结果到上下文（忽略错误，因为是异步执行）
-	_ = a.addToolResultToContext(messageCtx, *toolCall, result, execErr)
-}
-
 // executeSingleTool 执行单个工具（串行）
 // 参数:
 //   - ctx: 上下文
