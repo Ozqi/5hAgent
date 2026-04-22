@@ -2,7 +2,9 @@
 
 ## 位置
 
-`internal/agent/agent.go` (~822行)
+`internal/agent/agent.go` (~507行) - Agent 核心逻辑
+`internal/agent/tool_executor.go` (~312行) - 工具执行逻辑
+`internal/agent/tasklist.go` (~261行) - 任务列表管理
 `internal/commands/skill.go` (~68行) - Skill 命令处理
 `internal/commands/task.go` (~112行) - Task 命令处理
 
@@ -71,11 +73,11 @@ ReAct循环：
 
 **核心思想**: 只读工具可以并发执行（无副作用），写工具必须串行执行（避免竞态条件）
 
-**代码链接**: [agent.go:478-605](../internal/agent/agent.go#L478-L605)
+**代码链接**: [tool_executor.go:28-68](../internal/agent/tool_executor.go#L28-L68)
 
 **执行流程**:
 
-1. **工具分类** [agent.go:482-504](../internal/agent/agent.go#L482-L504)
+1. **工具分类** [tool_executor.go:32-50](../internal/agent/tool_executor.go#L32-L50)
 
    ```go
    readOnlyTools := map[string]bool{
@@ -87,7 +89,7 @@ ReAct循环：
    - 遍历 `toolCalls`，根据工具名分类到 `readOnlyCalls` 或 `writeCalls`
    - 跳过 `Function.Name` 为空的无效调用
 
-2. **并发执行只读工具** [agent.go:507-511](../internal/agent/agent.go#L507-L511)
+2. **并发执行只读工具** [tool_executor.go:52-57](../internal/agent/tool_executor.go#L52-L57)
 
    ```go
    if len(readOnlyCalls) > 0 {
@@ -98,7 +100,9 @@ ReAct循环：
    - 调用 `exeToolsConcurrent()` 并发执行所有只读工具
    - 例如：同时读取 3 个文件，而不是依次读取
 
-3. **串行执行写工具** [agent.go:514-601](../internal/agent/agent.go#L514-L601)
+3. **串行执行写工具** [tool_executor.go:59-64](../internal/agent/tool_executor.go#L59-L64)
+
+   调用 `executeSingleTool()` 逐个执行写工具
 
    ```go
    for idx, tc := range writeCalls {
@@ -153,11 +157,11 @@ ReAct循环：
 
 **并发模型**: 使用 goroutine + channel 收集结果，保证结果顺序
 
-**代码链接**: [agent.go:608-685](../internal/agent/agent.go#L608-L685)
+**代码链接**: [tool_executor.go:70-122](../internal/agent/tool_executor.go#L70-L122)
 
 **执行流程**:
 
-1. **创建结果通道** [agent.go:609-616](../internal/agent/agent.go#L609-L616)
+1. **创建结果通道** [tool_executor.go:79-84](../internal/agent/tool_executor.go#L79-L84)
 
    ```go
    type toolResult struct {
@@ -169,7 +173,7 @@ ReAct循环：
    results := make(chan toolResult, len(toolCalls))
    ```
 
-2. **启动 goroutine 并发执行** [agent.go:619-654](../internal/agent/agent.go#L619-L654)
+2. **启动 goroutine 并发执行** [tool_executor.go:86-105](../internal/agent/tool_executor.go#L86-L105)
 
    ```go
    for idx, tc := range toolCalls {
@@ -203,7 +207,7 @@ ReAct循环：
    - 每个工具在独立的 goroutine 中执行
    - 通过闭包捕获 `idx` 和 `tc`，避免循环变量问题
 
-3. **收集结果** [agent.go:657-661](../internal/agent/agent.go#L657-L661)
+3. **收集结果** [tool_executor.go:107-112](../internal/agent/tool_executor.go#L107-L112)
 
    ```go
    collectedResults := make([]toolResult, len(toolCalls))
@@ -216,7 +220,7 @@ ReAct循环：
    - 从 channel 接收所有结果
    - 使用 `res.idx` 恢复原始顺序（重要！）
 
-4. **按顺序添加到上下文** [agent.go:664-682](../internal/agent/agent.go#L664-L682)
+4. **按顺序添加到上下文** [tool_executor.go:114-120](../internal/agent/tool_executor.go#L114-L120)
    ```go
    for _, res := range collectedResults {
        if res.err != nil {
@@ -236,6 +240,62 @@ ReAct循环：
 - **保序**: 虽然并发执行，但结果按原始顺序添加到上下文
 - **错误隔离**: 一个工具失败不影响其他工具执行
 - **性能提升**: 3 个 `read_file` 并发执行，总耗时 = max(t1, t2, t3)，而非 t1+t2+t3
+
+### invokeTool(ctx, t, tc) - 工具调用核心 ⭐ 重构新增
+
+**接口适配**: 自动适配两种工具接口，统一调用逻辑
+
+**代码链接**: [tool_executor.go:181-207](../internal/agent/tool_executor.go#L181-L207)
+
+**执行流程**:
+
+1. **尝试 EnhancedInvokableTool** (新接口，支持富媒体)
+   ```go
+   if enhancedInvokable, ok := t.(tool.EnhancedInvokableTool); ok {
+       toolArg := &schema.ToolArgument{Text: tc.Function.Arguments}
+       toolResult, err := enhancedInvokable.InvokableRun(ctx, toolArg)
+       return formatToolResult(toolResult), nil
+   }
+   ```
+
+2. **降级到 InvokableTool** (旧接口，仅文本)
+   ```go
+   if invokable, ok := t.(tool.InvokableTool); ok {
+       return invokable.InvokableRun(ctx, tc.Function.Arguments)
+   }
+   ```
+
+3. **都不支持则返回错误**
+
+**为什么这样设计**:
+- 向后兼容：旧工具无需修改
+- 渐进增强：新工具可以返回图片、音频等富媒体
+- 统一逻辑：避免在多处重复接口适配代码
+
+### executeSingleTool(ctx, messageCtx, tc, idx, total, concurrent) - 单工具执行 ⭐ 重构新增
+
+**功能**: 执行单个工具（串行模式）
+
+**代码链接**: [tool_executor.go:147-179](../internal/agent/tool_executor.go#L147-L179)
+
+**流程**:
+1. 验证工具调用有效性
+2. 查找工具实例
+3. 调用 `invokeTool()` 执行
+4. 调用 `addToolResultToContext()` 添加结果
+
+### addToolResultToContext(messageCtx, tc, result, execErr) - 结果处理 ⭐ 重构新增
+
+**功能**: 统一处理工具执行结果，添加到上下文
+
+**代码链接**: [tool_executor.go:209-232](../internal/agent/tool_executor.go#L209-L232)
+
+**处理逻辑**:
+- 成功：添加 ToolMessage(result, tc.ID)
+- 失败：添加 ToolMessage("tool execution failed: ...", tc.ID)
+- 统一日志输出
+
+**优势**: 避免在串行执行和并发执行中重复结果处理代码
 
 ## 关键特性
 
@@ -267,10 +327,19 @@ ReAct循环：
 ## 相关文档
 
 - 工具系统: `doc/tools.md`
+- 工具执行详解: 本文档 - exeTools 部分
 - 上下文管理: `doc/context.md`
 - Skill 注入: `doc/skill_injection.md`
 - 命令处理: `doc/commonds.md`
 - 日志系统: `doc/logger.md`
+
+## 代码文件
+
+- `internal/agent/agent.go` - Agent 核心（ReAct 循环、流式输出）
+- `internal/agent/tool_executor.go` - 工具执行逻辑（并发、串行、接口适配）
+- `internal/agent/tasklist.go` - 任务列表管理
+- `internal/commands/skill.go` - Skill 命令处理
+- `internal/commands/task.go` - Task 命令处理
 
 # TaskList
 
