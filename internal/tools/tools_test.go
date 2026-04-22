@@ -10,6 +10,14 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
+func initTestRegistry(t *testing.T) {
+	t.Helper()
+
+	if err := InitRegistry(nil, nil); err != nil {
+		t.Fatalf("failed to initialize tool registry: %v", err)
+	}
+}
+
 // TestReadFileTool 测试文件读取工具
 // 验证：能够正确读取文件内容，支持偏移量和行数限制
 func TestReadFileTool(t *testing.T) {
@@ -117,6 +125,8 @@ func TestExecShellTool(t *testing.T) {
 // TestGetAllTools 测试获取所有已注册的工具
 // 验证：能够返回所有工具并获取工具信息
 func TestGetAllTools(t *testing.T) {
+	initTestRegistry(t)
+
 	tools := GetAllTools()
 
 	if len(tools) < 2 {
@@ -137,6 +147,8 @@ func TestGetAllTools(t *testing.T) {
 // TestGetToolByName 测试根据名称查找工具
 // 验证：能够找到已注册的工具，不存在的工具返回 nil
 func TestGetToolByName(t *testing.T) {
+	initTestRegistry(t)
+
 	tool := GetToolByName("read_file")
 	if tool == nil {
 		t.Error("expected to find read_file tool")

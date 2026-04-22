@@ -16,7 +16,7 @@
 
 - **语言**: Go 1.21+
 - **Agent 框架**: [Eino](https://github.com/cloudwego/eino) (字节跳动开源)
-- **LLM Provider**: Claude API 兼容格式（默认 MiniMax）
+- **LLM Provider**: Claude API 兼容格式（代码默认 `https://api.anthropic.com`）
 - **CLI**: Cobra + readline
 
 ## 架构
@@ -24,10 +24,11 @@
 ```
 internal/
 ├── agent/
-│   ├── agent.go        # Agent 核心：ReAct 循环、流式输出、工具并发
-│   └── skill.go        # Skill 注入和命令处理
+│   ├── agent.go          # Agent 核心：ReAct 循环、流式输出、skill 注入
+│   ├── tool_executor.go  # 工具并发/串行调度
+│   └── tasklist.go       # 任务持久化
 ├── llm/client.go       # LLM 客户端
-├── tools/              # 工具系统（12 个工具）
+├── tools/              # 工具系统
 │   ├── read_file.go    # 文件读取
 │   ├── write_file.go   # 文件写入
 │   ├── edit.go         # 文件编辑
@@ -35,11 +36,12 @@ internal/
 │   ├── grep.go         # 代码搜索
 │   ├── list_dir.go     # 目录列表
 │   ├── exec_shell.go   # Shell 执行
-│   ├── task_tools.go   # 任务管理（5 个工具）
+│   ├── task_tool.go    # 统一 task 工具
+│   ├── skill_tool.go   # 统一 skill 工具
 │   └── registry.go     # 工具注册
 ├── skill/skill.go      # 技能管理器
-├── tasklist/           # 任务列表管理
 ├── context/ctx.go      # 上下文管理、自动压缩
+├── commands/           # /skill /task 命令
 ├── logger/logger.go    # 日志系统
 └── cli/ui.go           # CLI 输出
 cmd/5hagent/main.go   # 主入口
@@ -124,9 +126,9 @@ go build -o 5hagent cmd/5hagent/main.go
 | 文件操作 | read_file, write_file, edit | 读写编辑文件 | 读✅ 写❌ |
 | 文件搜索 | glob, grep, list_dir | 文件匹配、代码搜索、目录列表 | ✅ |
 | 执行 | exec_shell | Shell 命令执行 | ❌ |
-| 任务管理 | task_create, task_update, task_get, task_list, task_delete | 任务 CRUD | 读✅ 写❌ |
+| Agent 工具 | task, skill | 任务管理、skill 管理 | `task get/list` 并发，其余串行 |
 
-**总计**: 12 个工具（6 个只读支持并发，6 个写入串行执行）
+**当前注册总计**: 9 个工具
 
 ## Skill 系统
 
@@ -134,17 +136,22 @@ go build -o 5hagent cmd/5hagent/main.go
 
 **格式**: Markdown + YAML frontmatter（遵循 Claude Code 规范）
 
+**加载位置**: `.5hagent/skills/*/SKILL.md`
+
 **使用方式**:
 ```bash
 /skill list                  # 列出所有技能
-/skill enable superpower     # 启用生产力提升技能
-/skill disable code-review   # 禁用代码审查技能
+/skill enable using-superpowers
+/skill disable writing-plans
 ```
 
-**内置技能**:
-- `code-review`: 代码质量、安全性、性能审查清单
-- `debug-helper`: 系统化调试方法论（五阶段流程）
-- `superpower`: 开发者生产力提升（命令行、Git、编辑器技巧）
+**当前仓库内已有技能示例**:
+- `using-superpowers`
+- `brainstorming`
+- `writing-plans`
+- `test-driven-development`
+- `systematic-debugging`
+- `verification-before-completion`
 
 **创建新技能**:
 ```bash
@@ -175,12 +182,10 @@ EOF
 
 - `doc/agent.md` - Agent 核心模块
 - `doc/tools.md` - 工具系统
-- `doc/tasklist.md` - TaskList 管理
 - `doc/context.md` - 上下文管理
 - `doc/skill_injection.md` - Skill 注入机制
-- `doc/phase2_summary.md` - Phase 2 总结
-- `doc/phase3_summary.md` - Phase 3 总结
-- `doc/swe_bench_integration.md` - SWE-bench 接入计划
+- `doc/prompt.md` - Prompt 加载
+- `doc/commonds.md` - `/skill` 和 `/task` 命令
 
 ## 参考
 

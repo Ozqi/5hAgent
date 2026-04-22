@@ -46,7 +46,7 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		if tc.Function.Name == "" {
 			continue
 		}
-		if readOnlyTools[tc.Function.Name] {
+		if isReadOnlyToolCall(tc) {
 			readOnlyCalls = append(readOnlyCalls, tc)
 		} else {
 			writeCalls = append(writeCalls, tc)
@@ -309,4 +309,24 @@ func (a *Agent) findTool(name string) tool.BaseTool {
 func isValidJSON(s string) bool {
 	var js json.RawMessage
 	return json.Unmarshal([]byte(s), &js) == nil
+}
+
+func isReadOnlyToolCall(tc schema.ToolCall) bool {
+	if readOnlyTools[tc.Function.Name] {
+		return true
+	}
+
+	if tc.Function.Name != "task" {
+		return false
+	}
+
+	var input struct {
+		Action string `json:"action"`
+	}
+
+	if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err != nil {
+		return false
+	}
+
+	return input.Action == "get" || input.Action == "list"
 }

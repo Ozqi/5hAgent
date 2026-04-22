@@ -1,71 +1,77 @@
-# Commands - 命令处理模块
+# Commands - 斜杠命令
 
-## 位置
-
-`internal/commands/` 目录
+```text
+REPL input
+  -> cmd/5hagent/main.go
+     -> /skill => internal/commands/skill.go
+     -> /task  => internal/commands/task.go
+```
 
 ## 概述
 
-处理用户的斜杠命令，完全不涉及 LLM 调用，直接操作内部状态。
+这里记录的是 CLI 斜杠命令，不是 LLM tool。
 
-## 命令列表
+- 斜杠命令由主 REPL 直接解析
+- 不经过 LLM
+- 返回值直接打印到终端
 
-### /skill - 技能管理
+## 当前命令
 
-**文件**: `internal/commands/skill.go`
+### `/skill`
 
-**功能**: 管理 Agent 的技能启用/禁用状态
+文件：`internal/commands/skill.go`
 
-**子命令**:
-- `/skill list` - 列出所有可用技能及其状态
-- `/skill enable <name>` - 启用指定技能
-- `/skill disable <name>` - 禁用指定技能
+支持：
 
-**实现**: 调用 `skill.Manager` 的方法
+- `/skill list`
+- `/skill enable <name>`
+- `/skill disable <name>`
 
-**代码链接**: [skill.go](../internal/commands/skill.go)
+底层依赖：`internal/skill/skill.go`
 
-### /task - 任务管理
+### `/task`
 
-**文件**: `internal/commands/task.go`
+文件：`internal/commands/task.go`
 
-**功能**: 管理持久化任务列表
+支持：
 
-**子命令**:
-- `/task list [status]` - 列出所有任务（可选按状态过滤）
-- `/task create <id> <title> <description>` - 创建新任务
-- `/task update <id> <status>` - 更新任务状态
-- `/task get <id>` - 获取任务详情
-- `/task delete <id>` - 删除任务
+- `/task list [status]`
+- `/task create <id> <title> <description>`
+- `/task update <id> <status>`
+- `/task get <id>`
+- `/task delete <id>`
 
-**实现**: 调用 `agent.TaskList` 的方法
+底层依赖：`internal/agent/tasklist.go`
 
-**代码链接**: [task.go](../internal/commands/task.go)
+## 处理流程
 
-## 命令处理流程
+1. REPL 读到一行输入
+2. `main.go` 判断是否以 `/skill` 或 `/task` 开头
+3. 调用对应的 `HandleSkill()` 或 `HandleTask()`
+4. 函数内部用 `strings.Fields()` 解析参数
+5. 返回结果字符串或错误
 
-1. 用户在 CLI 输入斜杠命令（如 `/skill list`）
-2. `cmd/5hagent/main.go` 检测到命令前缀
-3. 根据命令类型调用对应的 `commands.HandleXxx()` 函数
-4. 命令处理函数解析参数并调用底层模块
-5. 返回结果字符串显示给用户
+## 与 LLM 工具的关系
 
-## 设计原则
+当前仓库同时存在：
 
-- **无 LLM 调用**: 命令处理不涉及大模型，响应速度快
-- **直接操作**: 直接修改内部状态（技能启用、任务列表）
-- **简单解析**: 使用 `strings.Fields()` 分割参数
-- **错误友好**: 参数错误时返回 usage 提示
+- CLI 命令：`/skill`、`/task`
+- LLM 工具：`skill`、`task`
 
-## 扩展新命令
+两者职责类似，但入口不同：
 
-1. 在 `internal/commands/` 创建新文件（如 `memory.go`）
-2. 实现 `HandleXxx(cmd string, deps...) (string, error)` 函数
-3. 在 `cmd/5hagent/main.go` 的命令分发逻辑中添加分支
-4. 更新本文档
+- CLI 命令给用户直接操作
+- LLM 工具给 Agent 自主调用
 
-## 相关文件
+## 扩展方式
 
-- `cmd/5hagent/main.go` - 命令分发入口
-- `internal/skill/skill.go` - 技能管理器
-- `internal/agent/tasklist.go` - 任务列表
+1. 在 `internal/commands/` 新增命令处理文件
+2. 实现 `HandleXxx(...)`
+3. 在 `cmd/5hagent/main.go` 中添加分支
+4. 同步更新本文档
+
+## 相关代码
+
+- [main.go](../cmd/5hagent/main.go)
+- [skill.go](../internal/commands/skill.go)
+- [task.go](../internal/commands/task.go)
