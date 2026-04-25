@@ -210,6 +210,29 @@ func TestGetToolByName(t *testing.T) {
 	}
 }
 
+func TestGetToolByNameSupportsShortNameAndLazyInit(t *testing.T) {
+	registry = nil
+	toolmeta.Reset()
+
+	tool := GetToolByName("list_dir")
+	if tool == nil {
+		t.Fatal("expected to find list_dir tool by short name")
+	}
+
+	info, err := tool.Info(context.Background())
+	if err != nil {
+		t.Fatalf("failed to get tool info: %v", err)
+	}
+	if info.Name != "base.list_dir" {
+		t.Fatalf("expected base.list_dir, got %q", info.Name)
+	}
+
+	fullNameTool := GetToolByName("base.list_dir")
+	if fullNameTool == nil {
+		t.Fatal("expected to find base.list_dir tool by full name")
+	}
+}
+
 func TestRegisterMCPTools(t *testing.T) {
 	initTestRegistry(t)
 	client := &fakeMCPClient{result: `{"ok":true}`}

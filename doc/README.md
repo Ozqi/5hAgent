@@ -20,7 +20,7 @@ doc/
 对应代码：
 
 - `internal/agent/agent.go`
-- `internal/agent/tool_executor.go`
+- `internal/agent/tool_use.go`
 - `internal/agent/tasklist.go`
 
 ### [tools.md](tools.md)
@@ -31,7 +31,7 @@ doc/
 
 - `internal/tools/*.go`
 - `internal/tools/registry.go`
-- `internal/agent/tool_executor.go`
+- `internal/agent/tool_use.go`
 
 ### [context.md](context.md)
 
@@ -53,11 +53,11 @@ doc/
 
 ### [prompt.md](prompt.md)
 
-说明 prompt loader 如何遍历 `prompt/`、解析 frontmatter、加载 `main_agent_system`。
+说明 prompt 文件如何从 `prompt/*.md` 读取并注入主流程。
 
 对应代码：
 
-- `internal/prompt/loader.go`
+- `internal/utils/utils.go`
 - `cmd/5hagent/main.go`
 
 ### [commonds.md](commonds.md)

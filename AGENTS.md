@@ -7,9 +7,9 @@
 ```text
 cmd/5hagent/main.go
   -> internal/llm
-  -> internal/prompt
+  -> internal/utils
   -> internal/agent
-     -> internal/agent/tool_executor.go
+     -> internal/agent/tool_use.go
      -> internal/context
      -> internal/skill
   -> internal/tools
@@ -22,11 +22,11 @@ Use this file as the working contract for agentic contributors in this repo.
 
 - Main entrypoint: `cmd/5hagent/main.go`
 - Main loop: `internal/agent/agent.go`
-- Tool execution: `internal/agent/tool_executor.go`
+- Tool execution: `internal/agent/tool_use.go`
 - Task persistence: `internal/agent/tasklist.go`
 - Tool implementations: `internal/tools/*.go`
 - Slash commands: `internal/commands/*.go`
-- Prompt loader: `internal/prompt/loader.go`
+- Prompt loader: `internal/utils/utils.go`
 - Skill loader: `internal/skill/skill.go`
 - Docs live in `doc/`
 
@@ -42,7 +42,7 @@ Use this file as the working contract for agentic contributors in this repo.
 - Run all Go tests: `go test ./...`
 - Run one package: `go test ./internal/tools`
 - Run one test by name: `go test ./internal/tools -run TestReadFileTool`
-- Run one test with verbose output: `go test -v ./internal/prompt -run TestLoader`
+- Run one test with verbose output: `go test -v ./internal/utils -run TestLoad`
 - Run llm tests only: `go test ./internal/llm -run TestNewClient`
 
 ## SWE-bench Scripts
@@ -137,9 +137,9 @@ When the work is in implementation stage:
 
 - Skills are loaded from `.5hagent/skills/*/SKILL.md`.
 - Prompts are loaded by walking `prompt/` recursively.
-- The main system prompt currently comes from `main_agent_system` in `prompt/system/main_agent.md`.
+- The main system prompt currently comes from `prompt/main.md` via `internal/utils/utils.go`.
 - Context compression is simple truncation, not summary-based compression.
-- `internal/agent/tool_executor.go` still classifies old task tool names in its read-only map; keep that mismatch in mind when changing task-tool concurrency behavior.
+- `internal/agent/tool_use.go` still classifies old task tool names in its read-only map; keep that mismatch in mind when changing task-tool concurrency behavior.
 
 ## Documentation Rules
 

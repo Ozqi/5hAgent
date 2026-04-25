@@ -143,9 +143,3 @@ func (m *Manager) DisableSkill(name string) error {
 	skill.Enabled = false
 	return nil
 }
-
-// InjectSkills 已废弃：技能现在作为独立消息注入，不再混入 system prompt
-// 保留此方法以保持向后兼容
-func (m *Manager) InjectSkills(basePrompt string) string {
-	return basePrompt
-}

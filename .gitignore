@@ -23,6 +23,7 @@ __pycache__/
 workspace/
 .worktrees/
 compact/
+testspace/swebench_pro/repos/
 
 # 5hAgent runtime data
 .5hagent/

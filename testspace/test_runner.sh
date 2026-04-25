@@ -1,5 +1,13 @@
 #!/bin/bash
 # SWE-bench 测试运行器 - 3个新任务
+#
+# 脚本流程概览：
+# 1. 定位 testspace 目录、5hagent 可执行文件、结果输出目录，并加载父目录 .env。
+# 2. 根据预定义 TASKS 选择单个任务或全部任务，确定原始代码目录、目标文件和问题描述。
+# 3. 为每个任务创建独立 workspace，并从 swebench_original/ 复制一份原始代码进去。
+# 4. 在 workspace 内恢复到干净状态，然后把任务描述通过标准输入传给 5hAgent。
+# 5. 运行结束后检查目标文件是否发生修改，保存 agent 日志、diff 和 JSON 结果。
+# 6. 所有任务完成后，在终端输出每个任务的执行状态，结果文件留在 testspace/results/。
 
 set -e
 
