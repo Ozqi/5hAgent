@@ -29,7 +29,7 @@ type GlobOutput struct {
 // NewGlobTool creates a new glob tool for file pattern matching
 func NewGlobTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
-		"glob",
+		"base.glob",
 		"Find files matching a glob pattern. Supports wildcards: * (any chars), ** (recursive dirs), ? (single char). Returns sorted list of matching file paths.",
 		func(ctx context.Context, input GlobInput) (*schema.ToolResult, error) {
 			// Set default path

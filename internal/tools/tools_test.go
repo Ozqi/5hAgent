@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
@@ -34,11 +35,20 @@ func TestReadFileTool(t *testing.T) {
 	// Create the tool
 	tool, err := NewReadFileTool()
 	if err != nil {
-		t.Fatalf("failed to create read_file tool: %v", err)
+		t.Fatalf("failed to create base.read_file tool: %v", err)
+	}
+
+	ctx := context.Background()
+
+	info, err := tool.Info(ctx)
+	if err != nil {
+		t.Fatalf("failed to get read_file tool info: %v", err)
+	}
+	if info.Name != "base.read_file" {
+		t.Fatalf("expected tool name %q, got %q", "base.read_file", info.Name)
 	}
 
 	// Test reading the file
-	ctx := context.Background()
 	input := ReadFileInput{
 		Path:   testFile,
 		Offset: 1,
@@ -80,7 +90,7 @@ func TestExecShellTool(t *testing.T) {
 	// Create the tool
 	tool, err := NewExecShellTool()
 	if err != nil {
-		t.Fatalf("failed to create exec_shell tool: %v", err)
+		t.Fatalf("failed to create base.exec_shell tool: %v", err)
 	}
 
 	// Test executing a simple command
@@ -122,6 +132,27 @@ func TestExecShellTool(t *testing.T) {
 	t.Logf("Exec shell output: %+v", output)
 }
 
+func TestExecShellToolInfoIncludesWorkspaceRoot(t *testing.T) {
+	tool, err := NewExecShellTool()
+	if err != nil {
+		t.Fatalf("failed to create base.exec_shell tool: %v", err)
+	}
+
+	info, err := tool.Info(context.Background())
+	if err != nil {
+		t.Fatalf("failed to get exec_shell tool info: %v", err)
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+
+	if !strings.Contains(info.Desc, wd) {
+		t.Fatalf("expected exec_shell description to include working directory %q, got %q", wd, info.Desc)
+	}
+}
+
 // TestGetAllTools 测试获取所有已注册的工具
 // 验证：能够返回所有工具并获取工具信息
 func TestGetAllTools(t *testing.T) {
@@ -149,14 +180,14 @@ func TestGetAllTools(t *testing.T) {
 func TestGetToolByName(t *testing.T) {
 	initTestRegistry(t)
 
-	tool := GetToolByName("read_file")
+	tool := GetToolByName("base.read_file")
 	if tool == nil {
-		t.Error("expected to find read_file tool")
+		t.Error("expected to find base.read_file tool")
 	}
 
-	tool = GetToolByName("exec_shell")
+	tool = GetToolByName("base.exec_shell")
 	if tool == nil {
-		t.Error("expected to find exec_shell tool")
+		t.Error("expected to find base.exec_shell tool")
 	}
 
 	tool = GetToolByName("nonexistent")

@@ -29,7 +29,7 @@ type EditOutput struct {
 // NewEditTool creates a new edit tool for precise file editing
 func NewEditTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
-		"edit",
+		"base.edit",
 		"Edit a file by replacing exact string matches. REQUIRED: path (absolute file path), old_string (exact match), new_string (replacement). Returns the number of replacements made.",
 		func(ctx context.Context, input EditInput) (*schema.ToolResult, error) {
 			// Validate required parameters

@@ -43,7 +43,7 @@ User: 读取 task.md 文件
 
 **输出示例**:
 ```
-[Tool] read_file({"path": "task.md"})
+[Tool] base.read_file({"path": "task.md"})
 ```
 
 **代码链接**: [ui.go:19-21](../internal/cli/ui.go#L19-L21)
@@ -86,7 +86,7 @@ cli.PrintAssistantChunk("读取")
 cli.PrintAssistantChunk("文件...")
 
 // 打印工具调用
-cli.PrintToolCall("read_file", `{"path": "task.md"}`)
+cli.PrintToolCall("base.read_file", `{"path": "task.md"}`)
 
 // 打印工具结果
 cli.PrintToolResult(`{"content": "...", "total_lines": 58}`)

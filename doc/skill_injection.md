@@ -108,7 +108,7 @@ user:   ...
 
 ### LLM 工具
 
-`skill` tool 允许模型自己启用或禁用 skill：
+`skill.skill` tool 允许模型自己启用或禁用 skill：
 
 - `{"skill":"using-superpowers","action":"enable"}`
 - `{"skill":"writing-plans","action":"disable"}`

@@ -19,6 +19,7 @@ __pycache__/
 
 # Workspace (SWE-bench test data)
 workspace/
+.worktrees/
 
 # 5hAgent runtime data
 .5hagent/

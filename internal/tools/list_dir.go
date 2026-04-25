@@ -36,7 +36,7 @@ type ListDirOutput struct {
 // NewListDirTool creates a new list_dir tool for listing directory contents
 func NewListDirTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
-		"list_dir",
+		"base.list_dir",
 		"List contents of a directory. Returns file names, paths, types (file/dir), and sizes. Supports recursive listing of subdirectories.",
 		func(ctx context.Context, input ListDirInput) (*schema.ToolResult, error) {
 			// Set default path

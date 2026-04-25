@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/cloudwego/eino/components/tool"
@@ -25,9 +26,14 @@ type ExecShellOutput struct {
 
 // NewExecShellTool creates a new exec_shell tool using Eino's InferEnhancedTool
 func NewExecShellTool() (tool.EnhancedInvokableTool, error) {
+	workspaceRoot, err := os.Getwd()
+	if err != nil {
+		workspaceRoot = "."
+	}
+
 	return utils.InferEnhancedTool(
-		"exec_shell",
-		"Execute a shell command and return stdout, stderr, and return code. Use this tool to run system commands, scripts, or CLI tools.",
+		"base.exec_shell",
+		fmt.Sprintf("Execute a shell command and return stdout, stderr, and return code. Use this tool to run system commands, scripts, or CLI tools. The current workspace root is %s. Prefer paths under this workspace instead of guessing unrelated directories.", workspaceRoot),
 		func(ctx context.Context, input ExecShellInput) (*schema.ToolResult, error) {
 			// Validate input
 			if input.Command == "" {

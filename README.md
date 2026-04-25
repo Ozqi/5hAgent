@@ -25,7 +25,7 @@
 internal/
 ├── agent/
 │   ├── agent.go          # Agent 核心：ReAct 循环、流式输出、skill 注入
-│   ├── tool_executor.go  # 工具并发/串行调度
+│   ├── tool_use.go       # ToolCall 解析与工具执行
 │   └── tasklist.go       # 任务持久化
 ├── llm/client.go       # LLM 客户端
 ├── tools/              # 工具系统
@@ -72,7 +72,7 @@ go build -o 5hagent cmd/5hagent/main.go
 ### Phase 1 ✅（Agent Loop，工具调用）
 
 - ✅ LLM 客户端（Claude API 格式）
-- ✅ 基础工具（read_file, exec_shell）
+- ✅ 基础工具（`base.read_file`, `base.exec_shell`）
 - ✅ Agent 核心（ReAct 循环，最多 10 轮）
 - ✅ 交互式 CLI（readline + 历史）
 - ✅ 上下文管理（消息历史）
@@ -87,14 +87,14 @@ go build -o 5hagent cmd/5hagent/main.go
 - ✅ 边输出边执行工具（异步执行）
 
 **P2.2 工具扩展**:
-- ✅ glob: 文件模式匹配
+- ✅ `base.glob`: 文件模式匹配
 - ✅ edit: 文件编辑（精确替换）
 - ✅ 工具并发执行（只读工具并行）
 
 **P2.3 SWE-bench 工具**:
-- ✅ write_file: 创建/覆盖文件
-- ✅ grep: 代码搜索（ripgrep + grep fallback）
-- ✅ list_dir: 列出目录内容
+- ✅ `base.write_file`: 创建/覆盖文件
+- ✅ `base.grep`: 代码搜索（ripgrep + grep fallback）
+- ✅ `base.list_dir`: 列出目录内容
 
 **P2.4 上下文管理**:
 - ✅ 上下文自动压缩（50→30 条消息）
@@ -107,7 +107,7 @@ go build -o 5hagent cmd/5hagent/main.go
 
 **TaskList 管理系统** ✅:
 - ✅ 任务 CRUD 操作（create, update, get, list, delete）
-- ✅ 持久化到 `.5hagent/tasks.json`
+- ✅ 持久化到项目根 `task.md`（受管 markdown 区块）
 - ✅ 并发安全（sync.RWMutex）
 - ✅ 进度统计
 
@@ -123,10 +123,10 @@ go build -o 5hagent cmd/5hagent/main.go
 
 | 类型 | 工具 | 功能 | 并发 |
 |------|------|------|------|
-| 文件操作 | read_file, write_file, edit | 读写编辑文件 | 读✅ 写❌ |
-| 文件搜索 | glob, grep, list_dir | 文件匹配、代码搜索、目录列表 | ✅ |
-| 执行 | exec_shell | Shell 命令执行 | ❌ |
-| Agent 工具 | task, skill | 任务管理、skill 管理 | `task get/list` 并发，其余串行 |
+| 文件操作 | `base.read_file`, `base.write_file`, `base.edit` | 读写编辑文件 | 读✅ 写❌ |
+| 文件搜索 | `base.glob`, `base.grep`, `base.list_dir` | 文件匹配、代码搜索、目录列表 | ✅ |
+| 执行 | `base.exec_shell` | Shell 命令执行 | ❌ |
+| Agent 工具 | `task.task`, `skill.skill` | 任务管理、skill 管理 | `task.task` 的 `get/list` 并发，其余串行 |
 
 **当前注册总计**: 9 个工具
 

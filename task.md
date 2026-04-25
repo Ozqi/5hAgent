@@ -62,6 +62,8 @@
 - [ ] TODO: SKILL的使用本身应该也封装成base tools, 作为一个命令就叫skilltool，然后斜杠命令单独开一个文件夹叫commonds,在这里实现斜杠命令, agent文件夹只存放Agent LOOP中涉及到的东西。
   - /skills 命令 = 用户手动浏览和管理 skills 的 UI 工具
   - SkillTool = LLM 自主调用 skills 的 API 接口
+- [ ] TODO: 更新prompt让模型每次接到user派发的任务的时候,都能先查有没有可用的skill。如果有注入。
+- [ ] 另外默认所有skills都是开启状态。
 
 ---
 
@@ -70,16 +72,15 @@
 **P3.1 长程任务管理** ✅:
 
 - [x] TaskList管理（全局持久化任务列表）
-  - task_create: 创建任务
-  - task_update: 更新任务状态
-  - task_get: 获取任务详情
-  - task_list: 列出所有任务
-  - task_delete: 删除任务
-  - 持久化到 .5hagent/tasks.json
+  - `task.task` + `{"action":"create"}`: 创建任务
+  - `task.task` + `{"action":"update"}`: 更新任务状态
+  - `task.task` + `{"action":"get"}`: 获取任务详情
+  - `task.task` + `{"action":"list"}`: 列出所有任务
+  - `task.task` + `{"action":"delete"}`: 删除任务
   - [] fix: 这些命令都作为tools了，这样会很乱，我希望他们同属于一个/task 命令下, 并且现在已有的task命令我也希望封装到tasktool里。就像skilltool一样。
+  - [x] 持久化到项目根 `task.md` 的受管区块，可以人工修改并被后续读取。
 
-- [ ] 自动规划（根据任务生成执行计划）
-- [ ] 进度追踪（5h稳定工作）
+- [ ] 自动规划（根据任务生成Task或者拆解成多个Task，需要提示词实现）
 
 - [ ]上下文压缩, compact文件夹, 实现精细的压缩管理
   - [ ] 工具调用可能返回超长的返回值，网络请求可能返回超大文件。
@@ -95,36 +96,10 @@
 - []
   Git worktree 支持。
 
-**P3.4 子任务 AgentTools** :
+通过一个tasklist.md共享文档，用户也可以修改，其他Agent也可以修改，类似TODO List用于汇报任务进度和状态。Agent之间通过这个共享区来传递信息，用户通过这个tasklist.md文件来了解任务执行状态。
 
-**实现方式**: 不需要专门的 Memory 工具，通过 System Prompt 指令 + write_file 实现
+**P3.3 长期记忆：路书机制** :
 
-```
-System Prompt 添加:
-You have a persistent memory system at `.5hagent/memory/`.
-When you learn important information, save it using write_file:
+当通过很长的调用才匹配到代码或其他文本的位置，或者反复报错的时候，判断是否要加入到路书记忆中。
 
----
-name: user_role
-description: User's expertise and preferences
-type: user
----
-
-Memory content...
-```
-
-**Memory 类型**:
-
-- user: 用户角色、偏好、知识背景
-- feedback: 用户反馈、纠正、确认的做法
-- project: 项目进展、目标、截止日期
-- reference: 外部资源引用
-
-**关键点**:
-
-- LLM 自主判断何时保存（prompt engineering）
-- 复用 write_file 工具，无需新工具
-- 文件格式：Markdown + YAML frontmatter
-
----
-
+记忆的格式是：xxTask：步骤

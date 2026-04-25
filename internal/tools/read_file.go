@@ -28,7 +28,7 @@ type ReadFileOutput struct {
 // NewReadFileTool creates a new read_file tool using Eino's InferEnhancedTool
 func NewReadFileTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
-		"read_file",
+		"base.read_file",
 		"Read file content from the specified path. Returns the content and total line count. Supports reading specific line ranges using offset and limit parameters.",
 		func(ctx context.Context, input ReadFileInput) (*schema.ToolResult, error) {
 			// Validate path
