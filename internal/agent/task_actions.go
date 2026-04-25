@@ -127,6 +127,9 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 			if err != nil {
 				return nil, err
 			}
+			if parsed != StatusPending && parsed != StatusInProgress {
+				return nil, fmt.Errorf("reopen status must be pending or in_progress")
+			}
 			status = parsed
 		}
 		task, err := list.ReopenTask(req.ID, status)
