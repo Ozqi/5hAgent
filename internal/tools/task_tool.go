@@ -22,16 +22,16 @@ func NewTaskTool(taskList *agent.TaskList) *TaskTool {
 func (t *TaskTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
 		Name: "task.task",
-		Desc: "Manage tasks: create, update, get, list, or delete tasks.",
+		Desc: "Manage tasks: create, update, get, list, delete, archive, or reopen tasks.",
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"action": {
 				Type:     schema.String,
-				Desc:     "Action: 'create', 'update', 'get', 'list', 'delete'",
+				Desc:     "Action: 'create', 'update', 'get', 'list', 'delete', 'archive', 'reopen'",
 				Required: true,
 			},
 			"id": {
 				Type:     schema.String,
-				Desc:     "Task ID (required for create, update, get, delete)",
+				Desc:     "Task ID (required for create, update, get, delete, archive, reopen)",
 				Required: false,
 			},
 			"title": {
@@ -46,7 +46,7 @@ func (t *TaskTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 			},
 			"status": {
 				Type:     schema.String,
-				Desc:     "Task status: pending, in_progress, blocked, completed, archived (for update or list filter)",
+				Desc:     "Task status: pending, in_progress, blocked, completed, archived (for update, list filter, or reopen target status)",
 				Required: false,
 			},
 		}),

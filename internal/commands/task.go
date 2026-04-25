@@ -12,7 +12,7 @@ import (
 func HandleTask(cmd string, list *agent.TaskList) (string, error) {
 	parts := strings.Fields(cmd)
 	if len(parts) < 2 {
-		return "", fmt.Errorf("usage: /task <list|create|update|get|delete> [args...]")
+		return "", fmt.Errorf("usage: /task <list|create|update|get|delete|archive|reopen> [args...]")
 	}
 
 	action := parts[1]
@@ -43,6 +43,20 @@ func HandleTask(cmd string, list *agent.TaskList) (string, error) {
 			return "", fmt.Errorf("usage: /task delete <id>")
 		}
 		return runTaskAction(list, agent.TaskActionRequest{Action: action, ID: parts[2]})
+	case "archive":
+		if len(parts) < 3 {
+			return "", fmt.Errorf("usage: /task archive <id>")
+		}
+		return runTaskAction(list, agent.TaskActionRequest{Action: action, ID: parts[2]})
+	case "reopen":
+		if len(parts) < 3 {
+			return "", fmt.Errorf("usage: /task reopen <id> [status]")
+		}
+		status := ""
+		if len(parts) > 3 {
+			status = parts[3]
+		}
+		return runTaskAction(list, agent.TaskActionRequest{Action: action, ID: parts[2], Status: status})
 	default:
 		return "", fmt.Errorf("unknown action: %s", action)
 	}
