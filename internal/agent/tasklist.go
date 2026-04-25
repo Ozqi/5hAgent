@@ -22,12 +22,15 @@ const (
 )
 
 type Task struct {
-	ID          string     `json:"id"`
-	Title       string     `json:"title"`
-	Description string     `json:"description"`
-	Status      TaskStatus `json:"status"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID           string     `json:"id"`
+	Title        string     `json:"title"`
+	Description  string     `json:"description"`
+	Summary      string     `json:"summary,omitempty"`
+	HistoryPath  string     `json:"history_path,omitempty"`
+	RestoredFrom string     `json:"restored_from,omitempty"`
+	Status       TaskStatus `json:"status"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 type TaskList struct {
@@ -133,6 +136,83 @@ func (l *TaskList) DeleteTask(id string) error {
 	}
 	delete(l.tasks, id)
 	return l.saveLocked()
+}
+
+func (l *TaskList) ArchiveTask(id string) (*Task, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := l.loadLocked(); err != nil {
+		return nil, err
+	}
+	task, ok := l.tasks[id]
+	if !ok {
+		return nil, fmt.Errorf("task %q not found", id)
+	}
+	if task.Status != StatusCompleted {
+		return nil, fmt.Errorf("task %q must be completed before archive", id)
+	}
+
+	now := time.Now().UTC()
+	summary := fmt.Sprintf("Completed task archived from %s.", task.ID)
+	historyPath := filepath.ToSlash(filepath.Join("history", historyFileName(task.ID)))
+	historyFile := filepath.Join(filepath.Dir(l.path), filepath.FromSlash(historyPath))
+	if err := os.MkdirAll(filepath.Dir(historyFile), 0o755); err != nil {
+		return nil, fmt.Errorf("create history dir: %w", err)
+	}
+	if err := os.WriteFile(historyFile, []byte(renderHistoryTaskMarkdown(task, now, summary, filepath.Base(l.path))), 0o644); err != nil {
+		return nil, fmt.Errorf("write history file: %w", err)
+	}
+
+	task.Status = StatusArchived
+	task.Summary = summary
+	task.HistoryPath = historyPath
+	task.RestoredFrom = ""
+	task.UpdatedAt = now
+	if err := l.saveLocked(); err != nil {
+		return nil, err
+	}
+	return cloneTask(task), nil
+}
+
+func (l *TaskList) ReopenTask(id string, status TaskStatus) (*Task, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := l.loadLocked(); err != nil {
+		return nil, err
+	}
+	task, ok := l.tasks[id]
+	if !ok {
+		return nil, fmt.Errorf("task %q not found", id)
+	}
+	if task.Status != StatusArchived {
+		return nil, fmt.Errorf("task %q is not archived", id)
+	}
+	if task.HistoryPath == "" {
+		return nil, fmt.Errorf("task %q has no history file", id)
+	}
+
+	historyPath := task.HistoryPath
+	historyFile := filepath.Join(filepath.Dir(l.path), filepath.FromSlash(historyPath))
+	data, err := os.ReadFile(historyFile)
+	if err != nil {
+		return nil, fmt.Errorf("read history file: %w", err)
+	}
+	snapshot := parseHistoryTaskMarkdown(string(data))
+	if snapshot.Title != "" {
+		task.Title = snapshot.Title
+	}
+	if snapshot.Description != "" {
+		task.Description = snapshot.Description
+	}
+	task.Status = status
+	task.RestoredFrom = historyPath
+	task.HistoryPath = ""
+	task.Summary = ""
+	task.UpdatedAt = time.Now().UTC()
+	if err := l.saveLocked(); err != nil {
+		return nil, err
+	}
+	return cloneTask(task), nil
 }
 
 func (l *TaskList) GetProgress() (total, pending, inProgress, blocked, completed, archived int) {
@@ -263,9 +343,23 @@ func renderTasksMarkdown(tasks []*Task) string {
 	for _, task := range tasks {
 		b.WriteString(fmt.Sprintf("### %s | %s\n", task.ID, task.Title))
 		b.WriteString(fmt.Sprintf("- status: %s\n", task.Status))
-		b.WriteString(fmt.Sprintf("- description: %s\n", task.Description))
-		b.WriteString(fmt.Sprintf("- created_at: %s\n", task.CreatedAt.UTC().Format(time.RFC3339)))
-		b.WriteString(fmt.Sprintf("- updated_at: %s\n\n", task.UpdatedAt.UTC().Format(time.RFC3339)))
+		if task.Status != StatusArchived {
+			b.WriteString(fmt.Sprintf("- description: %s\n", task.Description))
+		}
+		if task.Summary != "" {
+			b.WriteString(fmt.Sprintf("- summary: %s\n", task.Summary))
+		}
+		if task.HistoryPath != "" {
+			b.WriteString(fmt.Sprintf("- history: %s\n", task.HistoryPath))
+		}
+		if task.RestoredFrom != "" {
+			b.WriteString(fmt.Sprintf("- restored_from: %s\n", task.RestoredFrom))
+		}
+		if task.Status != StatusArchived {
+			b.WriteString(fmt.Sprintf("- created_at: %s\n", task.CreatedAt.UTC().Format(time.RFC3339)))
+			b.WriteString(fmt.Sprintf("- updated_at: %s\n", task.UpdatedAt.UTC().Format(time.RFC3339)))
+		}
+		b.WriteString("\n")
 	}
 	b.WriteString(taskSectionEnd)
 	return b.String()
@@ -309,6 +403,12 @@ func parseTasksMarkdown(content string) map[string]*Task {
 			current.Status = TaskStatus(value)
 		case "description":
 			current.Description = value
+		case "summary":
+			current.Summary = value
+		case "history":
+			current.HistoryPath = value
+		case "restored_from":
+			current.RestoredFrom = value
 		case "created_at":
 			if ts, err := time.Parse(time.RFC3339, value); err == nil {
 				current.CreatedAt = ts
@@ -323,4 +423,54 @@ func parseTasksMarkdown(content string) map[string]*Task {
 		tasks[current.ID] = current
 	}
 	return tasks
+}
+
+type historyTaskSnapshot struct {
+	Title       string
+	Description string
+}
+
+func historyFileName(id string) string {
+	replacer := strings.NewReplacer("/", "-", "\\", "-", " ", "-")
+	return replacer.Replace(id) + ".md"
+}
+
+func renderHistoryTaskMarkdown(task *Task, archivedAt time.Time, summary, source string) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("# History Task %s\n\n", task.ID))
+	b.WriteString(fmt.Sprintf("- id: %s\n", task.ID))
+	b.WriteString(fmt.Sprintf("- title: %s\n", task.Title))
+	b.WriteString("- status: archived\n")
+	b.WriteString(fmt.Sprintf("- archived_at: %s\n", archivedAt.Format(time.RFC3339)))
+	b.WriteString(fmt.Sprintf("- original_status: %s\n\n", task.Status))
+	b.WriteString("## Original Goal\n\n")
+	b.WriteString(task.Description)
+	b.WriteString("\n\n## Outcome\n\n")
+	b.WriteString(summary)
+	b.WriteString("\n\n## Recovery Hints\n\n")
+	b.WriteString("- reopen_status: pending\n")
+	b.WriteString(fmt.Sprintf("- source_task: %s\n", source))
+	b.WriteString("\n## Compressed Context\n\n")
+	b.WriteString("pending\n")
+	return b.String()
+}
+
+func parseHistoryTaskMarkdown(content string) historyTaskSnapshot {
+	var snapshot historyTaskSnapshot
+	lines := strings.Split(content, "\n")
+	section := ""
+	var desc []string
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		switch {
+		case strings.HasPrefix(line, "- title:"):
+			snapshot.Title = strings.TrimSpace(strings.TrimPrefix(line, "- title:"))
+		case strings.HasPrefix(line, "## "):
+			section = strings.TrimSpace(strings.TrimPrefix(line, "## "))
+		case section == "Original Goal":
+			desc = append(desc, raw)
+		}
+	}
+	snapshot.Description = strings.TrimSpace(strings.Join(desc, "\n"))
+	return snapshot
 }

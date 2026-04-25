@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/lzq/5hAgent/internal/agent"
@@ -13,9 +14,13 @@ import (
 
 // registry holds all registered tools
 var registry []tool.BaseTool
+var registryMu sync.RWMutex
 
 // InitRegistry 初始化工具注册表（需要在 main 中调用）
 func InitRegistry(taskList *agent.TaskList, skillMgr *skill.Manager) error {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+
 	registry = nil // 清空
 	toolmeta.Reset()
 
@@ -57,13 +62,31 @@ func InitRegistry(taskList *agent.TaskList, skillMgr *skill.Manager) error {
 	return nil
 }
 
+func ensureRegistry() {
+	registryMu.RLock()
+	initialized := len(registry) > 0
+	registryMu.RUnlock()
+	if initialized {
+		return
+	}
+
+	_ = InitRegistry(nil, nil)
+}
+
 // GetAllTools returns all registered tools
 func GetAllTools() []tool.BaseTool {
+	ensureRegistry()
+	registryMu.RLock()
+	defer registryMu.RUnlock()
 	return registry
 }
 
 // GetToolByName returns a tool by its name, or nil if not found
 func GetToolByName(name string) tool.BaseTool {
+	ensureRegistry()
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+
 	ctx := context.Background()
 	for _, t := range registry {
 		info, err := t.Info(ctx)
@@ -72,6 +95,11 @@ func GetToolByName(name string) tool.BaseTool {
 		}
 		if info.Name == name {
 			return t
+		}
+		if meta, ok := toolmeta.Lookup(info.Name); ok {
+			if meta.DisplayName == name || meta.OriginalName == name {
+				return t
+			}
 		}
 	}
 	return nil
