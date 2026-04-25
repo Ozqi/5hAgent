@@ -28,7 +28,7 @@ type WriteFileOutput struct {
 // NewWriteFileTool creates a new write_file tool using Eino's InferEnhancedTool
 func NewWriteFileTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
-		"write_file",
+		"base.write_file",
 		"Write content to a file at the specified path. Creates the file if it doesn't exist, or overwrites it if it does. Automatically creates parent directories if needed.",
 		func(ctx context.Context, input WriteFileInput) (*schema.ToolResult, error) {
 			// Validate input

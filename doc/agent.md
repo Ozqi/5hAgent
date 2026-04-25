@@ -6,7 +6,7 @@ cmd/5hagent/main.go
   -> tools.InitRegistry(...)
   -> Agent.RunStream(...)
      -> model.Stream()
-     -> streamToolCollector / executeToolCall()
+     -> tool_use.go: streamToolCollector / executeToolCall()
      -> TaskList / Context updates
 ```
 
@@ -14,7 +14,7 @@ cmd/5hagent/main.go
 
 - [`cmd/5hagent/main.go`](../cmd/5hagent/main.go)
 - [`internal/agent/agent.go`](../internal/agent/agent.go)
-- [`internal/agent/tool_executor.go`](../internal/agent/tool_executor.go)
+- [`internal/agent/tool_use.go`](../internal/agent/tool_use.go)
 - [`internal/agent/tasklist.go`](../internal/agent/tasklist.go)
 
 ## 入口
@@ -22,7 +22,7 @@ cmd/5hagent/main.go
 启动主链路在 [`runInteractive()`](../cmd/5hagent/main.go#L41-L214)。关键代码是：
 
 ```go
-systemPrompt, err := prompt.Load("prompt", "main")
+systemPrompt, err := utils.Load("prompt", "main")
 ag, err := agent.NewAgent(nil, nil, agentConfig)
 if err := tools.InitRegistry(taskList, ag.GetSkillManager()); err != nil { ... }
 modelWithTools, err := client.GetModel().WithTools(toolInfos)
@@ -33,7 +33,7 @@ _, err = ag.RunStream(ctx, messageCtx, line, onToken)
 
 对应代码：
 
-- [`prompt.Load("prompt", "main")`](../cmd/5hagent/main.go#L70-L76)
+- [`utils.Load("prompt", "main")`](../cmd/5hagent/main.go#L70-L76)
 - [`agent.NewAgent(nil, nil, agentConfig)`](../cmd/5hagent/main.go#L78-L92)
 - [`tools.InitRegistry(...)`](../cmd/5hagent/main.go#L94-L98)
 - [`client.GetModel().WithTools(toolInfos)`](../cmd/5hagent/main.go#L111-L116)
@@ -128,7 +128,7 @@ for {
 - [`reader, err := a.model.Stream(ctx, messages)`](../internal/agent/agent.go#L414-L420)
 - [`chunk, err := reader.Recv()`](../internal/agent/agent.go#L440-L449)
 
-流式路径的关键不是 token 输出，而是把分片 `ToolCall` 收敛成“可执行”的完整调用。当前代码把这块收口进 [`streamToolCollector`](../internal/agent/agent.go#L224-L330)：
+流式路径的关键不是 token 输出，而是把分片 `ToolCall` 收敛成“可执行”的完整调用。当前代码把这块收口进 [`streamToolCollector`](../internal/agent/tool_use.go)：
 
 ```go
 func (c *streamToolCollector) Add(chunks []schema.ToolCall) []schema.ToolCall {
@@ -150,10 +150,10 @@ func (c *streamToolCollector) Add(chunks []schema.ToolCall) []schema.ToolCall {
 
 对应代码：
 
-- [`streamToolCollector`](../internal/agent/agent.go#L224-L330)
+- [`streamToolCollector`](../internal/agent/tool_use.go)
 - [`if len(chunk.ToolCalls) > 0 { ... }`](../internal/agent/agent.go#L457-L470)
 
-这里的“可执行”不是只看有无 `ToolCall`，还要求 `ID`、`Name` 和一段完整 JSON 参数都已经到位。判断在 [`isRunnableToolCall()`](../internal/agent/agent.go#L312-L318)：
+这里的“可执行”不是只看有无 `ToolCall`，还要求 `ID`、`Name` 和一段完整 JSON 参数都已经到位。判断在 [`isRunnableToolCall()`](../internal/agent/tool_use.go)：
 
 ```go
 func isRunnableToolCall(tc schema.ToolCall) bool {
@@ -170,7 +170,7 @@ func isRunnableToolCall(tc schema.ToolCall) bool {
 toolQueue := make(chan streamToolRequest, 8)
 go func() {
     for req := range toolQueue {
-        result, execErr := a.executeToolCall(ctx, req.tc, req.idx, req.idx+1)
+        result, execErr := a.executeToolCall(ctx, req.tc, req.idx, req.idx+1, false)
         toolResultCh <- streamToolResult{idx: req.idx, tc: req.tc, result: result, err: execErr}
     }
 }()
@@ -186,7 +186,7 @@ for _, tc := range collector.Add(chunk.ToolCalls) {
 
 - [`toolQueue` / `toolResultCh`](../internal/agent/agent.go#L428-L438)
 - [`collector.Add(chunk.ToolCalls)`](../internal/agent/agent.go#L465-L469)
-- [`executeToolCall()`](../internal/agent/agent.go#L332-L344)
+- [`executeToolCall()`](../internal/agent/tool_use.go)
 
 这个设计的语义是：
 
@@ -273,7 +273,7 @@ type FunctionCall struct {
 对应语义很简单：
 
 - `tc.ID`：这次工具调用的唯一标识，用来和后面的 `tool` 结果消息配对
-- `tc.Function.Name`：模型要调用的工具名，比如 `read_file`、`exec_shell`
+- `tc.Function.Name`：模型要调用的工具名，比如 `base.read_file`、`base.exec_shell`
 - `tc.Function.Arguments`：工具参数，类型是 JSON 字符串，不是已经解析好的 Go struct
 - `tc.Index`：框架给流式多工具调用合并预留的位置索引；Eino 文档明确说它在 stream mode 下用于识别分片、辅助合并
 
@@ -324,7 +324,7 @@ provider 原始 `tool_use` 大致是：
 {
   "type": "tool_use",
   "id": "call_xxx",
-  "name": "exec_shell",
+  "name": "base.exec_shell",
   "input": {"command": "pwd"}
 }
 ```
@@ -335,7 +335,7 @@ provider 原始 `tool_use` 大致是：
 schema.ToolCall{
     ID: "call_xxx",
     Function: schema.FunctionCall{
-        Name:      "exec_shell",
+        Name:      "base.exec_shell",
         Arguments: `{"command":"pwd"}`,
     },
 }
@@ -353,7 +353,7 @@ resultMsg := schema.ToolMessage(result, tc.ID)
 
 对应代码：
 
-- [`resultMsg := schema.ToolMessage(result, tc.ID)`](../internal/agent/tool_executor.go#L258-L264)
+- [`resultMsg := schema.ToolMessage(result, tc.ID)`](../internal/agent/tool_use.go)
 
 Claude 适配层再把这条 `tool` 消息转回 provider 请求时，用的是同一个 id：
 
@@ -370,9 +370,9 @@ anthropic.NewToolResultBlock(message.ToolCallID, message.Content, false)
 
 这也是为什么消息顺序不能错。模型必须先看到自己的 `tool_use(id=call_xxx)`，下一轮才能接受 `tool_result(tool_use_id=call_xxx)`。
 
-## tool_executor
+## tool_use
 
-工具执行入口是 [`exeTools()`](../internal/agent/tool_executor.go#L26-L72)。核心代码：
+工具执行入口是 [`exeTools()`](../internal/agent/tool_use.go)。核心代码：
 
 ```go
 for _, tc := range toolCalls {
@@ -394,9 +394,9 @@ for idx, tc := range writeCalls {
 }
 ```
 
-这里先分类，再决定并发还是串行。分类规则在 [`isReadOnlyToolCall()`](../internal/agent/tool_executor.go#L314-L332)。基础名单来自 [`readOnlyTools`](../internal/agent/tool_executor.go#L16-L24)，统一 `task` 工具还会继续解析 `action`，其中 `get` / `list` 走只读，`create` / `update` / `delete` 走写路径。
+这里先分类，再决定并发还是串行。分类规则在 [`isReadOnlyToolCall()`](../internal/agent/tool_use.go)。基础工具的只读属性来自 `toolmeta` 注册表，统一 `task.task` 工具还会继续解析 `action`，其中 `get` / `list` 走只读，`create` / `update` / `delete` 走写路径。
 
-只读工具走 [`exeToolsConcurrent()`](../internal/agent/tool_executor.go#L74-L130)。关键代码：
+只读工具走 [`exeToolsConcurrent()`](../internal/agent/tool_use.go)。关键代码：
 
 ```go
 go func(idx int, tc schema.ToolCall) {
@@ -412,13 +412,13 @@ for _, res := range collectedResults {
 
 对应代码：
 
-- [`t := a.findTool(tc.Function.Name)`](../internal/agent/tool_executor.go#L102-L107)
-- [`result, execErr := a.invokeTool(ctx, t, tc)`](../internal/agent/tool_executor.go#L109-L111)
-- [`a.addToolResultToContext(...)`](../internal/agent/tool_executor.go#L122-L127)
+- [`t := a.findTool(tc.Function.Name)`](../internal/agent/tool_use.go)
+- [`result, execErr := a.invokeTool(ctx, t, tc)`](../internal/agent/tool_use.go)
+- [`a.addToolResultToContext(...)`](../internal/agent/tool_use.go)
 
 注意这里是“执行并发，写回顺序稳定”。工具完成得再快，也会按原始请求顺序写回上下文。
 
-写工具走 [`executeSingleTool()`](../internal/agent/tool_executor.go#L160-L198)。关键代码：
+写工具走 [`executeSingleTool()`](../internal/agent/tool_use.go)。关键代码：
 
 ```go
 t := a.findTool(tc.Function.Name)
@@ -481,8 +481,8 @@ return invokable.InvokableRun(ctx, tc.Function.Arguments)
 
 - [`t.Info(ctx)`](../cmd/5hagent/main.go#L102-L108)
 - [`WithTools(toolInfos)`](../cmd/5hagent/main.go#L111-L116)
-- [`result, execErr := a.invokeTool(ctx, t, tc)`](../internal/agent/tool_executor.go#L193-L197)
-- [`return invokable.InvokableRun(ctx, tc.Function.Arguments)`](../internal/agent/tool_executor.go#L228-L231)
+- [`result, execErr := a.invokeTool(ctx, t, tc)`](../internal/agent/tool_use.go)
+- [`return invokable.InvokableRun(ctx, tc.Function.Arguments)`](../internal/agent/tool_use.go)
 
 所以模型和工具实现之间传递的“参数载体”就是 `tc.Function.Arguments`，它的类型是 JSON 字符串。
 
@@ -492,7 +492,7 @@ return invokable.InvokableRun(ctx, tc.Function.Arguments)
 schema.ToolCall{
     ID: "call_xxx",
     Function: schema.FunctionCall{
-        Name:      "read_file",
+        Name:      "base.read_file",
         Arguments: `{"path":"/tmp/a.txt","offset":1,"limit":20}`,
     },
 }
@@ -504,11 +504,11 @@ schema.ToolCall{
 
 当前仓库里的工具主要有两种实现风格。
 
-第一种是 `EnhancedInvokableTool`，常见于 `read_file`、`write_file`、`edit`、`exec_shell`。这些工具通常通过 [`utils.InferEnhancedTool`](https://pkg.go.dev/github.com/cloudwego/eino/components/tool/utils#InferEnhancedTool) 构造。关键代码长这样：
+第一种是 `EnhancedInvokableTool`，常见于 `base.read_file`、`base.write_file`、`base.edit`、`base.exec_shell`。这些工具通常通过 [`utils.InferEnhancedTool`](https://pkg.go.dev/github.com/cloudwego/eino/components/tool/utils#InferEnhancedTool) 构造。关键代码长这样：
 
 ```go
 return utils.InferEnhancedTool(
-    "read_file",
+    "base.read_file",
     "...",
     func(ctx context.Context, input ReadFileInput) (*schema.ToolResult, error) {
         ...
@@ -535,8 +535,8 @@ return formatToolResult(toolResult), nil
 
 对应代码：
 
-- [`toolArg := &schema.ToolArgument{Text: tc.Function.Arguments}`](../internal/agent/tool_executor.go#L214-L220)
-- [`return formatToolResult(toolResult), nil`](../internal/agent/tool_executor.go#L224-L225)
+- [`toolArg := &schema.ToolArgument{Text: tc.Function.Arguments}`](../internal/agent/tool_use.go)
+- [`return formatToolResult(toolResult), nil`](../internal/agent/tool_use.go)
 
 也就是说，这类工具拿到的是一段 JSON 参数，但 JSON 到 `ReadFileInput` / `WriteFileInput` 的解码由 Eino 帮你做了。
 
@@ -619,7 +619,7 @@ stdout, err := cmd.Output()
 - [`ExecShellInput`](../internal/tools/exec_shell.go#L15-L18)
 - [`cmd := exec.CommandContext(ctx, "sh", "-c", input.Command)`](../internal/tools/exec_shell.go#L43-L45)
 
-`task` 和 `skill` 则是典型的手写 schema + 手写 JSON 解析。模型生成的仍然是标准 JSON，比如：
+`task.task` 和 `skill.skill` 则是典型的手写 schema + 手写 JSON 解析。模型生成的仍然是标准 JSON，比如：
 
 ```json
 {"action":"list"}
@@ -639,11 +639,11 @@ stdout, err := cmd.Output()
 
 ```go
 tools := []struct {
-    name string
+    meta toolmeta.Meta
     fn   func() (tool.BaseTool, error)
 }{
-    {"read_file", func() (tool.BaseTool, error) { return NewReadFileTool() }},
-    {"exec_shell", func() (tool.BaseTool, error) { return NewExecShellTool() }},
+    {meta: toolmeta.Meta{FullName: "base.read_file", DisplayName: "read_file"}, fn: func() (tool.BaseTool, error) { return NewReadFileTool() }},
+    {meta: toolmeta.Meta{FullName: "base.exec_shell", DisplayName: "exec_shell"}, fn: func() (tool.BaseTool, error) { return NewExecShellTool() }},
     ...
 }
 
@@ -667,7 +667,7 @@ for _, t := range allTools {
 
 ## invokeTool
 
-真正的接口适配在 [`invokeTool()`](../internal/agent/tool_executor.go#L200-L236)。关键代码：
+真正的接口适配在 [`invokeTool()`](../internal/agent/tool_use.go)。关键代码：
 
 ```go
 if enhancedInvokable, ok := t.(tool.EnhancedInvokableTool); ok {
@@ -683,15 +683,15 @@ if invokable, ok := t.(tool.InvokableTool); ok {
 
 对应代码：
 
-- [`toolArg := &schema.ToolArgument{Text: tc.Function.Arguments}`](../internal/agent/tool_executor.go#L214-L220)
-- [`return formatToolResult(toolResult), nil`](../internal/agent/tool_executor.go#L224-L225)
-- [`return invokable.InvokableRun(ctx, tc.Function.Arguments)`](../internal/agent/tool_executor.go#L228-L231)
+- [`toolArg := &schema.ToolArgument{Text: tc.Function.Arguments}`](../internal/agent/tool_use.go)
+- [`return formatToolResult(toolResult), nil`](../internal/agent/tool_use.go)
+- [`return invokable.InvokableRun(ctx, tc.Function.Arguments)`](../internal/agent/tool_use.go)
 
 也就是说，对话层最终只关心字符串结果；即使工具内部返回的是 richer 的 `ToolResult`，也会先被 `formatToolResult()` 压平成文本。
 
 ## 写回上下文
 
-工具结果最终由 [`addToolResultToContext()`](../internal/agent/tool_executor.go#L238-L265) 写回。关键代码：
+工具结果最终由 [`addToolResultToContext()`](../internal/agent/tool_use.go) 写回。关键代码：
 
 ```go
 errMsg := schema.ToolMessage(
@@ -704,8 +704,8 @@ resultMsg := schema.ToolMessage(result, tc.ID)
 
 对应代码：
 
-- [`schema.ToolMessage(..., tc.ID)` error path](../internal/agent/tool_executor.go#L247-L255)
-- [`resultMsg := schema.ToolMessage(result, tc.ID)`](../internal/agent/tool_executor.go#L258-L264)
+- [`schema.ToolMessage(..., tc.ID)` error path](../internal/agent/tool_use.go)
+- [`resultMsg := schema.ToolMessage(result, tc.ID)`](../internal/agent/tool_use.go)
 
 这里的 `tc.ID` 就是消息配对键。上一条 `assistant` 消息里是 `ToolCall.ID`，这一条 `tool` 消息里是 `ToolCallID`。下一轮模型再次看到整段上下文时，才能知道哪个工具已经执行完。
 
@@ -737,4 +737,4 @@ if err := tl.save(); err != nil { ... }
 - [`DeleteTask()`](../internal/agent/tasklist.go#L181-L202)
 - [`save()`](../internal/agent/tasklist.go#L204-L226)
 
-任务文件路径默认是 `.5hagent/tasks.json`，由 [`runInteractive()`](../cmd/5hagent/main.go#L50-L57) 初始化。
+任务文件路径默认是项目根 `task.md`，由 [`runInteractive()`](../cmd/5hagent/main.go#L46-L53) 初始化。`TaskList` 会把任务持久化到 `task.md` 的受管 markdown 区块里，并在每次公开读写前重新从磁盘加载，确保人工修改能立即被 `/task` 和 `task.task` 看到。

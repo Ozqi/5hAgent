@@ -36,7 +36,7 @@ type GrepOutput struct {
 // NewGrepTool creates a new grep tool for code searching
 func NewGrepTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
-		"grep",
+		"base.grep",
 		"Search for patterns in files using ripgrep. Supports regex patterns and file type filtering. Returns matching lines with file path, line number, and content.",
 		func(ctx context.Context, input GrepInput) (*schema.ToolResult, error) {
 			// Check if ripgrep is available

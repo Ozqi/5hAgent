@@ -22,90 +22,60 @@ func HandleTask(cmd string, list *agent.TaskList) (string, error) {
 		if len(parts) > 2 {
 			status = parts[2]
 		}
-		return listTasks(list, status)
+		return runTaskAction(list, agent.TaskActionRequest{Action: action, Status: status})
 	case "create":
 		if len(parts) < 5 {
 			return "", fmt.Errorf("usage: /task create <id> <title> <description>")
 		}
-		return createTask(list, parts[2], parts[3], strings.Join(parts[4:], " "))
+		return runTaskAction(list, agent.TaskActionRequest{Action: action, ID: parts[2], Title: parts[3], Description: strings.Join(parts[4:], " ")})
 	case "update":
 		if len(parts) < 4 {
 			return "", fmt.Errorf("usage: /task update <id> <status>")
 		}
-		return updateTask(list, parts[2], parts[3])
+		return runTaskAction(list, agent.TaskActionRequest{Action: action, ID: parts[2], Status: parts[3]})
 	case "get":
 		if len(parts) < 3 {
 			return "", fmt.Errorf("usage: /task get <id>")
 		}
-		return getTask(list, parts[2])
+		return runTaskAction(list, agent.TaskActionRequest{Action: action, ID: parts[2]})
 	case "delete":
 		if len(parts) < 3 {
 			return "", fmt.Errorf("usage: /task delete <id>")
 		}
-		return deleteTask(list, parts[2])
+		return runTaskAction(list, agent.TaskActionRequest{Action: action, ID: parts[2]})
 	default:
 		return "", fmt.Errorf("unknown action: %s", action)
 	}
 }
 
-func listTasks(list *agent.TaskList, status string) (string, error) {
-	var tasks []*agent.Task
-
-	if status != "" {
-		tasks = list.ListTasksByStatus(agent.TaskStatus(status))
-	} else {
-		tasks = list.ListTasks()
-	}
-
-	if len(tasks) == 0 {
-		return "No tasks found", nil
-	}
-
-	var sb strings.Builder
-	sb.WriteString("Tasks:\n")
-	for _, t := range tasks {
-		sb.WriteString(fmt.Sprintf("  [%s] %s - %s (%s)\n", t.ID, t.Title, t.Status, t.CreatedAt.Format("2006-01-02")))
-	}
-
-	total, pending, inProgress, completed, failed := list.GetProgress()
-	sb.WriteString(fmt.Sprintf("\nProgress: %d total, %d pending, %d in_progress, %d completed, %d failed\n",
-		total, pending, inProgress, completed, failed))
-
-	return sb.String(), nil
-}
-
-func createTask(list *agent.TaskList, id, title, desc string) (string, error) {
-	task, err := list.CreateTask(id, title, desc)
+func runTaskAction(list *agent.TaskList, req agent.TaskActionRequest) (string, error) {
+	result, err := agent.ExecuteTaskAction(list, req)
 	if err != nil {
 		return "", err
 	}
 
-	result, _ := json.MarshalIndent(task, "", "  ")
-	return fmt.Sprintf("Task created:\n%s", string(result)), nil
-}
+	if req.Action == "list" {
+		if len(result.Tasks) == 0 {
+			return fmt.Sprintf("No tasks found in %s", result.Source), nil
+		}
 
-func updateTask(list *agent.TaskList, id, status string) (string, error) {
-	if err := list.UpdateTaskStatus(id, agent.TaskStatus(status)); err != nil {
-		return "", err
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Tasks (%s):\n", result.Source))
+		for _, t := range result.Tasks {
+			sb.WriteString(fmt.Sprintf("  [%s] %s - %s (%s)\n", t.ID, t.Title, t.Status, t.CreatedAt.Format("2006-01-02")))
+		}
+		p := result.Progress
+		sb.WriteString(fmt.Sprintf("\nProgress: %d total, %d pending, %d in_progress, %d blocked, %d completed, %d archived\n", p.Total, p.Pending, p.InProgress, p.Blocked, p.Completed, p.Archived))
+		return sb.String(), nil
 	}
 
-	task, _ := list.GetTask(id)
-	return fmt.Sprintf("Task '%s' updated to status: %s", task.ID, task.Status), nil
-}
-
-func getTask(list *agent.TaskList, id string) (string, error) {
-	task, err := list.GetTask(id)
-	if err != nil {
-		return "", err
+	var payload interface{} = result.Task
+	if result.Task == nil {
+		payload = result
 	}
-
-	result, _ := json.MarshalIndent(task, "", "  ")
-	return string(result), nil
-}
-
-func deleteTask(list *agent.TaskList, id string) (string, error) {
-	if err := list.DeleteTask(id); err != nil {
-		return "", err
+	encoded, _ := json.MarshalIndent(payload, "", "  ")
+	if result.Message != "" {
+		return fmt.Sprintf("%s:\n%s", result.Message, string(encoded)), nil
 	}
-	return fmt.Sprintf("Task '%s' deleted", id), nil
+	return string(encoded), nil
 }

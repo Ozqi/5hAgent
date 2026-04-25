@@ -1,26 +1,26 @@
-// Package tasklist 提供任务列表管理功能
 package agent
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
 
-// TaskStatus 任务状态
 type TaskStatus string
 
 const (
-	StatusPending    TaskStatus = "pending"     // 待处理
-	StatusInProgress TaskStatus = "in_progress" // 进行中
-	StatusCompleted  TaskStatus = "completed"   // 已完成
-	StatusFailed     TaskStatus = "failed"      // 失败
+	StatusPending    TaskStatus = "pending"
+	StatusInProgress TaskStatus = "in_progress"
+	StatusBlocked    TaskStatus = "blocked"
+	StatusCompleted  TaskStatus = "completed"
+	StatusArchived   TaskStatus = "archived"
+	StatusFailed     TaskStatus = "failed"
 )
 
-// Task 任务结构
 type Task struct {
 	ID          string     `json:"id"`
 	Title       string     `json:"title"`
@@ -28,234 +28,299 @@ type Task struct {
 	Status      TaskStatus `json:"status"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
-// TaskList 任务列表管理器
 type TaskList struct {
-	tasks    map[string]*Task
-	filePath string
-	mu       sync.RWMutex
+	path  string
+	mu    sync.RWMutex
+	tasks map[string]*Task
 }
 
-// NewTaskList 创建新的任务列表管理器
-// 参数:
-//   - filePath: 任务列表持久化文件路径
-//
-// 返回: TaskList 实例和可能的错误
-// 功能: 创建任务列表管理器，如果文件存在则加载
-func NewTaskList(filePath string) (*TaskList, error) {
-	tl := &TaskList{
-		tasks:    make(map[string]*Task),
-		filePath: filePath,
-	}
+const (
+	taskSectionStart = "<!-- 5hagent:tasks:start -->"
+	taskSectionEnd   = "<!-- 5hagent:tasks:end -->"
+)
 
-	// 如果文件存在，加载任务
-	if _, err := os.Stat(filePath); err == nil {
-		if err := tl.load(); err != nil {
-			return nil, fmt.Errorf("failed to load tasks: %w", err)
-		}
+func NewTaskList(path string) (*TaskList, error) {
+	if path == "" {
+		return nil, fmt.Errorf("task path is required")
 	}
-
-	return tl, nil
+	list := &TaskList{path: path, tasks: map[string]*Task{}}
+	if err := list.load(); err != nil {
+		return nil, err
+	}
+	if err := list.save(); err != nil {
+		return nil, err
+	}
+	return list, nil
 }
 
-// CreateTask 创建新任务
-// 参数:
-//   - id: 任务 ID
-//   - title: 任务标题
-//   - description: 任务描述
-//
-// 返回: 创建的任务和可能的错误
-func (tl *TaskList) CreateTask(id, title, description string) (*Task, error) {
-	tl.mu.Lock()
-	defer tl.mu.Unlock()
-
-	// 检查 ID 是否已存在
-	if _, exists := tl.tasks[id]; exists {
-		return nil, fmt.Errorf("task with id %s already exists", id)
+func (l *TaskList) Path() string {
+	if l == nil {
+		return ""
 	}
-
-	now := time.Now()
-	task := &Task{
-		ID:          id,
-		Title:       title,
-		Description: description,
-		Status:      StatusPending,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-
-	tl.tasks[id] = task
-
-	// 持久化
-	if err := tl.save(); err != nil {
-		return nil, fmt.Errorf("failed to save tasks: %w", err)
-	}
-
-	return task, nil
+	return l.path
 }
 
-// GetTask 获取任务
-// 参数:
-//   - id: 任务 ID
-//
-// 返回: 任务和可能的错误
-func (tl *TaskList) GetTask(id string) (*Task, error) {
-	tl.mu.RLock()
-	defer tl.mu.RUnlock()
-
-	task, exists := tl.tasks[id]
-	if !exists {
-		return nil, fmt.Errorf("task not found: %s", id)
+func (l *TaskList) CreateTask(id, title, desc string) (*Task, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := l.loadLocked(); err != nil {
+		return nil, err
 	}
-
-	return task, nil
+	if _, exists := l.tasks[id]; exists {
+		return nil, fmt.Errorf("task %q already exists", id)
+	}
+	now := time.Now().UTC()
+	task := &Task{ID: id, Title: title, Description: desc, Status: StatusPending, CreatedAt: now, UpdatedAt: now}
+	l.tasks[id] = task
+	if err := l.saveLocked(); err != nil {
+		return nil, err
+	}
+	return cloneTask(task), nil
 }
 
-// UpdateTaskStatus 更新任务状态
-// 参数:
-//   - id: 任务 ID
-//   - status: 新状态
-//
-// 返回: 可能的错误
-func (tl *TaskList) UpdateTaskStatus(id string, status TaskStatus) error {
-	tl.mu.Lock()
-	defer tl.mu.Unlock()
-
-	task, exists := tl.tasks[id]
-	if !exists {
-		return fmt.Errorf("task not found: %s", id)
+func (l *TaskList) UpdateTaskStatus(id string, status TaskStatus) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := l.loadLocked(); err != nil {
+		return err
 	}
-
+	task, ok := l.tasks[id]
+	if !ok {
+		return fmt.Errorf("task %q not found", id)
+	}
 	task.Status = status
-	task.UpdatedAt = time.Now()
-
-	// 如果标记为完成，记录完成时间
-	if status == StatusCompleted {
-		now := time.Now()
-		task.CompletedAt = &now
-	}
-
-	// 持久化
-	if err := tl.save(); err != nil {
-		return fmt.Errorf("failed to save tasks: %w", err)
-	}
-
-	return nil
+	task.UpdatedAt = time.Now().UTC()
+	return l.saveLocked()
 }
 
-// ListTasks 列出所有任务
-// 返回: 任务列表
-func (tl *TaskList) ListTasks() []*Task {
-	tl.mu.RLock()
-	defer tl.mu.RUnlock()
-
-	tasks := make([]*Task, 0, len(tl.tasks))
-	for _, task := range tl.tasks {
-		tasks = append(tasks, task)
+func (l *TaskList) GetTask(id string) (*Task, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := l.loadLocked(); err != nil {
+		return nil, err
 	}
-
-	return tasks
+	task, ok := l.tasks[id]
+	if !ok {
+		return nil, fmt.Errorf("task %q not found", id)
+	}
+	return cloneTask(task), nil
 }
 
-// ListTasksByStatus 按状态列出任务
-// 参数:
-//   - status: 任务状态
-//
-// 返回: 任务列表
-func (tl *TaskList) ListTasksByStatus(status TaskStatus) []*Task {
-	tl.mu.RLock()
-	defer tl.mu.RUnlock()
-
-	tasks := make([]*Task, 0)
-	for _, task := range tl.tasks {
-		if task.Status == status {
-			tasks = append(tasks, task)
-		}
-	}
-
-	return tasks
+func (l *TaskList) ListTasks() []*Task {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_ = l.loadLocked()
+	return l.sortedTasksLocked("")
 }
 
-// DeleteTask 删除任务
-// 参数:
-//   - id: 任务 ID
-//
-// 返回: 可能的错误
-func (tl *TaskList) DeleteTask(id string) error {
-	tl.mu.Lock()
-	defer tl.mu.Unlock()
-
-	if _, exists := tl.tasks[id]; !exists {
-		return fmt.Errorf("task not found: %s", id)
-	}
-
-	delete(tl.tasks, id)
-
-	// 持久化
-	if err := tl.save(); err != nil {
-		return fmt.Errorf("failed to save tasks: %w", err)
-	}
-
-	return nil
+func (l *TaskList) ListTasksByStatus(status TaskStatus) []*Task {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_ = l.loadLocked()
+	return l.sortedTasksLocked(status)
 }
 
-// save 保存任务列表到文件
-func (tl *TaskList) save() error {
-	// 创建父目录
-	dir := filepath.Dir(tl.filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
+func (l *TaskList) DeleteTask(id string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := l.loadLocked(); err != nil {
+		return err
 	}
-
-	// 序列化任务列表
-	data, err := json.MarshalIndent(tl.tasks, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal tasks: %w", err)
+	if _, ok := l.tasks[id]; !ok {
+		return fmt.Errorf("task %q not found", id)
 	}
-
-	// 写入文件
-	if err := os.WriteFile(tl.filePath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
-	}
-
-	return nil
+	delete(l.tasks, id)
+	return l.saveLocked()
 }
 
-// load 从文件加载任务列表
-func (tl *TaskList) load() error {
-	data, err := os.ReadFile(tl.filePath)
-	if err != nil {
-		return fmt.Errorf("failed to read file: %w", err)
-	}
-
-	if err := json.Unmarshal(data, &tl.tasks); err != nil {
-		return fmt.Errorf("failed to unmarshal tasks: %w", err)
-	}
-
-	return nil
-}
-
-// GetProgress 获取任务进度统计
-// 返回: 总任务数、待处理、进行中、已完成、失败
-func (tl *TaskList) GetProgress() (total, pending, inProgress, completed, failed int) {
-	tl.mu.RLock()
-	defer tl.mu.RUnlock()
-
-	total = len(tl.tasks)
-	for _, task := range tl.tasks {
+func (l *TaskList) GetProgress() (total, pending, inProgress, blocked, completed, archived int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_ = l.loadLocked()
+	for _, task := range l.tasks {
+		total++
 		switch task.Status {
 		case StatusPending:
 			pending++
 		case StatusInProgress:
 			inProgress++
+		case StatusBlocked:
+			blocked++
 		case StatusCompleted:
 			completed++
-		case StatusFailed:
-			failed++
+		case StatusArchived:
+			archived++
 		}
 	}
+	return total, pending, inProgress, blocked, completed, archived
+}
 
-	return
+func (l *TaskList) load() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.loadLocked()
+}
+
+func (l *TaskList) loadLocked() error {
+	if err := os.MkdirAll(filepath.Dir(l.path), 0o755); err != nil {
+		return fmt.Errorf("create task dir: %w", err)
+	}
+	data, err := os.ReadFile(l.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			l.tasks = map[string]*Task{}
+			return nil
+		}
+		return fmt.Errorf("read task file: %w", err)
+	}
+	l.tasks = parseTasksMarkdown(string(data))
+	return nil
+}
+
+func (l *TaskList) save() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.saveLocked()
+}
+
+func (l *TaskList) saveLocked() error {
+	content := ""
+	if data, err := os.ReadFile(l.path); err == nil {
+		content = string(data)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read task file: %w", err)
+	}
+	if strings.TrimSpace(content) == "" {
+		content = defaultTaskMarkdownTemplate()
+	}
+
+	section := renderTasksMarkdown(l.sortedTasksLocked(""))
+	updated := replaceManagedSection(content, section)
+	if err := os.MkdirAll(filepath.Dir(l.path), 0o755); err != nil {
+		return fmt.Errorf("create task dir: %w", err)
+	}
+	if err := os.WriteFile(l.path, []byte(updated), 0o644); err != nil {
+		return fmt.Errorf("write task file: %w", err)
+	}
+	return nil
+}
+
+func ParseTaskStatus(raw string) (TaskStatus, error) {
+	status := TaskStatus(strings.TrimSpace(raw))
+	switch status {
+	case StatusPending, StatusInProgress, StatusBlocked, StatusCompleted, StatusArchived:
+		return status, nil
+	default:
+		return "", fmt.Errorf("invalid task status: %s", raw)
+	}
+}
+
+func (l *TaskList) sortedTasksLocked(status TaskStatus) []*Task {
+	tasks := make([]*Task, 0, len(l.tasks))
+	for _, task := range l.tasks {
+		if status != "" && task.Status != status {
+			continue
+		}
+		tasks = append(tasks, cloneTask(task))
+	}
+	sort.Slice(tasks, func(i, j int) bool { return tasks[i].ID < tasks[j].ID })
+	return tasks
+}
+
+func cloneTask(task *Task) *Task {
+	if task == nil {
+		return nil
+	}
+	clone := *task
+	return &clone
+}
+
+func replaceManagedSection(content, section string) string {
+	trimmed := strings.TrimRight(content, "\n")
+	managed := section
+	start := strings.Index(trimmed, taskSectionStart)
+	end := strings.Index(trimmed, taskSectionEnd)
+	if start >= 0 && end >= start {
+		end += len(taskSectionEnd)
+		return strings.TrimRight(trimmed[:start], "\n") + "\n\n" + managed + "\n"
+	}
+	if trimmed == "" {
+		return managed + "\n"
+	}
+	return trimmed + "\n\n" + managed + "\n"
+}
+
+func defaultTaskMarkdownTemplate() string {
+	return "# Shared Task List\n\n> This file is the single source of truth for active 5hAgent tasks.\n> Edit task entries carefully and keep the managed markers intact.\n"
+}
+
+func renderTasksMarkdown(tasks []*Task) string {
+	var b strings.Builder
+	b.WriteString(taskSectionStart)
+	b.WriteString("\n## Shared Tasks\n\n")
+	for _, task := range tasks {
+		b.WriteString(fmt.Sprintf("### %s | %s\n", task.ID, task.Title))
+		b.WriteString(fmt.Sprintf("- status: %s\n", task.Status))
+		b.WriteString(fmt.Sprintf("- description: %s\n", task.Description))
+		b.WriteString(fmt.Sprintf("- created_at: %s\n", task.CreatedAt.UTC().Format(time.RFC3339)))
+		b.WriteString(fmt.Sprintf("- updated_at: %s\n\n", task.UpdatedAt.UTC().Format(time.RFC3339)))
+	}
+	b.WriteString(taskSectionEnd)
+	return b.String()
+}
+
+func parseTasksMarkdown(content string) map[string]*Task {
+	tasks := map[string]*Task{}
+	start := strings.Index(content, taskSectionStart)
+	end := strings.Index(content, taskSectionEnd)
+	if start < 0 || end < start {
+		return tasks
+	}
+	section := content[start+len(taskSectionStart) : end]
+	lines := strings.Split(section, "\n")
+	var current *Task
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "### ") {
+			if current != nil && current.ID != "" {
+				tasks[current.ID] = current
+			}
+			body := strings.TrimPrefix(line, "### ")
+			parts := strings.SplitN(body, " | ", 2)
+			current = &Task{ID: strings.TrimSpace(parts[0]), Status: StatusPending}
+			if len(parts) > 1 {
+				current.Title = strings.TrimSpace(parts[1])
+			}
+			continue
+		}
+		if current == nil || !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		kv := strings.SplitN(strings.TrimPrefix(line, "- "), ":", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(kv[0])
+		value := strings.TrimSpace(kv[1])
+		switch key {
+		case "status":
+			current.Status = TaskStatus(value)
+		case "description":
+			current.Description = value
+		case "created_at":
+			if ts, err := time.Parse(time.RFC3339, value); err == nil {
+				current.CreatedAt = ts
+			}
+		case "updated_at":
+			if ts, err := time.Parse(time.RFC3339, value); err == nil {
+				current.UpdatedAt = ts
+			}
+		}
+	}
+	if current != nil && current.ID != "" {
+		tasks[current.ID] = current
+	}
+	return tasks
 }

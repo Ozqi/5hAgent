@@ -21,7 +21,7 @@ func NewSkillTool(mgr *skill.Manager) *SkillTool {
 
 func (t *SkillTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
-		Name: "skill",
+		Name: "skill.skill",
 		Desc: "Enable or disable a skill. Skills provide specialized capabilities for specific tasks.",
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"skill": {

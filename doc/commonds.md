@@ -56,7 +56,7 @@ REPL input
 当前仓库同时存在：
 
 - CLI 命令：`/skill`、`/task`
-- LLM 工具：`skill`、`task`
+- LLM 工具：`skill.skill`、`task.task`
 
 两者职责类似，但入口不同：
 
