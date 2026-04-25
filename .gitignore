@@ -10,6 +10,8 @@ __pycache__/
 
 # Go
 5hagent
+!cmd/5hagent/
+!cmd/5hagent/**
 *.exe
 *.test
 *.out

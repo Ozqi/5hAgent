@@ -52,6 +52,12 @@ func SetOutput(w io.Writer) {
 	std.output = w
 }
 
+func Output() io.Writer {
+	std.mu.Lock()
+	defer std.mu.Unlock()
+	return std.output
+}
+
 // log 内部日志输出函数
 func (l *Logger) log(level Level, tag string, format string, args ...interface{}) {
 	if level < l.level {
