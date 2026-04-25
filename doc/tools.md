@@ -27,6 +27,7 @@ internal/agent/tool_use.go
 | `base.exec_shell` | `exec_shell.go` | 写 | 执行 shell 命令 |
 | `task.task` | `task_tool.go` | 混合 | 统一任务管理入口，按 `action` 分流 |
 | `skill.skill` | `skill_tool.go` | 写 | 启用或禁用 skill |
+| `mcp.<server>.<tool>` | `mcp_tool.go` | 取决于远端 | 外部 MCP server 提供的远端工具包装 |
 
 当前真实注册结果见 [registry.go](../internal/tools/registry.go)。
 
@@ -49,6 +50,13 @@ internal/agent/tool_use.go
 - 暴露 `skill.skill` 工具。
 - `action` 支持 `enable`、`disable`。
 - 底层调用 `internal/skill/skill.go`。
+
+### `mcp_tool.go`
+
+- 暴露统一的远端 MCP 工具包装。
+- 完整名称格式为 `mcp.<server>.<tool>`。
+- 底层通过 `internal/mcp.Client` 调用外部 server。
+- 当前仓库只实现 foundation，还没有接入真实 stdio MCP 协议。
 
 ## 并发执行策略
 
@@ -78,7 +86,7 @@ internal/agent/tool_use.go
 - 本地基础工具统一使用 `base.*`
 - 任务工具统一使用 `task.task`
 - skill 工具统一使用 `skill.skill`
-- 后续 MCP 工具将使用 `mcp.<server>.<tool>`
+- MCP 工具使用 `mcp.<server>.<tool>`
 
 ## 工具返回约定
 
@@ -95,10 +103,13 @@ internal/agent/tool_use.go
 5. 如果工具确实无副作用，在注册时更新对应 `toolmeta.Meta.ReadOnly`。
 6. 更新本文档和 `README.md`。
 
+对于 MCP 工具，当前入口是 `RegisterMCPTools(serverName, client, specs)`，由外部 server discovery 代码先拿到 tool 列表，再统一注册。
+
 ## 相关代码
 
 - [registry.go](../internal/tools/registry.go)
 - [task_tool.go](../internal/tools/task_tool.go)
 - [skill_tool.go](../internal/tools/skill_tool.go)
+- [mcp_tool.go](../internal/tools/mcp_tool.go)
 - [tool_use.go](../internal/agent/tool_use.go)
 - [tasklist.go](../internal/agent/tasklist.go)

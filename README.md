@@ -111,6 +111,12 @@ go build -o 5hagent cmd/5hagent/main.go
 - ✅ 并发安全（sync.RWMutex）
 - ✅ 进度统计
 
+**MCP Client foundation** ✅:
+- ✅ MCP server config 模型
+- ✅ `mcp.<server>.<tool>` 远端工具命名规范
+- ✅ 远端工具注册到本地 tool registry 的基础入口
+- ⏳ 尚未接入真实 stdio MCP server 生命周期与协议调用
+
 **待完成**:
 - [ ] 自动规划（根据任务生成执行计划）
 - [ ] 进度追踪（5h 稳定工作）

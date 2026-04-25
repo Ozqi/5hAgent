@@ -9,7 +9,21 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
+	"github.com/lzq/5hAgent/internal/mcp"
+	"github.com/lzq/5hAgent/internal/toolmeta"
 )
+
+type fakeMCPClient struct {
+	lastTool string
+	lastArgs string
+	result   string
+}
+
+func (c *fakeMCPClient) CallTool(ctx context.Context, toolName string, arguments string) (string, error) {
+	c.lastTool = toolName
+	c.lastArgs = arguments
+	return c.result, nil
+}
 
 func initTestRegistry(t *testing.T) {
 	t.Helper()
@@ -193,5 +207,52 @@ func TestGetToolByName(t *testing.T) {
 	tool = GetToolByName("nonexistent")
 	if tool != nil {
 		t.Error("expected nil for nonexistent tool")
+	}
+}
+
+func TestRegisterMCPTools(t *testing.T) {
+	initTestRegistry(t)
+	client := &fakeMCPClient{result: `{"ok":true}`}
+
+	err := RegisterMCPTools("claude_context", client, []mcp.ToolSpec{{Name: "search_code", Description: "semantic search", ReadOnly: true}})
+	if err != nil {
+		t.Fatalf("failed to register mcp tools: %v", err)
+	}
+
+	tool := GetToolByName("mcp.claude_context.search_code")
+	if tool == nil {
+		t.Fatal("expected registered mcp tool")
+	}
+
+	info, err := tool.Info(context.Background())
+	if err != nil {
+		t.Fatalf("failed to get mcp tool info: %v", err)
+	}
+	if info.Name != "mcp.claude_context.search_code" {
+		t.Fatalf("unexpected mcp tool name: %q", info.Name)
+	}
+
+	meta, ok := toolmeta.Lookup("mcp.claude_context.search_code")
+	if !ok {
+		t.Fatal("expected mcp metadata")
+	}
+	if meta.Category != toolmeta.CategoryMCP || meta.Source != "claude_context" || !meta.ReadOnly {
+		t.Fatalf("unexpected mcp metadata: %+v", meta)
+	}
+}
+
+func TestMCPToolInvokesClient(t *testing.T) {
+	client := &fakeMCPClient{result: `{"matches":1}`}
+	mcpTool := NewMCPTool("claude_context", client, mcp.ToolSpec{Name: "search_code", Description: "semantic search"})
+
+	result, err := mcpTool.InvokableRun(context.Background(), `{"query":"tasklist"}`)
+	if err != nil {
+		t.Fatalf("failed to invoke mcp tool: %v", err)
+	}
+	if result != `{"matches":1}` {
+		t.Fatalf("unexpected mcp result: %q", result)
+	}
+	if client.lastTool != "search_code" || client.lastArgs != `{"query":"tasklist"}` {
+		t.Fatalf("unexpected mcp client call: tool=%q args=%q", client.lastTool, client.lastArgs)
 	}
 }

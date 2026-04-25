@@ -6,6 +6,7 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/lzq/5hAgent/internal/agent"
+	"github.com/lzq/5hAgent/internal/mcp"
 	"github.com/lzq/5hAgent/internal/skill"
 	"github.com/lzq/5hAgent/internal/toolmeta"
 )
@@ -72,6 +73,30 @@ func GetToolByName(name string) tool.BaseTool {
 		if info.Name == name {
 			return t
 		}
+	}
+	return nil
+}
+
+func RegisterMCPTools(serverName string, client mcp.Client, specs []mcp.ToolSpec) error {
+	if serverName == "" {
+		return fmt.Errorf("mcp server name is required")
+	}
+	if client == nil {
+		return fmt.Errorf("mcp client is required")
+	}
+	for _, spec := range specs {
+		if spec.Name == "" {
+			return fmt.Errorf("mcp tool name is required")
+		}
+		registry = append(registry, NewMCPTool(serverName, client, spec))
+		toolmeta.Register(toolmeta.Meta{
+			Category:     toolmeta.CategoryMCP,
+			Source:       serverName,
+			DisplayName:  spec.Name,
+			FullName:     mcp.FullToolName(serverName, spec.Name),
+			OriginalName: spec.Name,
+			ReadOnly:     spec.ReadOnly,
+		})
 	}
 	return nil
 }
