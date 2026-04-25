@@ -55,13 +55,14 @@ REPL input
 
 当前仓库同时存在：
 
-- CLI 命令：`/skill`、`/task`
+- CLI 命令：`/skill`、`/task`、`/compress`
 - LLM 工具：`skill.skill`、`task.task`
 
 两者职责类似，但入口不同：
 
 - CLI 命令给用户直接操作
 - LLM 工具给 Agent 自主调用
+- `/compress context` 走手动上下文压缩，并把归档写到 `compact/messages/`
 
 ## 扩展方式
 
