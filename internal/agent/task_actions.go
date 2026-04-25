@@ -106,6 +106,36 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 		}
 		result.Message = fmt.Sprintf("task %q deleted", req.ID)
 		return result, nil
+	case "archive":
+		if req.ID == "" {
+			return nil, fmt.Errorf("id is required")
+		}
+		task, err := list.ArchiveTask(req.ID)
+		if err != nil {
+			return nil, err
+		}
+		result.Task = task
+		result.Message = fmt.Sprintf("task %q archived", task.ID)
+		return result, nil
+	case "reopen":
+		if req.ID == "" {
+			return nil, fmt.Errorf("id is required")
+		}
+		status := StatusPending
+		if req.Status != "" {
+			parsed, err := ParseTaskStatus(req.Status)
+			if err != nil {
+				return nil, err
+			}
+			status = parsed
+		}
+		task, err := list.ReopenTask(req.ID, status)
+		if err != nil {
+			return nil, err
+		}
+		result.Task = task
+		result.Message = fmt.Sprintf("task %q reopened", task.ID)
+		return result, nil
 	default:
 		return nil, fmt.Errorf("unknown action: %s", req.Action)
 	}
