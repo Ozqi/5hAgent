@@ -179,3 +179,29 @@ func TestExecuteTaskActionReopenRestoresArchivedTask(t *testing.T) {
 		t.Fatalf("expected summary cleared after reopen, got %q", result.Task.Summary)
 	}
 }
+
+func TestExecuteTaskActionReopenRejectsArchivedStatus(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "task.md")
+	list, err := NewTaskList(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ExecuteTaskAction(list, TaskActionRequest{Action: "create", ID: "T-1", Title: "task", Description: "finish archive flow"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ExecuteTaskAction(list, TaskActionRequest{Action: "update", ID: "T-1", Status: "completed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ExecuteTaskAction(list, TaskActionRequest{Action: "archive", ID: "T-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ExecuteTaskAction(list, TaskActionRequest{Action: "reopen", ID: "T-1", Status: "archived"})
+	if err == nil {
+		t.Fatal("expected reopen with archived status to fail")
+	}
+}
