@@ -283,6 +283,17 @@ func (m *AppModel) submit() tea.Cmd {
 		return nil
 	}
 
+	if strings.HasPrefix(text, "/compress") {
+		result, err := commands.HandleCompress(m.ctx, text, m.ctxManager, m.messageCtx, m.ag.GetModel(), "prompt", "compact")
+		if err != nil {
+			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: err.Error()})
+		} else {
+			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: result})
+		}
+		m.refreshView()
+		return nil
+	}
+
 	m.busy = true
 	m.currentStatus = "thinking"
 	m.currentAssistant = -1
