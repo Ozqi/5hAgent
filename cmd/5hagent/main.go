@@ -7,13 +7,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/cloudwego/eino/schema"
 	"github.com/lzq/5hAgent/internal/agent"
 	"github.com/lzq/5hAgent/internal/cli"
+	"github.com/lzq/5hAgent/internal/config"
 	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/llm"
 	"github.com/lzq/5hAgent/internal/logger"
+	"github.com/lzq/5hAgent/internal/mcp"
 	"github.com/lzq/5hAgent/internal/task"
 	"github.com/lzq/5hAgent/internal/tools"
 	"github.com/lzq/5hAgent/internal/utils"
@@ -37,14 +40,30 @@ func main() {
 }
 
 func runInteractive(cmd *cobra.Command, args []string) {
+	// 加载集中配置
+	appConfig, err := config.Load()
+	if err != nil {
+		cli.PrintError(fmt.Errorf("failed to load configuration: %w", err))
+		os.Exit(1)
+	}
+
+	// CLI 标志覆盖配置
 	if debugMode {
+		appConfig.Agent.Debug = true
 		logger.SetLevel(logger.DEBUG)
 		logger.InfoTag("SYS", "Debug mode enabled")
 	}
 
 	ctx := context.Background()
 
-	taskListPath := "task.md"
+	// 使用配置目录存放 task list
+	configDir, err := config.GetConfigDir()
+	if err != nil {
+		cli.PrintError(fmt.Errorf("failed to get config directory: %w", err))
+		os.Exit(1)
+	}
+	taskListPath := filepath.Join(configDir, "tasks.json")
+
 	taskList, err := task.NewTaskList(taskListPath)
 	if err != nil {
 		cli.PrintError(fmt.Errorf("failed to initialize task list: %w", err))
@@ -52,14 +71,20 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	}
 	logger.DebugTag("SYS", "Task list initialized at %s", taskListPath)
 
-	client, err := llm.NewClientFromEnv(ctx, ".env")
+	// 从配置创建 LLM 客户端
+	llmConfig := &llm.Config{
+		APIKey:    appConfig.LLM.APIKey,
+		BaseURL:   appConfig.LLM.BaseURL,
+		Model:     appConfig.LLM.Model,
+		MaxTokens: appConfig.LLM.MaxTokens,
+	}
+	client, err := llm.NewClient(ctx, llmConfig)
 	if err != nil {
 		cli.PrintError(fmt.Errorf("failed to create LLM client: %w", err))
 		os.Exit(1)
 	}
 
-	config := client.GetConfig()
-	logger.DebugTag("SYS", "Model=%s, BaseURL=%s", config.Model, config.BaseURL)
+	logger.DebugTag("SYS", "Model=%s, BaseURL=%s", llmConfig.Model, llmConfig.BaseURL)
 
 	systemPrompt, err := utils.Load("prompt", "main")
 	if err != nil {
@@ -68,13 +93,14 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	}
 	logger.DebugTag("SYS", "System prompt loaded: %d chars", len(systemPrompt))
 
+	// 从配置创建 Agent
 	agentConfig := &agent.Config{
-		Name:           "5hAgent",
-		MaxTotalTokens: 200000,
-		Debug:          debugMode,
-		SystemPrompt:   systemPrompt,
+		Name:            appConfig.Agent.Name,
+		MaxTotalTokens:  appConfig.Agent.MaxTotalTokens,
+		RepeatToolLimit: appConfig.Agent.RepeatToolLimit,
+		Debug:           appConfig.Agent.Debug,
+		SystemPrompt:    systemPrompt,
 	}
-
 	ag, err := agent.NewAgent(nil, nil, agentConfig)
 	if err != nil {
 		cli.PrintError(fmt.Errorf("failed to create agent: %w", err))
@@ -85,6 +111,46 @@ func runInteractive(cmd *cobra.Command, args []string) {
 		cli.PrintError(fmt.Errorf("failed to init tools: %w", err))
 		os.Exit(1)
 	}
+
+	// 初始化 MCP 服务器
+	mcpClients := make([]*mcp.StdioClient, 0, len(appConfig.MCP.Servers))
+	for _, serverConfig := range appConfig.MCP.Servers {
+		logger.InfoTag("MCP", "Starting MCP server: %s", serverConfig.Name)
+
+		mcpClient, err := mcp.NewStdioClient(ctx, mcp.StdioClientConfig{
+			Name:           serverConfig.Name,
+			Command:        serverConfig.Command,
+			Args:           serverConfig.Args,
+			Env:            serverConfig.Env,
+			StartupTimeout: serverConfig.StartupTimeout,
+		})
+		if err != nil {
+			logger.ErrorTag("MCP", "Failed to start MCP server %s: %v", serverConfig.Name, err)
+			continue
+		}
+
+		mcpClients = append(mcpClients, mcpClient)
+
+		// 注册 MCP 工具
+		toolSpecs := mcpClient.ListTools()
+		if err := tools.RegisterMCPTools(serverConfig.Name, mcpClient, toolSpecs); err != nil {
+			logger.ErrorTag("MCP", "Failed to register tools for %s: %v", serverConfig.Name, err)
+			mcpClient.Close()
+			continue
+		}
+
+		logger.InfoTag("MCP", "Registered %d tools from %s", len(toolSpecs), serverConfig.Name)
+	}
+
+	// 设置清理函数
+	defer func() {
+		for _, client := range mcpClients {
+			logger.DebugTag("MCP", "Closing MCP server: %s", client.ServerName())
+			if err := client.Close(); err != nil {
+				logger.ErrorTag("MCP", "Error closing %s: %v", client.ServerName(), err)
+			}
+		}
+	}()
 
 	allTools := tools.GetAllTools()
 	toolInfos := make([]*schema.ToolInfo, 0, len(allTools))
@@ -113,7 +179,7 @@ func runInteractive(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	if err := cli.LaunchTUI(ctx, ag, config.Model, taskList, ag.GetSkillManager(), ctxManager, messageCtx); err != nil {
+	if err := cli.LaunchTUI(ctx, ag, llmConfig.Model, taskList, ag.GetSkillManager(), ctxManager, messageCtx); err != nil {
 		cli.PrintError(fmt.Errorf("tui error: %w", err))
 		os.Exit(1)
 	}

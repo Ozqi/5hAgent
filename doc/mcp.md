@@ -2,13 +2,120 @@
 
 ## 概述
 
-MCP (Model Context Protocol) 工具通过 `mcp.Client` 接口接入框架，框架不实现 MCP 传输层，只负责：
+MCP (Model Context Protocol) 工具通过 `mcp.Client` 接口接入框架。5hAgent 已完整集成 MCP Stdio Client，支持通过配置文件启动和管理 MCP 服务器。
 
+核心功能：
 - 将 `Client.CallTool` 包装为 Eino `InvokableTool`
 - 注册到全局工具注册表（与 base/task/skill 同级）
 - 工具名格式 `mcp.{serverName}.{toolName}`
+- 自动启动和关闭 MCP 服务器进程
 
-传输连接（stdio/sse/http）由调用方自行实现。
+## 配置 MCP 服务器
+
+在 `~/.5hAgent/config.yaml` 中配置 MCP 服务器：
+
+```yaml
+mcp:
+  servers:
+    - name: filesystem
+      command: npx
+      args:
+        - -y
+        - @modelcontextprotocol/server-filesystem
+        - /tmp
+      startup_timeout: 10s
+    - name: brave_search
+      command: npx
+      args:
+        - -y
+        - @modelcontextprotocol/server-brave-search
+      env:
+        BRAVE_API_KEY: your_api_key_here
+      startup_timeout: 10s
+```
+
+### 配置字段说明
+
+- `name`: 服务器名称（必需，只能包含字母、数字、下划线）
+- `command`: 启动命令（必需）
+- `args`: 命令参数（可选）
+- `env`: 环境变量（可选）
+- `startup_timeout`: 启动超时时间（可选，默认 10s）
+
+## 可用的 MCP 服务器
+
+### 官方服务器
+
+1. **filesystem** - 文件系统操作
+   ```yaml
+   - name: filesystem
+     command: npx
+     args: [-y, @modelcontextprotocol/server-filesystem, /path/to/directory]
+   ```
+
+2. **brave-search** - Brave 搜索引擎
+   ```yaml
+   - name: brave_search
+     command: npx
+     args: [-y, @modelcontextprotocol/server-brave-search]
+     env:
+       BRAVE_API_KEY: your_key
+   ```
+
+3. **github** - GitHub 仓库操作
+   ```yaml
+   - name: github
+     command: npx
+     args: [-y, @modelcontextprotocol/server-github]
+     env:
+       GITHUB_TOKEN: your_token
+   ```
+
+4. **postgres** - PostgreSQL 数据库
+   ```yaml
+   - name: postgres
+     command: npx
+     args: [-y, @modelcontextprotocol/server-postgres]
+     env:
+       POSTGRES_CONNECTION_STRING: postgresql://...
+   ```
+
+更多服务器见：https://github.com/modelcontextprotocol/servers
+
+## 使用示例
+
+启动 5hAgent 后，MCP 工具会自动注册。在对话中可以直接使用：
+
+```
+用户: 列出 /tmp 目录下的文件
+Agent: [调用 mcp.filesystem.list_directory]
+
+用户: 搜索最新的 AI 新闻
+Agent: [调用 mcp.brave_search.search]
+```
+
+## 故障排查
+
+### MCP 服务器启动失败
+
+检查日志输出：
+```
+[MCP] Starting MCP server: filesystem
+[MCP] Failed to start MCP server filesystem: ...
+```
+
+常见原因：
+1. `npx` 未安装或不在 PATH 中
+2. MCP 服务器包未安装（首次运行 npx 会自动安装）
+3. 启动超时（增加 `startup_timeout`）
+4. 环境变量缺失（检查 `env` 配置）
+
+### 工具调用失败
+
+检查：
+1. 工具名称是否正确（格式：`mcp.{server}.{tool}`）
+2. 参数格式是否符合工具要求
+3. MCP 服务器是否正常运行
 
 ## 关键文件
 

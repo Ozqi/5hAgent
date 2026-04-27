@@ -111,6 +111,7 @@ var launchMu sync.Mutex
 
 var (
 	colorBg      = lipgloss.Color("#12131d")
+	colorBlack   = lipgloss.Color("#000000")
 	colorSurface = lipgloss.Color("#1a1b26")
 	colorGreen   = lipgloss.Color("#9ece6a")
 	colorBlue    = lipgloss.Color("#7aa2f7")
@@ -160,37 +161,18 @@ var (
 			Bold(true)
 
 	inputShellStyle = lipgloss.NewStyle().
+			Background(colorBlack).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorSurface).
-			Background(colorBg).
 			Padding(0, 1)
-
-	inputMetaStyle = lipgloss.NewStyle().
-			Foreground(colorGray)
 
 	messageBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorSurface).
 			Padding(0, 1)
-
-	messageBodyDimStyle = lipgloss.NewStyle().
-				Foreground(colorGray)
-
-	toolHeaderStyle = lipgloss.NewStyle().
-			Foreground(colorGray).
-			Faint(true)
-
-	toolBoxStyle = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder()).
-			BorderForeground(colorSurface).
-			Padding(0, 0)
-
-	hintStyle = lipgloss.NewStyle().
-			Foreground(colorGray).
-			Italic(true)
 )
 
-var menuItems = []string{"SESSION_01", "SESSION_02", "SESSION_03", "SESSION_04"}
+var menuItems = []string{"CHATS", "HISTORY", "LOGS", "AGENTS"}
 
 func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context) *AppModel {
 	vp := viewport.New(0, 0)
@@ -514,7 +496,7 @@ func (m *AppModel) snapshot() statusSnapshot {
 
 func renderSidebar(cursor int, height int) string {
 	items := []string{
-		titleStyle.MarginBottom(1).Render("WINDOWS"),
+		titleStyle.MarginBottom(1).Render("NAVIGATOR"),
 	}
 	for i, item := range menuItems {
 		icon := " "
@@ -528,7 +510,7 @@ func renderSidebar(cursor int, height int) string {
 		}
 		items = append(items, navItemStyle.Render(label))
 	}
-	items = append(items, "", lipgloss.NewStyle().Foreground(colorGray).Render("session switch pending"), lipgloss.NewStyle().Foreground(colorGreen).Render("● SYSTEM ONLINE"))
+	items = append(items, "", lipgloss.NewStyle().Foreground(colorGreen).Render("● SYSTEM ONLINE"))
 	return sidebarStyle.Height(max(1, height-1)).Render(lipgloss.JoinVertical(lipgloss.Left, items...))
 }
 
@@ -537,7 +519,7 @@ func renderMainPane(m *AppModel) string {
 	stateLine := lipgloss.NewStyle().Foreground(colorGray).Render(fmt.Sprintf("model=%s | agent=%s | state=%s", fallback(m.modelName, "-"), m.agentName, animatedStateLabel(m.busy, m.currentStatus, m.spinnerFrame)))
 	conversationHeight := max(1, m.viewport.Height)
 	conversation := lipgloss.NewStyle().Height(conversationHeight).Render(renderViewportPane(m.viewport))
-	inputBlock := renderInputPanel(m, max(12, m.viewport.Width+2))
+	inputBlock := inputShellStyle.Width(max(12, m.viewport.Width+2)).Render(m.input.View())
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		header,
 		stateLine,
@@ -545,27 +527,8 @@ func renderMainPane(m *AppModel) string {
 		conversation,
 		"",
 		inputBlock,
-		"",
-		hintStyle.Render("-- 提示: 左侧为会话窗口占位，当前仅显示样式，切换逻辑尚未接入 --"),
 	)
 	return mainViewStyle.Width(max(20, m.width-24-m.statusWidth-4)).Height(max(1, m.height-1)).Render(content)
-}
-
-func renderInputPanel(m *AppModel, width int) string {
-	header := lipgloss.NewStyle().Foreground(colorBlue).Bold(true).Render("INPUT_BUFFER")
-	meta := lipgloss.JoinHorizontal(lipgloss.Top,
-		inputMetaStyle.Render("ENTER submit | ESC ESC quit | PGUP/PGDN scroll"),
-		inputMetaStyle.Render(" | "+fmt.Sprintf("entries=%d tools=%d", len(m.entries), m.toolCalls)),
-	)
-	body := lipgloss.JoinVertical(lipgloss.Left,
-		m.input.View(),
-		"",
-		meta,
-	)
-	return lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		inputShellStyle.Width(width).Render(body),
-	)
 }
 
 func renderBottomStatusBar(width int, status string, busy bool) string {
@@ -612,34 +575,28 @@ func renderConversationEntry(entry conversationEntry, width int) string {
 	switch entry.Role {
 	case roleUser:
 		body := wrapVisibleText(compactParagraph(strings.TrimSpace(entry.Content)), max(8, width-4))
-		return renderMessageBlock("USER_ROOT", body, colorPurple, width, true)
+		return renderMessageBlock("USER_ROOT", body, colorPurple, width)
 	case roleAssistant:
 		content := strings.TrimRight(renderMarkdownForTerminal(normalizeAssistantContent(entry.Content), true), "\n")
 		content = wrapVisibleText(content, max(8, width-4))
-		return renderMessageBlock("AGENT_CORE", content, colorGreen, width, false)
+		return renderMessageBlock("AGENT_CORE", content, colorGreen, width)
 	case roleTool:
 		return renderToolEntry(entry.Content, width)
 	case roleSystem:
 		body := wrapVisibleText(strings.TrimSpace(entry.Content), max(8, width-4))
-		return renderMessageBlock("SYSTEM_BUS", body, colorBlue, width, true)
+		return renderMessageBlock("SYSTEM_BUS", body, colorBlue, width)
 	default:
 		return wrapVisibleText(strings.TrimSpace(entry.Content), width)
 	}
 }
 
-func renderMessageBlock(label string, body string, accent lipgloss.Color, width int, subdued bool) string {
+func renderMessageBlock(label string, body string, accent lipgloss.Color, width int) string {
 	blockWidth := max(8, width-1)
 	header := lipgloss.NewStyle().Foreground(accent).Bold(true).Render(label)
-	contentStyle := lipgloss.NewStyle().Foreground(colorText)
-	boxStyle := messageBoxStyle.Copy().Width(blockWidth).BorderForeground(accent)
-	if subdued {
-		contentStyle = messageBodyDimStyle.Copy()
-		boxStyle = boxStyle.BorderForeground(colorSurface)
-	}
-	content := contentStyle.Render(body)
+	content := lipgloss.NewStyle().Foreground(colorText).Render(body)
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header,
-		boxStyle.Render(content),
+		messageBoxStyle.Copy().Width(blockWidth).Render(content),
 	)
 }
 
@@ -973,30 +930,23 @@ func renderToolCompactEntry(entry toolEntry, width int) string {
 func renderToolUnknownEntry(content string, width int) string {
 	clean := strings.TrimSpace(ansiPattern.ReplaceAllString(content, ""))
 	if clean == "" {
-		return renderCompactToolBlock("TOOL_EXEC", "(empty)", width)
+		return renderMessageBlock("TOOL_EXEC", "(empty)", colorYellow, width)
 	}
 	maxLen := width - 10
 	if maxLen < 20 {
 		maxLen = 20
 	}
-	return renderCompactToolBlock("TOOL_EXEC", truncateMiddle(clean, maxLen), width)
+	return renderMessageBlock("TOOL_EXEC", truncateMiddle(clean, maxLen), colorYellow, width)
 }
 
 func renderMessageBoxWithHeader(text string, width int) string {
 	lines := strings.SplitN(text, "\n", 2)
 	if len(lines) == 1 {
-		return renderCompactToolBlock(lines[0], "", width)
+		return renderMessageBlock(lines[0], "", colorYellow, width)
 	}
-	return renderCompactToolBlock(lines[0], lines[1], width)
-}
-
-func renderCompactToolBlock(label string, body string, width int) string {
-	blockWidth := max(8, width-1)
-	header := toolHeaderStyle.Render(label)
-	content := messageBodyDimStyle.Render(strings.TrimRight(body, "\n"))
 	return lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		toolBoxStyle.Copy().Width(blockWidth).Render(content),
+		lines[0],
+		messageBoxStyle.Copy().Width(max(8, width-1)).Render(lipgloss.NewStyle().Foreground(colorText).Render(lines[1])),
 	)
 }
 

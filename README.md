@@ -52,11 +52,13 @@ cmd/5hagent/main.go   # 主入口
 ## 运行
 
 ```bash
-# 1. 配置 .env 文件
-cp .env.example .env
-# 编辑 .env，设置 API_KEY
+# 1. 首次运行会自动创建配置文件
+go run cmd/5hagent/main.go
 
-# 2. 运行
+# 2. 编辑配置文件，设置 API Key
+vim ~/.5hAgent/config.yaml
+
+# 3. 再次运行
 go run cmd/5hagent/main.go
 
 # 或编译后运行
@@ -66,6 +68,56 @@ go build -o 5hagent cmd/5hagent/main.go
 # Debug 模式
 ./5hagent --debug
 ```
+
+## 配置
+
+配置文件位于 `~/.5hAgent/config.yaml`，首次运行时自动创建。
+
+### 基础配置
+
+```yaml
+llm:
+  api_key: your_api_key_here  # 必需：API Key
+  base_url: https://api.anthropic.com  # LLM API 地址
+  model: claude-sonnet-4-6  # 模型名称
+  max_tokens: 4096  # 最大 token 数
+
+agent:
+  name: 5hAgent
+  max_total_tokens: 200000  # 会话总 token 上限
+  repeat_tool_limit: 5  # 工具重复调用上限
+  debug: false  # 调试模式
+```
+
+### MCP 服务器配置
+
+支持通过 MCP (Model Context Protocol) 集成外部工具服务器：
+
+```yaml
+mcp:
+  servers:
+    - name: filesystem
+      command: npx
+      args:
+        - -y
+        - @modelcontextprotocol/server-filesystem
+        - /tmp
+      startup_timeout: 10s
+```
+
+更多 MCP 配置见 [doc/mcp.md](doc/mcp.md)
+
+### 配置优先级
+
+配置加载优先级：`~/.5hAgent/config.yaml` > `.env` > 默认值
+
+向后兼容：仍支持项目根目录的 `.env` 文件（用于快速测试）
+
+### 配置文件位置
+
+- 配置文件：`~/.5hAgent/config.yaml`
+- 技能目录：`~/.5hAgent/skills/`
+- 任务持久化：`~/.5hAgent/tasks.json`
 
 ## 功能特性
 

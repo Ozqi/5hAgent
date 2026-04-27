@@ -9,12 +9,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	agentctx "github.com/lzq/5hAgent/internal/context"
+	agentconfig "github.com/lzq/5hAgent/internal/config"
 	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/skill"
 	"github.com/lzq/5hAgent/internal/utils"
@@ -74,8 +76,14 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 		config.RepeatToolLimit = 5
 	}
 
-	// 初始化技能管理器
-	skillMgr := skill.NewManager(".5hagent/skills")
+	// 初始化技能管理器，使用配置目录
+	configDir, err := agentconfig.GetConfigDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get config directory: %w", err)
+	}
+	skillsDir := filepath.Join(configDir, "skills")
+
+	skillMgr := skill.NewManager(skillsDir)
 	if err := skillMgr.LoadSkills(); err != nil {
 		logger.DebugTag("SKILL", "Failed to load skills: %v", err)
 	}
