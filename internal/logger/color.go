@@ -1,3 +1,6 @@
+// color.go - ANSI 颜色输出
+// 功能：Red/Green/Yellow/Blue/Cyan/Magenta/Gray/Bold 颜色函数
+// 导出函数：DisableColor, Red, Green, Yellow, Blue, Cyan, Magenta, Gray, Bold
 package logger
 
 import (

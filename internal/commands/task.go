@@ -1,3 +1,6 @@
+// task.go - /task 命令处理
+// 功能：解析 /task 命令（list/create/update/get/delete/archive/reopen），调用 agent.ExecuteTaskAction
+// 导出函数：HandleTask, runTaskAction
 package commands
 
 import (
@@ -5,11 +8,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lzq/5hAgent/internal/agent"
+	"github.com/lzq/5hAgent/internal/task"
 )
 
 // HandleTask 处理 /task 命令
-func HandleTask(cmd string, list *agent.TaskList) (string, error) {
+func HandleTask(cmd string, list *task.TaskList) (string, error) {
 	parts := strings.Fields(cmd)
 	if len(parts) < 2 {
 		return "", fmt.Errorf("usage: /task <list|create|update|get|delete|archive|reopen> [args...]")
@@ -22,32 +25,32 @@ func HandleTask(cmd string, list *agent.TaskList) (string, error) {
 		if len(parts) > 2 {
 			status = parts[2]
 		}
-		return runTaskAction(list, agent.TaskActionRequest{Action: action, Status: status})
+		return runTaskAction(list, task.TaskActionRequest{Action: action, Status: status})
 	case "create":
 		if len(parts) < 5 {
 			return "", fmt.Errorf("usage: /task create <id> <title> <description>")
 		}
-		return runTaskAction(list, agent.TaskActionRequest{Action: action, ID: parts[2], Title: parts[3], Description: strings.Join(parts[4:], " ")})
+		return runTaskAction(list, task.TaskActionRequest{Action: action, ID: parts[2], Title: parts[3], Description: strings.Join(parts[4:], " ")})
 	case "update":
 		if len(parts) < 4 {
 			return "", fmt.Errorf("usage: /task update <id> <status>")
 		}
-		return runTaskAction(list, agent.TaskActionRequest{Action: action, ID: parts[2], Status: parts[3]})
+		return runTaskAction(list, task.TaskActionRequest{Action: action, ID: parts[2], Status: parts[3]})
 	case "get":
 		if len(parts) < 3 {
 			return "", fmt.Errorf("usage: /task get <id>")
 		}
-		return runTaskAction(list, agent.TaskActionRequest{Action: action, ID: parts[2]})
+		return runTaskAction(list, task.TaskActionRequest{Action: action, ID: parts[2]})
 	case "delete":
 		if len(parts) < 3 {
 			return "", fmt.Errorf("usage: /task delete <id>")
 		}
-		return runTaskAction(list, agent.TaskActionRequest{Action: action, ID: parts[2]})
+		return runTaskAction(list, task.TaskActionRequest{Action: action, ID: parts[2]})
 	case "archive":
 		if len(parts) < 3 {
 			return "", fmt.Errorf("usage: /task archive <id>")
 		}
-		return runTaskAction(list, agent.TaskActionRequest{Action: action, ID: parts[2]})
+		return runTaskAction(list, task.TaskActionRequest{Action: action, ID: parts[2]})
 	case "reopen":
 		if len(parts) < 3 {
 			return "", fmt.Errorf("usage: /task reopen <id> [status]")
@@ -56,14 +59,14 @@ func HandleTask(cmd string, list *agent.TaskList) (string, error) {
 		if len(parts) > 3 {
 			status = parts[3]
 		}
-		return runTaskAction(list, agent.TaskActionRequest{Action: action, ID: parts[2], Status: status})
+		return runTaskAction(list, task.TaskActionRequest{Action: action, ID: parts[2], Status: status})
 	default:
 		return "", fmt.Errorf("unknown action: %s", action)
 	}
 }
 
-func runTaskAction(list *agent.TaskList, req agent.TaskActionRequest) (string, error) {
-	result, err := agent.ExecuteTaskAction(list, req)
+func runTaskAction(list *task.TaskList, req task.TaskActionRequest) (string, error) {
+	result, err := task.ExecuteTaskAction(list, req)
 	if err != nil {
 		return "", err
 	}

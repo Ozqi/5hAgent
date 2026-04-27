@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&amp;family=Space+Grotesk:wght@600;700&amp;family=Fira+Code:wght@400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-tertiary-fixed-variant": "#763300",
+                        "on-background": "#e2e1f1",
+                        "inverse-primary": "#40690f",
+                        "secondary-container": "#0c4393",
+                        "on-secondary-container": "#93b4ff",
+                        "surface-container-lowest": "#0c0d18",
+                        "secondary": "#aec6ff",
+                        "on-secondary-fixed-variant": "#0c4393",
+                        "surface-bright": "#383844",
+                        "primary-fixed-dim": "#a5d570",
+                        "outline": "#8d9382",
+                        "on-primary-fixed-variant": "#2d5000",
+                        "on-primary-fixed": "#0f2000",
+                        "error-container": "#93000a",
+                        "secondary-fixed-dim": "#aec6ff",
+                        "surface-container-highest": "#333440",
+                        "surface": "#12131d",
+                        "surface-container-low": "#1a1b26",
+                        "outline-variant": "#43493b",
+                        "tertiary-fixed": "#ffdbc9",
+                        "surface-variant": "#333440",
+                        "on-tertiary-fixed": "#331200",
+                        "secondary-fixed": "#d8e2ff",
+                        "tertiary": "#ffd3bc",
+                        "on-error": "#690005",
+                        "on-tertiary": "#532200",
+                        "surface-container": "#1e1f2a",
+                        "error": "#ffb4ab",
+                        "tertiary-fixed-dim": "#ffb68d",
+                        "background": "#12131d",
+                        "on-secondary": "#002e6b",
+                        "tertiary-container": "#ffad7e",
+                        "surface-tint": "#a5d570",
+                        "primary-fixed": "#c0f289",
+                        "on-surface-variant": "#c3c9b6",
+                        "on-tertiary-container": "#803a05",
+                        "inverse-surface": "#e2e1f1",
+                        "surface-dim": "#12131d",
+                        "on-surface": "#e2e1f1",
+                        "inverse-on-surface": "#2f303b",
+                        "primary-container": "#9ece6a",
+                        "on-primary-container": "#325800",
+                        "surface-container-high": "#282935",
+                        "on-error-container": "#ffdad6",
+                        "on-primary": "#1d3700",
+                        "primary": "#b9eb83",
+                        "on-secondary-fixed": "#001a43"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0px",
+                        "lg": "0px",
+                        "xl": "0px",
+                        "full": "0px"
+                    },
+                    "spacing": {
+                        "gutter": "2ch",
+                        "stack-gap": "1rem",
+                        "char-width": "1ch",
+                        "container-padding": "3ch",
+                        "line-height": "1rem"
+                    },
+                    "fontFamily": {
+                        "code-sm": ["Fira Code"],
+                        "headline-md": ["Space Grotesk"],
+                        "body-mono": ["JetBrains Mono"],
+                        "label-mono": ["JetBrains Mono"],
+                        "headline-lg": ["Space Grotesk"]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            font-size: 18px;
+        }
+        body {
+            background-color: #1a1b26;
+            color: #e2e1f1;
+            font-family: 'JetBrains Mono', monospace;
+            overflow: hidden;
+        }
+        .tui-border {
+            border-image-source: url("data:image/svg+xml;utf8,<svg width='20' height='20' viewBox='0 0 20 20' fill='none' xmlns='http://www.w3.org/2000/svg'><path d='M1 1V19M1 1H19M19 1V19M1 19H19' stroke='%23414868' stroke-width='2'/></svg>");
+            border-image-slice: 2;
+            border-style: solid;
+            border-width: 2px;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #1a1b26;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #414868;
+        }
+        .cursor-blink {
+            animation: blink 1s step-end infinite;
+        }
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen overflow-hidden text-body-mono font-body-mono">
+<!-- Top AppBar -->
+<header class="bg-[#1a1b26] text-[#9ece6a] font-mono uppercase tracking-widest text-sm border-b-2 border-[#414868] flex justify-between items-center w-full px-2 h-10 z-50">
+<div class="flex items-center gap-4">
+<span class="text-[#7aa2f7] font-bold border-r-2 border-[#414868] pr-4">AGENT_GO_v1.0</span>
+<div class="flex gap-4">
+<span class="bg-[#33467c] text-[#7aa2f7] px-2 cursor-pointer transition-none">CHATS</span>
+<span class="text-[#565f89] px-2 hover:bg-[#414868] hover:text-[#9ece6a] cursor-pointer transition-none">MONITOR</span>
+<span class="text-[#565f89] px-2 hover:bg-[#414868] hover:text-[#9ece6a] cursor-pointer transition-none">DEPLOY</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center bg-surface-container-low border border-[#414868] px-2 h-7">
+<span class="material-symbols-outlined text-xs mr-2">search</span>
+<input class="bg-transparent border-none outline-none text-xs w-48 focus:ring-0 p-0 placeholder-[#565f89]" placeholder="SEARCH_COMMANDS..." type="text"/>
+</div>
+<div class="flex gap-2">
+<span class="material-symbols-outlined cursor-pointer hover:text-[#9ece6a]">terminal</span>
+<span class="material-symbols-outlined cursor-pointer hover:text-[#9ece6a]">settings</span>
+</div>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden">
+<!-- SideNavBar -->
+<aside class="bg-[#1a1b26] border-r-2 border-[#414868] w-64 flex flex-col h-full p-2 space-y-1">
+<div class="mb-4 px-2 py-2 border-b border-[#414868]">
+<div class="text-[#bb9af7] font-black font-mono text-xs uppercase">NAVIGATOR</div>
+<div class="text-[#565f89] text-[10px]">v1.0.4-stable</div>
+</div>
+<nav class="space-y-1 flex-1">
+<a class="bg-[#9ece6a] text-[#1a1b26] font-bold flex items-center px-2 py-1 w-full transition-none group" href="#">
+<span class="material-symbols-outlined mr-2">chat</span>
+<span>CHATS</span>
+</a>
+<a class="text-[#565f89] flex items-center px-2 py-1 w-full hover:bg-[#33467c] hover:text-[#7aa2f7] transition-none group" href="#">
+<span class="material-symbols-outlined mr-2">history</span>
+<span>HISTORY</span>
+</a>
+<a class="text-[#565f89] flex items-center px-2 py-1 w-full hover:bg-[#33467c] hover:text-[#7aa2f7] transition-none group" href="#">
+<span class="material-symbols-outlined mr-2">list_alt</span>
+<span>LOGS</span>
+</a>
+<a class="text-[#565f89] flex items-center px-2 py-1 w-full hover:bg-[#33467c] hover:text-[#7aa2f7] transition-none group" href="#">
+<span class="material-symbols-outlined mr-2">smart_toy</span>
+<span>AGENTS</span>
+</a>
+</nav>
+<div class="mt-auto p-2 border-2 border-[#414868] bg-surface-container-low">
+<div class="text-[10px] text-[#565f89] mb-1">LOCAL_NODE</div>
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-[#9ece6a]"></div>
+<span class="text-xs text-[#9ece6a]">ACTIVE_SESSION</span>
+</div>
+</div>
+</aside>
+<!-- Main Agent Workspace -->
+<main class="flex-1 flex flex-col bg-[#1a1b26] overflow-hidden">
+<div class="flex-1 p-gutter overflow-y-auto custom-scrollbar flex flex-col space-y-4">
+<!-- System Banner -->
+<div class="border-2 border-[#414868] p-4 relative overflow-hidden">
+<div class="absolute top-0 right-0 bg-[#414868] px-2 text-[10px] text-on-surface">ID: AG-9092</div>
+<div class="text-[#7aa2f7] font-bold mb-2">┌─ SYSTEM_INITIALIZATION ────────────────────────┐</div>
+<div class="text-on-background text-sm">
+<span class="text-[#9ece6a]">[ OK ]</span> Neural kernel loaded.<br/>
+<span class="text-[#9ece6a]">[ OK ]</span> Context window 128k initialized.<br/>
+<span class="text-[#f7768e]">[ !! ]</span> Memory fragmentation detected: resolving...
+                    </div>
+</div>
+<!-- Chat History -->
+<div class="space-y-6">
+<!-- User Message -->
+<div class="flex flex-col gap-2">
+<div class="flex items-center gap-2 text-[#7aa2f7]">
+<span class="material-symbols-outlined">person</span>
+<span class="font-bold">USER_ROOT</span>
+<span class="text-[10px] text-[#565f89]">14:20:05</span>
+</div>
+<div class="pl-8 text-on-background">
+                            &gt; Create a concurrent worker pool in Go that processes jobs from a channel with a timeout.
+                        </div>
+</div>
+<!-- AI Response -->
+<div class="flex flex-col gap-2">
+<div class="flex items-center gap-2 text-[#9ece6a]">
+<span class="material-symbols-outlined">smart_toy</span>
+<span class="font-bold">AGENT_GO</span>
+<span class="text-[10px] text-[#565f89]">14:20:07</span>
+</div>
+<div class="pl-8 space-y-4">
+<div class="text-on-background">
+                                I've synthesized a concurrent worker pool pattern using `sync.WaitGroup` and `context` for timeout management.
+                            </div>
+<!-- Code Block -->
+<div class="bg-surface-container-lowest border-2 border-[#414868] p-4 font-mono text-sm overflow-x-auto">
+<div class="flex justify-between border-b border-[#414868] mb-2 pb-1 text-[10px] text-[#565f89]">
+<span>worker_pool.go</span>
+<span>COPY ^C</span>
+</div>
+<pre class="text-[#9ece6a]"><span class="text-[#bb9af7]">package</span> main
+
+<span class="text-[#bb9af7]">func</span> worker(id <span class="text-[#ff9e64]">int</span>, jobs &lt;-<span class="text-[#bb9af7]">chan</span> <span class="text-[#ff9e64]">int</span>, results <span class="text-[#bb9af7]">chan</span>&lt;- <span class="text-[#ff9e64]">int</span>) {
+    <span class="text-[#bb9af7]">for</span> j := <span class="text-[#bb9af7]">range</span> jobs {
+        results &lt;- j * <span class="text-[#ff9e64]">2</span>
+    }
+}</pre>
+</div>
+<div class="flex gap-2">
+<span class="border border-[#9ece6a] text-[#9ece6a] px-2 py-0.5 text-xs">( SUCCESS )</span>
+<span class="border border-[#7aa2f7] text-[#7aa2f7] px-2 py-0.5 text-xs">[ CATEGORY: CONCURRENCY ]</span>
+</div>
+</div>
+</div>
+<!-- Tool Output -->
+<div class="bg-surface-container-high border-2 border-[#33467c] p-4">
+<div class="flex items-center gap-2 text-[#7aa2f7] mb-2">
+<span class="material-symbols-outlined">build</span>
+<span class="font-bold text-xs">EXECUTING_TOOL: go_lint</span>
+</div>
+<div class="font-mono text-xs text-[#c3c9b6]">
+                            Scanning code...<br/>
+                            █ █ █ █ █ █ █ █ █ █ 100%<br/>
+                            No issues found in local scope.
+                        </div>
+</div>
+</div>
+<!-- Input Prompt -->
+<div class="mt-auto pt-6">
+<div class="border-2 border-[#7aa2f7] bg-surface-container-low p-2 flex items-center">
+<span class="text-[#7aa2f7] mr-2">&gt;</span>
+<input autofocus="" class="bg-transparent border-none outline-none flex-1 text-on-background focus:ring-0 p-0" placeholder="Type command or query..." type="text"/>
+<span class="w-2 h-5 bg-[#7aa2f7] cursor-blink ml-1"></span>
+</div>
+</div>
+</div>
+</main>
+<!-- Right Sidebar (Context/Environment) -->
+<aside class="w-80 bg-[#1a1b26] border-l-2 border-[#414868] flex flex-col p-4 space-y-6 overflow-y-auto custom-scrollbar">
+<section>
+<div class="text-[#7aa2f7] font-bold text-xs mb-3 border-b border-[#414868] pb-1 uppercase">SYSTEM_RESOURCES</div>
+<div class="space-y-4">
+<div class="space-y-1">
+<div class="flex justify-between text-[10px] text-[#565f89]">
+<span>CPU_USAGE</span>
+<span>42%</span>
+</div>
+<div class="h-2 w-full bg-surface-container-lowest border border-[#414868]">
+<div class="h-full bg-[#9ece6a] w-[42%]"></div>
+</div>
+</div>
+<div class="space-y-1">
+<div class="flex justify-between text-[10px] text-[#565f89]">
+<span>MEM_ALLOC</span>
+<span>1.2GB / 4GB</span>
+</div>
+<div class="h-2 w-full bg-surface-container-lowest border border-[#414868]">
+<div class="h-full bg-[#bb9af7] w-[30%]"></div>
+</div>
+</div>
+</div>
+</section>
+<section>
+<div class="text-[#7aa2f7] font-bold text-xs mb-3 border-b border-[#414868] pb-1 uppercase">ENVIRONMENT_CTX</div>
+<div class="grid grid-cols-2 gap-2">
+<div class="p-2 border border-[#414868] bg-surface-container-lowest">
+<div class="text-[9px] text-[#565f89]">OS</div>
+<div class="text-[11px] text-[#9ece6a]">LINUX_6.1</div>
+</div>
+<div class="p-2 border border-[#414868] bg-surface-container-lowest">
+<div class="text-[9px] text-[#565f89]">RUNTIME</div>
+<div class="text-[11px] text-[#9ece6a]">GO_1.21.5</div>
+</div>
+<div class="p-2 border border-[#414868] bg-surface-container-lowest">
+<div class="text-[9px] text-[#565f89]">ARCH</div>
+<div class="text-[11px] text-[#9ece6a]">ARM64</div>
+</div>
+<div class="p-2 border border-[#414868] bg-surface-container-lowest">
+<div class="text-[9px] text-[#565f89]">LATENCY</div>
+<div class="text-[11px] text-[#9ece6a]">12ms</div>
+</div>
+</div>
+</section>
+<section class="flex-1">
+<div class="text-[#7aa2f7] font-bold text-xs mb-3 border-b border-[#414868] pb-1 uppercase">PROCESS_TREE</div>
+<div class="font-mono text-[10px] text-[#565f89] space-y-1">
+<div>└─ <span class="text-[#9ece6a]">agent_go_main</span> [8821]</div>
+<div class="ml-4">├─ <span class="text-on-surface">worker_pool_controller</span> [8822]</div>
+<div class="ml-4">├─ <span class="text-on-surface">llm_bridge_v2</span> [8823]</div>
+<div class="ml-4">└─ <span class="text-on-surface">metrics_exporter</span> [8824]</div>
+</div>
+</section>
+</aside>
+</div>
+<!-- BottomNavBar -->
+<footer class="fixed bottom-0 left-0 w-full z-50 flex items-center justify-start gap-4 px-4 overflow-hidden bg-[#7aa2f7] text-[#1a1b26] font-mono font-bold text-[10px] h-6 border-t-2 border-[#414868]">
+<div class="flex items-center gap-4">
+<div class="text-[#1a1b26] px-3 hover:invert cursor-pointer transition-none flex items-center">
+<span class="material-symbols-outlined text-xs mr-1">cancel</span>
+                ^C EXIT
+            </div>
+<div class="text-[#1a1b26] px-3 hover:invert cursor-pointer transition-none flex items-center">
+<span class="material-symbols-outlined text-xs mr-1">add_box</span>
+                ^N NEW
+            </div>
+<div class="text-[#1a1b26] px-3 hover:invert cursor-pointer transition-none flex items-center">
+<span class="material-symbols-outlined text-xs mr-1">save</span>
+                ^S SAVE
+            </div>
+<div class="bg-[#1a1b26] text-[#7aa2f7] px-3 hover:invert cursor-pointer transition-none flex items-center">
+<span class="material-symbols-outlined text-xs mr-1">help_center</span>
+                ^H HELP
+            </div>
+</div>
+<div class="ml-auto flex items-center gap-4">
+<span class="opacity-70">L:24 C:12</span>
+<span class="opacity-70">UTF-8</span>
+<span class="bg-[#1a1b26] text-[#9ece6a] px-2 h-4 flex items-center">READY</span>
+</div>
+</footer>
+</body></html>

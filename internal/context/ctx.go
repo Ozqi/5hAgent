@@ -1,3 +1,7 @@
+// ctx.go - 消息上下文管理
+// 功能：Context 创建/克隆、消息存储、LLM 压缩（当消息数超 MaxMessages 时）
+// 主要类型：Context, Manager, CompressResult
+// 导出函数：NewManager, CreateContext, CloneContext, GetMessages, AddMessage, Clear, Compress, ShouldCompress, LMCompress, ManualCompress
 package context
 
 import (

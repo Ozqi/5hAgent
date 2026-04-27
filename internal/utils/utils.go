@@ -1,3 +1,6 @@
+// utils.go - 工具函数
+// 功能：加载 prompt 目录下的 .md 文件内容
+// 导出函数：Load
 package utils
 
 import (

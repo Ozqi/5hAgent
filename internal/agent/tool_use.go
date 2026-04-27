@@ -1,4 +1,7 @@
-// Package agent 提供工具调用解析与执行相关功能。
+// tool_use.go - 工具调用解析与执行
+// 功能：流式 ToolCall 收集、并发/串行执行、结果格式化
+// 主要类型：streamToolCollector, execResult, toolRequest
+// 导出函数：exeTools, exeToolCall
 package agent
 
 import (
@@ -14,24 +17,24 @@ import (
 	"github.com/lzq/5hAgent/internal/toolmeta"
 )
 
-type streamToolState struct {
+type toolState struct {
 	call       schema.ToolCall
 	dispatched bool
 }
 
 type streamToolCollector struct {
-	states []*streamToolState
+	states []*toolState
 	byID   map[string]int
 }
 
-type streamToolResult struct {
+type execResult struct {
 	idx    int
 	tc     schema.ToolCall
 	result string
 	err    error
 }
 
-type streamToolRequest struct {
+type toolRequest struct {
 	idx int
 	tc  schema.ToolCall
 }
@@ -51,75 +54,73 @@ func (c *streamToolCollector) Add(chunks []schema.ToolCall) []schema.ToolCall {
 
 	ready := make([]schema.ToolCall, 0)
 	for _, state := range c.states {
-		if state.dispatched || !isRunnableToolCall(state.call) {
+		if state.dispatched {
+			continue
+		}
+		tc := state.call
+		if tc.ID == "" || tc.Function.Name == "" || !isValidJSON(tc.Function.Arguments) {
 			continue
 		}
 		state.dispatched = true
-		ready = append(ready, state.call)
+		ready = append(ready, tc)
 	}
 
 	return ready
 }
 
 func (c *streamToolCollector) merge(tc schema.ToolCall) {
+	merge := func(dst *schema.ToolCall, src schema.ToolCall) {
+		if dst.ID == "" && src.ID != "" {
+			dst.ID = src.ID
+		}
+		if src.Function.Name != "" && dst.Function.Name == "" {
+			dst.Function.Name = src.Function.Name
+		}
+		if src.Function.Arguments != "" {
+			dst.Function.Arguments += src.Function.Arguments
+		}
+	}
+
 	if tc.ID != "" {
 		if idx, exists := c.byID[tc.ID]; exists {
-			mergeToolCall(&c.states[idx].call, tc)
+			merge(&c.states[idx].call, tc)
 			return
 		}
 
 		if len(c.states) > 0 {
 			last := c.states[len(c.states)-1]
 			if last.call.ID == "" {
-				mergeToolCall(&last.call, tc)
+				merge(&last.call, tc)
 				c.byID[tc.ID] = len(c.states) - 1
 				return
 			}
 		}
 
-		c.states = append(c.states, &streamToolState{call: tc})
+		c.states = append(c.states, &toolState{call: tc})
 		c.byID[tc.ID] = len(c.states) - 1
 		return
 	}
 
 	if len(c.states) == 0 {
-		c.states = append(c.states, &streamToolState{call: tc})
+		c.states = append(c.states, &toolState{call: tc})
 		return
 	}
 
-	mergeToolCall(&c.states[len(c.states)-1].call, tc)
+	merge(&c.states[len(c.states)-1].call, tc)
 }
 
 func (c *streamToolCollector) RunnableCalls() []schema.ToolCall {
 	toolCalls := make([]schema.ToolCall, 0, len(c.states))
 	for _, state := range c.states {
-		if isRunnableToolCall(state.call) {
-			toolCalls = append(toolCalls, state.call)
+		tc := state.call
+		if tc.ID != "" && tc.Function.Name != "" && isValidJSON(tc.Function.Arguments) {
+			toolCalls = append(toolCalls, tc)
 		}
 	}
 	return toolCalls
 }
 
-func mergeToolCall(dst *schema.ToolCall, src schema.ToolCall) {
-	if dst.ID == "" && src.ID != "" {
-		dst.ID = src.ID
-	}
-	if src.Function.Name != "" && dst.Function.Name == "" {
-		dst.Function.Name = src.Function.Name
-	}
-	if src.Function.Arguments != "" {
-		dst.Function.Arguments += src.Function.Arguments
-	}
-}
-
-func isRunnableToolCall(tc schema.ToolCall) bool {
-	if tc.ID == "" || tc.Function.Name == "" {
-		return false
-	}
-	return isValidJSON(tc.Function.Arguments)
-}
-
-// exeTools 执行工具调用列表。
+// exeTools executes tool calls: read-only concurrent, write serial.
 func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, toolCalls []schema.ToolCall) error {
 	logger.DebugTag("TOOL", "Executing %d tool(s)", len(toolCalls))
 
@@ -129,22 +130,22 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 		if tc.Function.Name == "" {
 			continue
 		}
-		if isReadOnlyToolCall(tc) {
+		if isReadOnly(tc) {
 			readOnlyCalls = append(readOnlyCalls, tc)
-			continue
+		} else {
+			writeCalls = append(writeCalls, tc)
 		}
-		writeCalls = append(writeCalls, tc)
 	}
 
 	if len(readOnlyCalls) > 0 {
-		if err := a.exeToolsConcurrent(ctx, messageCtx, readOnlyCalls); err != nil {
+		if err := a.exeToolsPar(ctx, messageCtx, readOnlyCalls); err != nil {
 			return err
 		}
 	}
 
 	for idx, tc := range writeCalls {
-		result, execErr := a.executeToolCall(ctx, tc, idx, len(writeCalls), false)
-		if err := a.addToolResultToContext(messageCtx, tc, result, execErr); err != nil {
+		result, execErr := a.exeToolCall(ctx, tc, idx, len(writeCalls), false)
+		if err := a.addToolResult(messageCtx, tc, result, execErr); err != nil {
 			return err
 		}
 	}
@@ -153,31 +154,32 @@ func (a *Agent) exeTools(ctx context.Context, messageCtx *agentctx.Context, tool
 	return nil
 }
 
-func (a *Agent) exeToolsConcurrent(ctx context.Context, messageCtx *agentctx.Context, toolCalls []schema.ToolCall) error {
-	results := make(chan streamToolResult, len(toolCalls))
+func (a *Agent) exeToolsPar(ctx context.Context, messageCtx *agentctx.Context, toolCalls []schema.ToolCall) error {
+	results := make(chan execResult, len(toolCalls))
 
 	for idx, tc := range toolCalls {
 		go func(idx int, tc schema.ToolCall) {
-			result, execErr := a.executeToolCall(ctx, tc, idx, len(toolCalls), true)
-			results <- streamToolResult{idx: idx, tc: tc, result: result, err: execErr}
+			result, execErr := a.exeToolCall(ctx, tc, idx, len(toolCalls), true)
+			results <- execResult{idx: idx, tc: tc, result: result, err: execErr}
 		}(idx, tc)
 	}
 
-	collectedResults := make([]streamToolResult, len(toolCalls))
+	collectedResults := make([]execResult, len(toolCalls))
 	for i := 0; i < len(toolCalls); i++ {
 		res := <-results
 		collectedResults[res.idx] = res
 	}
 
 	for _, res := range collectedResults {
-		if err := a.addToolResultToContext(messageCtx, res.tc, res.result, res.err); err != nil {
+		if err := a.addToolResult(messageCtx, res.tc, res.result, res.err); err != nil {
 			return err
 		}
 	}
 
 	return nil
 }
-func (a *Agent) executeToolCall(ctx context.Context, tc schema.ToolCall, idx, total int, concurrent bool) (string, error) {
+
+func (a *Agent) exeToolCall(ctx context.Context, tc schema.ToolCall, idx, total int, concurrent bool) (string, error) {
 	if tc.Function.Name == "" {
 		logger.WarnTag("TOOL", "Skipping tool call with empty name, id=%s", tc.ID)
 		return "", nil
@@ -187,7 +189,7 @@ func (a *Agent) executeToolCall(ctx context.Context, tc schema.ToolCall, idx, to
 	logger.DebugTag("TOOL", "[%d/%d] name=%s id=%s", idx+1, total, tc.Function.Name, tc.ID)
 	logger.DebugTag("TOOL", "  args: %s", tc.Function.Arguments)
 
-	t := a.findTool(tc.Function.Name)
+	t := a.toolMap[tc.Function.Name]
 	if t == nil {
 		logger.WarnTag("TOOL", "Not found: %s", tc.Function.Name)
 		return "", fmt.Errorf("tool not found: %s", tc.Function.Name)
@@ -217,11 +219,11 @@ func (a *Agent) invokeTool(ctx context.Context, t tool.BaseTool, tc schema.ToolC
 	return "", fmt.Errorf("tool %s is not invokable", tc.Function.Name)
 }
 
-func (a *Agent) addToolResultToContext(messageCtx *agentctx.Context, tc schema.ToolCall, result string, execErr error) error {
+func (a *Agent) addToolResult(messageCtx *agentctx.Context, tc schema.ToolCall, result string, execErr error) error {
 	if execErr != nil {
 		logger.ErrorTag("TOOL", "Failed: %s, err=%v", tc.Function.Name, execErr)
 		logger.PrintToolError(tc.Function.Name, tc.Function.Arguments, execErr)
-		errMsg := schema.ToolMessage(formatToolExecutionError(tc, execErr), tc.ID)
+		errMsg := schema.ToolMessage(formatToolErr(tc, execErr), tc.ID)
 		return a.ctxManager.AddMessage(messageCtx, errMsg)
 	}
 
@@ -232,17 +234,17 @@ func (a *Agent) addToolResultToContext(messageCtx *agentctx.Context, tc schema.T
 	return a.ctxManager.AddMessage(messageCtx, schema.ToolMessage(result, tc.ID))
 }
 
-func formatToolExecutionError(tc schema.ToolCall, execErr error) string {
+func formatToolErr(tc schema.ToolCall, execErr error) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("tool execution failed: %v", execErr))
-	if hint := toolFailureHint(tc); hint != "" {
+	if hint := toolHint(tc); hint != "" {
 		b.WriteString("\nSuggestion: ")
 		b.WriteString(hint)
 	}
 	return b.String()
 }
 
-func toolFailureHint(tc schema.ToolCall) string {
+func toolHint(tc schema.ToolCall) string {
 	name := tc.Function.Name
 	display := toolmeta.DisplayName(name)
 	if strings.HasPrefix(display, "base.") {
@@ -273,7 +275,7 @@ func toolFailureHint(tc schema.ToolCall) string {
 	return "review the tool schema and retry with corrected arguments."
 }
 
-func isReadOnlyToolCall(tc schema.ToolCall) bool {
+func isReadOnly(tc schema.ToolCall) bool {
 	if toolmeta.IsReadOnly(tc.Function.Name) {
 		return true
 	}
@@ -313,10 +315,6 @@ func formatToolResult(toolResult *schema.ToolResult) string {
 	}
 
 	return strings.Join(parts, "\n")
-}
-
-func (a *Agent) findTool(name string) tool.BaseTool {
-	return a.toolMap[name]
 }
 
 func isValidJSON(s string) bool {

@@ -1,3 +1,7 @@
+// task_tool.go - 任务管理工具（LLM 调用入口）
+// 功能：封装 TaskList 为 Eino Tool，供 Agent 调用
+// 主要类型：TaskTool
+// 导出函数：NewTaskTool
 package tools
 
 import (
@@ -7,15 +11,15 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/lzq/5hAgent/internal/agent"
+	"github.com/lzq/5hAgent/internal/task"
 )
 
 // TaskTool 统一的任务管理工具
 type TaskTool struct {
-	taskList *agent.TaskList
+	taskList *task.TaskList
 }
 
-func NewTaskTool(taskList *agent.TaskList) *TaskTool {
+func NewTaskTool(taskList *task.TaskList) *TaskTool {
 	return &TaskTool{taskList: taskList}
 }
 
@@ -54,13 +58,13 @@ func (t *TaskTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 }
 
 func (t *TaskTool) InvokableRun(ctx context.Context, args string, opts ...tool.Option) (string, error) {
-	var input agent.TaskActionRequest
+	var input task.TaskActionRequest
 
 	if err := json.Unmarshal([]byte(args), &input); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
 
-	result, err := agent.ExecuteTaskAction(t.taskList, input)
+	result, err := task.ExecuteTaskAction(t.taskList, input)
 	if err != nil {
 		return "", err
 	}

@@ -1,3 +1,7 @@
+// skill_tool.go - 技能管理工具（LLM 调用入口）
+// 功能：封装 SkillManager 为 Eino Tool，供 Agent 调用
+// 主要类型：SkillTool
+// 导出函数：NewSkillTool
 package tools
 
 import (

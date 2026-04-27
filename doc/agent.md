@@ -15,7 +15,8 @@ cmd/5hagent/main.go
 - [`cmd/5hagent/main.go`](../cmd/5hagent/main.go)
 - [`internal/agent/agent.go`](../internal/agent/agent.go)
 - [`internal/agent/tool_use.go`](../internal/agent/tool_use.go)
-- [`internal/agent/tasklist.go`](../internal/agent/tasklist.go)
+- [`internal/task/tasklist.go`](../internal/task/tasklist.go)
+- [`internal/task/task_actions.go`](../internal/task/task_actions.go)
 
 ## 入口
 
@@ -77,6 +78,8 @@ if err := skillMgr.LoadSkills(); err != nil { ... }
 
 ## Run
 
+> TODO: 已经注释掉了。
+
 非流式主循环在 [`Run()`](../internal/agent/agent.go#L96-L218)。它是最容易读懂的 ReAct 基线实现。
 
 关键代码：
@@ -112,19 +115,6 @@ if len(resp.ToolCalls) > 0 {
 
 核心入口代码：
 
-```go
-reader, err := a.model.Stream(ctx, messages)
-for {
-    chunk, err := reader.Recv()
-    if err == io.EOF {
-        break
-    }
-    ...
-}
-```
-
-对应代码：
-
 - [`reader, err := a.model.Stream(ctx, messages)`](../internal/agent/agent.go#L414-L420)
 - [`chunk, err := reader.Recv()`](../internal/agent/agent.go#L440-L449)
 
@@ -153,7 +143,9 @@ func (c *streamToolCollector) Add(chunks []schema.ToolCall) []schema.ToolCall {
 - [`streamToolCollector`](../internal/agent/tool_use.go)
 - [`if len(chunk.ToolCalls) > 0 { ... }`](../internal/agent/agent.go#L457-L470)
 
-这里的“可执行”不是只看有无 `ToolCall`，还要求 `ID`、`Name` 和一段完整 JSON 参数都已经到位。判断在 [`isRunnableToolCall()`](../internal/agent/tool_use.go)：
+> 注意，由于chunk里包含的toolcall信息可能也不完整
+
+这里的“可执行”不是只看有无 `ToolCall`，还要求 `ID`、`Name` 和一段完整 JSON 参数都已经到位。判断方法: [`isRunnableToolCall()`](../internal/agent/tool_use.go)：
 
 ```go
 func isRunnableToolCall(tc schema.ToolCall) bool {
@@ -164,10 +156,26 @@ func isRunnableToolCall(tc schema.ToolCall) bool {
 }
 ```
 
-一旦某个调用变成 runnable，`RunStream()` 就把它送进本轮的顺序执行队列：
+- stream 还在继续时，工具已经可以开始执行
+- 下一轮 ReAct 只有在本轮 stream EOF、assistant 消息落上下文、tool result 全部写回后才会开始
+- 流结束后，代码先收回已经执行完的工具结果，再构造最终 `assistant` 消息并写回上下文：
+
+# Tool_Use
+
+工具执行层位于 [`internal/agent/tool_use.go`](../internal/agent/tool_use.go)，核心职能：
+
+1. 流式收集：把 LLM stream 碎片拼成完整 ToolCall
+2. 分类调度：只读工具并发、写工具串行
+3. 调用适配：`EnhancedInvokableTool` 和 `InvokableTool` 两种接口
+4. 结果格式化：ToolResult 压平成字符串 + 错误提示注入
+
+当某个工具调用变成 runnable，`RunStream()` 就把它送进本轮的顺序执行队列：
 
 ```go
+// 创建带缓冲的 channel，用于异步执行工具调用，缓冲大小为8
 toolQueue := make(chan streamToolRequest, 8)
+
+// 启动 goroutine 从队列中消费并执行工具调用
 go func() {
     for req := range toolQueue {
         result, execErr := a.executeToolCall(ctx, req.tc, req.idx, req.idx+1, false)
@@ -187,14 +195,6 @@ for _, tc := range collector.Add(chunk.ToolCalls) {
 - [`toolQueue` / `toolResultCh`](../internal/agent/agent.go#L428-L438)
 - [`collector.Add(chunk.ToolCalls)`](../internal/agent/agent.go#L465-L469)
 - [`executeToolCall()`](../internal/agent/tool_use.go)
-
-这个设计的语义是：
-
-- stream 还在继续时，工具已经可以开始执行
-- 但工具仍然按发现顺序进入单线程 executor，不会把写工具并发掉
-- 下一轮 ReAct 只有在本轮 stream EOF、assistant 消息落上下文、tool result 全部写回后才会开始
-
-流结束后，代码先收回已经执行完的工具结果，再构造最终 `assistant` 消息并写回上下文：
 
 ```go
 close(toolQueue)
@@ -224,21 +224,6 @@ for _, res := range toolResults {
 - [`finalMessage := &schema.Message{...}`](../internal/agent/agent.go#L492-L496)
 - [`a.ctxManager.AddMessage(messageCtx, finalMessage)`](../internal/agent/agent.go#L507-L509)
 - [`a.addToolResultToContext(...)`](../internal/agent/agent.go#L511-L515)
-
-顺序约束仍然没变：上下文里一定先写 `assistant(tool_calls)`，再写对应的 `tool` 结果。区别只是工具执行本身可以在 stream 过程中提前开始，结果延迟到 assistant 消息落库后再统一写回。这样既保住 provider 要求的消息顺序，也避免整段响应结束后才开始跑工具。
-
-## ToolCall 是什么
-
-`RunStream()` 里打印的这几个字段：
-
-```go
-logger.DebugTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
-    i, tc.ID, tc.Function.Name, tc.Function.Arguments)
-```
-
-对应代码：
-
-- [`logger.DebugTag("STREAM", ... tc.ID, tc.Function.Name, tc.Function.Arguments)`](../internal/agent/agent.go#L460-L462)
 
 这些字段不是 5hAgent 自己发明的，而是 Eino 框架的 `schema.ToolCall` / `schema.FunctionCall`。框架定义见：
 
@@ -283,7 +268,7 @@ type FunctionCall struct {
 
 当前项目的 LLM 客户端在 [`internal/llm/client.go`](../internal/llm/client.go#L92-L97) 里使用的是 `github.com/cloudwego/eino-ext/components/model/claude` 适配层。所以这里的 `ToolCall` 不是 5hAgent 自己构造的原始协议对象，而是 Claude 适配层先把 provider 响应转成了 Eino 的 `schema.ToolCall`。
 
-Claude SDK 原始 `tool_use` 结构本身就带 `id`。SDK 定义见 [`anthropic.ToolUseBlock`](https://pkg.go.dev/github.com/anthropics/anthropic-sdk-go#ToolUseBlock)，关键字段是：
+> Claude SDK 原始 `tool_use` 结构本身就带 `id`。SDK 定义见 [`anthropic.ToolUseBlock`](https://pkg.go.dev/github.com/anthropics/anthropic-sdk-go#ToolUseBlock)，关键字段是：
 
 ```go
 type ToolUseBlock struct {
@@ -325,7 +310,7 @@ provider 原始 `tool_use` 大致是：
   "type": "tool_use",
   "id": "call_xxx",
   "name": "base.exec_shell",
-  "input": {"command": "pwd"}
+  "input": { "command": "pwd" }
 }
 ```
 
@@ -364,69 +349,244 @@ anthropic.NewToolResultBlock(message.ToolCallID, message.Content, false)
 也就是说，链路是闭环的：
 
 - provider 返回 `tool_use.id`
-- Claude 适配层映射成 `schema.ToolCall.ID`
+- eino框架的 Claude 适配层映射成 `schema.ToolCall.ID`
 - 5hAgent 执行工具后把它写进 `schema.ToolMessage(..., tc.ID)`
 - Claude 适配层再把 `ToolCallID` 映射回 provider 的 `tool_result.tool_use_id`
 
-这也是为什么消息顺序不能错。模型必须先看到自己的 `tool_use(id=call_xxx)`，下一轮才能接受 `tool_result(tool_use_id=call_xxx)`。
+> 为什么消息顺序不能错。模型必须先看到自己的 `tool_use(id=call_xxx)`，下一轮才能接受 `tool_result(tool_use_id=call_xxx)`。
 
 ## tool_use
 
-工具执行入口是 [`exeTools()`](../internal/agent/tool_use.go)。核心代码：
+### 流式收集过程
+
+LLM stream 返回的 chunk 里 `ToolCall` 可能是碎片——比如这一帧只有 `ID`，下一帧才有 `Name`，再下一帧才收到完整的 JSON 参数。所以需要一个收集器把碎片拼完整。
+
+收集器结构：
 
 ```go
-for _, tc := range toolCalls {
-    if tc.Function.Name == "" {
-        continue
-    }
-    if isReadOnlyToolCall(tc) {
-        readOnlyCalls = append(readOnlyCalls, tc)
-    } else {
-        writeCalls = append(writeCalls, tc)
-    }
+type streamToolState struct {
+    call       schema.ToolCall  // 当前累积状态
+    dispatched bool             // 是否已发给执行队列
 }
 
-if len(readOnlyCalls) > 0 {
-    if err := a.exeToolsConcurrent(ctx, messageCtx, readOnlyCalls); err != nil { ... }
+type streamToolCollector struct {
+    states []*streamToolState   // 所有追踪中的 tool call
+    byID   map[string]int     // ID → states 索引，快速查找
 }
+```
+
+**合并逻辑** `mergeToolCall` 分三种情况把碎片拼进去：
+
+```go
+func mergeToolCall(dst *schema.ToolCall, src schema.ToolCall) {
+    // 1. ID 只赋值一次
+    if dst.ID == "" && src.ID != "" {
+        dst.ID = src.ID
+    }
+    // 2. Name 只赋值一次
+    if src.Function.Name != "" && dst.Function.Name == "" {
+        dst.Function.Name = src.Function.Name
+    }
+    // 3. Arguments 追加（streaming 可能分多次收到）
+    if src.Function.Arguments != "" {
+        dst.Function.Arguments += src.Function.Arguments
+    }
+}
+```
+
+**入队逻辑** `Add` 每次收到新 chunk 时：
+
+1. 对每个 chunk 调用 `merge`——有 ID 则查找或追加，无 ID 则追加到最后一个状态
+2. 遍历所有状态，把 `dispatched == false && isRunnableToolCall == true` 的标记为已分发并返回
+
+**可执行判断** `isRunnableToolCall` 要求三元组齐全：
+
+```go
+func isRunnableToolCall(tc schema.ToolCall) bool {
+    if tc.ID == "" || tc.Function.Name == "" { return false }
+    return isValidJSON(tc.Function.Arguments)
+}
+```
+
+也就是 `ID` 非空 + `Name` 非空 + `Arguments` 是合法 JSON。三项缺一则继续等下一个 chunk。
+
+**一个具体例子**：
+
+假设 LLM streaming 分四帧返回同一个 tool call：
+
+```
+frame 1: ToolCall{ID: "call_001"}
+frame 2: ToolCall{Function{Name: "read_file"}}
+frame 3: ToolCall{Function{Arguments: `{"path"`}
+frame 4: ToolCall{Function{Arguments: `{"path":"/tmp/a.txt"}`}
+```
+
+- frame 1 入队，`byID["call_001"] = 0`，`states[0].call.ID = "call_001"`
+- frame 2 合并到 `states[0]`，`Name` 填上
+- frame 3/4 持续追加 `Arguments`，直到 JSON 完整合法
+- JSON 一旦 valid，`isRunnableToolCall` 返回 `true`，下一帧 `Add` 就会把它摘出来送进执行队列
+
+流结束后用 `RunnableCalls()` 把剩余已拼完但未分发的 tool call 全部取出。
+
+### 分类：只读 vs 写
+
+`isReadOnlyToolCall` 分两层判断：
+
+```go
+func isReadOnlyToolCall(tc schema.ToolCall) bool {
+    // 第一层：toolmeta 注册表里的 ReadOnly 标记
+    if toolmeta.IsReadOnly(tc.Function.Name) { return true }
+
+    // 第二层：task.task 工具根据 action 参数判断
+    if tc.Function.Name == "task.task" || tc.Function.Name == "task" {
+        var input struct { Action string `json:"action"` }
+        if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err != nil {
+            return false
+        }
+        return input.Action == "get" || input.Action == "list"
+    }
+    return false
+}
+```
+
+结果：
+
+- 只读工具（`read_file` / `glob` / `grep` / `list_dir` 等）：并发执行
+- 写工具（`write_file` / `edit` / `exec_shell` 等）：串行执行
+- `task.task get` / `list`：并发；其他 action：串行
+
+### 并发执行（只读）
+
+```go
+func (a *Agent) exeToolsConcurrent(...) error {
+    results := make(chan streamToolResult, len(toolCalls))
+
+    for idx, tc := range toolCalls {
+        go func(idx int, tc schema.ToolCall) {
+            result, execErr := a.executeToolCall(ctx, tc, idx, len(toolCalls), true)
+            results <- streamToolResult{idx: idx, tc: tc, result: result, err: execErr}
+        }(idx, tc)
+    }
+
+    // 按原始顺序收集结果
+    collectedResults := make([]streamToolResult, len(toolCalls))
+    for i := 0; i < len(toolCalls); i++ {
+        collectedResults[i] = <-results
+    }
+
+    // 仍按顺序写回上下文
+    for _, res := range collectedResults {
+        a.addToolResultToContext(messageCtx, res.tc, res.result, res.err)
+    }
+}
+```
+
+关键约束：**执行并发，但写回有序**。goroutine 谁先完成不确定，但 `collectedResults[res.idx] = res` 保证了第 N 个请求的结果一定落在第 N 位，最终按 ID 顺序写进上下文。
+
+### 串行执行（写）
+
+写工具直接 for 循环顺序调用，每执行完一个立即写回结果再执行下一个：
+
+```go
 for idx, tc := range writeCalls {
-    if err := a.executeSingleTool(ctx, messageCtx, tc, idx, len(writeCalls), false); err != nil { ... }
+    result, execErr := a.executeToolCall(ctx, tc, idx, len(writeCalls), false)
+    a.addToolResultToContext(messageCtx, tc, result, execErr)
 }
 ```
 
-这里先分类，再决定并发还是串行。分类规则在 [`isReadOnlyToolCall()`](../internal/agent/tool_use.go)。基础工具的只读属性来自 `toolmeta` 注册表，统一 `task.task` 工具还会继续解析 `action`，其中 `get` / `list` 走只读，`create` / `update` / `delete` 走写路径。
+这样文件修改和任务状态更新严格按 LLM 生成的顺序进行，不会出现先创建再删除的竞争。
 
-只读工具走 [`exeToolsConcurrent()`](../internal/agent/tool_use.go)。关键代码：
+### 调用接口适配
+
+`invokeTool` 根据工具实现的接口分叉：
 
 ```go
-go func(idx int, tc schema.ToolCall) {
-    t := a.findTool(tc.Function.Name)
-    result, execErr := a.invokeTool(ctx, t, tc)
-    results <- toolResult{idx: idx, tc: tc, result: result, err: execErr}
-}(idx, tc)
+func (a *Agent) invokeTool(ctx context.Context, t tool.BaseTool, tc schema.ToolCall) (string, error) {
+    // EnhancedInvokableTool：框架解码 JSON → Go struct
+    if enhancedInvokable, ok := t.(tool.EnhancedInvokableTool); ok {
+        toolArg := &schema.ToolArgument{Text: tc.Function.Arguments}
+        toolResult, err := enhancedInvokable.InvokableRun(ctx, toolArg)
+        return formatToolResult(toolResult), nil
+    }
 
-for _, res := range collectedResults {
-    if err := a.addToolResultToContext(messageCtx, res.tc, res.result, res.err); err != nil { ... }
+    // InvokableTool：工具自己解析 JSON 字符串
+    if invokable, ok := t.(tool.InvokableTool); ok {
+        return invokable.InvokableRun(ctx, tc.Function.Arguments)
+    }
+
+    return "", fmt.Errorf("tool %s is not invokable", tc.Function.Name)
 }
 ```
 
-对应代码：
+两种接口区别：
 
-- [`t := a.findTool(tc.Function.Name)`](../internal/agent/tool_use.go)
-- [`result, execErr := a.invokeTool(ctx, t, tc)`](../internal/agent/tool_use.go)
-- [`a.addToolResultToContext(...)`](../internal/agent/tool_use.go)
+| 接口                    | 参数传递                          | JSON 解码                     |
+| ----------------------- | --------------------------------- | ----------------------------- |
+| `EnhancedInvokableTool` | `schema.ToolArgument{Text: json}` | Eino 框架自动解码到 Go struct |
+| `InvokableTool`         | 原始 `string` JSON                | 工具自己 `json.Unmarshal`     |
 
-注意这里是“执行并发，写回顺序稳定”。工具完成得再快，也会按原始请求顺序写回上下文。
+### 结果格式化
 
-写工具走 [`executeSingleTool()`](../internal/agent/tool_use.go)。关键代码：
+`formatToolResult` 把 `schema.ToolResult` 的多部分压成字符串：
 
 ```go
-t := a.findTool(tc.Function.Name)
-result, execErr := a.invokeTool(ctx, t, tc)
-return a.addToolResultToContext(messageCtx, tc, result, execErr)
+func formatToolResult(toolResult *schema.ToolResult) string {
+    var parts []string
+    for _, part := range toolResult.Parts {
+        switch part.Type {
+        case schema.ToolPartTypeText:  parts = append(parts, part.Text)
+        case schema.ToolPartTypeImage: parts = append(parts, "[Image]")
+        case schema.ToolPartTypeAudio: parts = append(parts, "[Audio]")
+        case schema.ToolPartTypeVideo: parts = append(parts, "[Video]")
+        case schema.ToolPartTypeFile:  parts = append(parts, "[File]")
+        }
+    }
+    return strings.Join(parts, "\n")
+}
 ```
 
-串行路径更简单，重点是保持文件修改和任务状态更新的顺序语义。
+### 错误提示注入
+
+执行失败时，`formatToolExecutionError` 会附加一条针对性的恢复建议：
+
+```go
+func toolFailureHint(tc schema.ToolCall) string {
+    display := toolmeta.DisplayName(tc.Function.Name)  // 去掉前缀
+    switch display {
+    case "read_file", "write_file", "edit", "glob", "grep", "list_dir":
+        return "check the tool arguments and retry with an absolute path under the workspace..."
+    case "exec_shell":
+        return "check the shell command, quote paths with spaces..."
+    case "task":
+        return "use a valid task action: create, update, get, list, or delete..."
+    case "skill":
+        return "use an existing skill name and set action to enable or disable..."
+    }
+    if meta, ok := toolmeta.Lookup(name); ok && meta.Category == toolmeta.CategoryMCP {
+        return "check the remote tool arguments and server-specific requirements..."
+    }
+    return "review the tool schema and retry with corrected arguments."
+}
+```
+
+最终写入上下文的消息格式：
+
+```
+tool execution failed: <error>
+Suggestion: <hint>
+```
+
+### 写回上下文
+
+结果最终由 `addToolResultToContext` 写入，用 `tc.ID` 与原始请求配对：
+
+```go
+errMsg := schema.ToolMessage(formatToolExecutionError(tc, execErr), tc.ID)
+resultMsg := schema.ToolMessage(result, tc.ID)
+a.ctxManager.AddMessage(messageCtx, msg)
+```
+
+Claude 适配层收到这条 `tool` 消息后会提取 `ToolCallID` 映射回 provider 的 `tool_result(tool_use_id=xxx)`，因此链路必须严格保持 `assistant(tool_calls) → tool result(tool_use_id)` 的顺序。
 
 ## BaseTool 怎么变成模型可调用的 tool
 
@@ -622,13 +782,13 @@ stdout, err := cmd.Output()
 `task.task` 和 `skill.skill` 则是典型的手写 schema + 手写 JSON 解析。模型生成的仍然是标准 JSON，比如：
 
 ```json
-{"action":"list"}
+{ "action": "list" }
 ```
 
 或：
 
 ```json
-{"skill":"debugging","action":"enable"}
+{ "skill": "debugging", "action": "enable" }
 ```
 
 工具收到后自己 `json.Unmarshal`，再调用 `TaskList` 或 `skill.Manager`。
@@ -711,30 +871,27 @@ resultMsg := schema.ToolMessage(result, tc.ID)
 
 ## TaskList
 
-任务持久化在 [`TaskList`](../internal/agent/tasklist.go#L34-L39)。入口是 [`NewTaskList()`](../internal/agent/tasklist.go#L41-L61)：
+任务持久化在 [`TaskList`](../internal/task/tasklist.go#L40-L44)。入口是 [`NewTaskList()`](../internal/task/tasklist.go#L51-L62)：
 
 ```go
-tl := &TaskList{
-    tasks:    make(map[string]*Task),
-    filePath: filePath,
-}
-if _, err := os.Stat(filePath); err == nil {
-    if err := tl.load(); err != nil { ... }
-}
+list := &TaskList{path: path, tasks: map[string]*Task{}}
+if err := list.load(); err != nil { ... }
+if err := list.save(); err != nil { ... }
 ```
 
-创建和更新的关键点都在“改内存后立刻持久化”：
+创建和更新的关键点都在"改内存后立刻持久化"：
 
 ```go
-tl.tasks[id] = task
-if err := tl.save(); err != nil { ... }
+l.tasks[id] = task
+if err := l.saveLocked(); err != nil { ... }
 ```
 
 对应代码：
 
-- [`CreateTask()`](../internal/agent/tasklist.go#L63-L97)
-- [`UpdateTaskStatus()`](../internal/agent/tasklist.go#L116-L146)
-- [`DeleteTask()`](../internal/agent/tasklist.go#L181-L202)
-- [`save()`](../internal/agent/tasklist.go#L204-L226)
+- [`CreateTask()`](../internal/task/tasklist.go#L72-L88)
+- [`UpdateTaskStatus()`](../internal/task/tasklist.go#L90-L103)
+- [`DeleteTask()`](../internal/task/tasklist.go#L132-L143)
+- [`save()`](../internal/task/tasklist.go#L267-L271)
 
 任务文件路径默认是项目根 `task.md`，由 [`runInteractive()`](../cmd/5hagent/main.go#L46-L53) 初始化。`TaskList` 会把任务持久化到 `task.md` 的受管 markdown 区块里，并在每次公开读写前重新从磁盘加载，确保人工修改能立即被 `/task` 和 `task.task` 看到。
+

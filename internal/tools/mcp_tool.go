@@ -1,3 +1,7 @@
+// mcp_tool.go - MCP 工具包装器
+// 功能：封装 MCP Client 调用为 Eino Tool
+// 主要类型：MCPTool
+// 导出函数：NewMCPTool
 package tools
 
 import (
@@ -21,8 +25,8 @@ func NewMCPTool(serverName string, client mcp.Client, spec mcp.ToolSpec) *MCPToo
 
 func (t *MCPTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
-		Name:       mcp.FullToolName(t.serverName, t.spec.Name),
-		Desc:       t.spec.Description,
+		Name:        mcp.FullToolName(t.serverName, t.spec.Name),
+		Desc:        t.spec.Description,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{}),
 	}, nil
 }

@@ -1,3 +1,7 @@
+// read_file.go - 文件读取工具
+// 功能：按行读取文件，支持 offset/limit 范围指定
+// 主要类型：ReadFileInput, ReadFileOutput
+// 导出函数：NewReadFileTool
 package tools
 
 import (

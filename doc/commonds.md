@@ -5,6 +5,7 @@ REPL input
   -> cmd/5hagent/main.go
      -> /skill => internal/commands/skill.go
      -> /task  => internal/commands/task.go
+     -> /compress => internal/commands/compress.go
 ```
 
 ## 概述
@@ -41,13 +42,13 @@ REPL input
 - `/task get <id>`
 - `/task delete <id>`
 
-底层依赖：`internal/agent/tasklist.go`
+底层依赖：`internal/task/tasklist.go`
 
 ## 处理流程
 
 1. REPL 读到一行输入
-2. `main.go` 判断是否以 `/skill` 或 `/task` 开头
-3. 调用对应的 `HandleSkill()` 或 `HandleTask()`
+2. `main.go` 判断是否以 `/skill`、`/task` 或 `/compress` 开头
+3. 调用对应的 `HandleSkill()`、`HandleTask()` 或 `HandleCompress()`
 4. 函数内部用 `strings.Fields()` 解析参数
 5. 返回结果字符串或错误
 
@@ -62,7 +63,7 @@ REPL input
 
 - CLI 命令给用户直接操作
 - LLM 工具给 Agent 自主调用
-- `/compress context` 走手动上下文压缩，并把归档写到 `compact/messages/`
+- `/compress` 走手动上下文压缩，并把归档写到 `compact/messages/`，同时打印压缩后的当前 ctx
 
 ## 扩展方式
 
@@ -76,3 +77,4 @@ REPL input
 - [main.go](../cmd/5hagent/main.go)
 - [skill.go](../internal/commands/skill.go)
 - [task.go](../internal/commands/task.go)
+- [compress.go](../internal/commands/compress.go)

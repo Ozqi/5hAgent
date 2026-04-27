@@ -1,3 +1,7 @@
+// toolprint.go - 工具调用格式化输出
+// 功能：ToolCall/ToolResult/ToolError 的终端展示（带颜色和缩进）
+// 主要类型：ToolPrinter, ToolEvent, toolCallSummary, toolResultSummary
+// 导出函数：PrintToolCall, PrintToolResult, PrintToolError, PrintToolStatus, PrintSummary, SetToolEventSink
 package logger
 
 import (
@@ -7,8 +11,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-
-	"github.com/lzq/5hAgent/internal/toolmeta"
 )
 
 // ToolPrinter 工具调用的格式化输出
@@ -28,6 +30,7 @@ type toolResultSummary struct {
 
 type ToolEvent struct {
 	Kind string
+	Name string
 	Text string
 }
 
@@ -60,7 +63,7 @@ func NewToolPrinter() *ToolPrinter {
 func (p *ToolPrinter) PrintToolCall(name string, args string, concurrent bool) {
 	text := formatToolCallText(p.indent, name, args, concurrent)
 	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "call", Text: text})
+		sink(ToolEvent{Kind: "call", Name: name, Text: text})
 		return
 	}
 	fmt.Print(text)
@@ -91,7 +94,7 @@ func formatToolCallText(indent string, name string, args string, concurrent bool
 func (p *ToolPrinter) PrintToolResult(name string, args string, result string) {
 	text := formatToolResultText(p.indent, name, args, result)
 	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "result", Text: text})
+		sink(ToolEvent{Kind: "result", Name: name, Text: text})
 		return
 	}
 	fmt.Print(text)
@@ -146,7 +149,7 @@ func (p *ToolPrinter) PrintToolError(name string, args string, err error) {
 	_ = summarizeToolCall(name, args)
 	text := fmt.Sprintf("%s⎿ %s %s\n", p.indent, Red("✗"), Red(err.Error()))
 	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "error", Text: text})
+		sink(ToolEvent{Kind: "error", Name: name, Text: text})
 		return
 	}
 	fmt.Print(text)
@@ -203,7 +206,7 @@ func PrintToolSummary(message string) {
 }
 
 func summarizeToolCall(name string, args string) toolCallSummary {
-	displayName := toolmeta.DisplayName(name)
+	displayName := toolsDisplayName(name)
 	summary := toolCallSummary{Title: displayName}
 
 	var raw map[string]interface{}
@@ -258,7 +261,7 @@ func summarizeToolCall(name string, args string) toolCallSummary {
 }
 
 func summarizeToolResult(name string, args string, result string) toolResultSummary {
-	displayName := toolmeta.DisplayName(name)
+	displayName := toolsDisplayName(name)
 	var raw map[string]interface{}
 	if err := json.Unmarshal([]byte(result), &raw); err != nil {
 		return toolResultSummary{Lines: splitDisplayLines(result, 4, 150)}
@@ -288,13 +291,20 @@ func summarizeToolResult(name string, args string, result string) toolResultSumm
 			text := stringValue(match["text"])
 			lines = append(lines, fmt.Sprintf("%s:%d  %s", file, line, TruncateString(text, 80)))
 		}
-		fields = append(fields, formatField("files", fmt.Sprintf("%d", len(uniqueKeys(files)))))
+		fields = append(fields, formatField("files", fmt.Sprintf("%d", len(files))))
 		return toolResultSummary{Fields: compactFields(fields), Lines: linesWithEllipsis(lines, len(matches), 4)}
 	case "glob":
 		files := stringSlice(raw["files"])
+		shown := make([]string, 0, min(5, len(files)))
+		for i, path := range files {
+			if i >= 5 {
+				break
+			}
+			shown = append(shown, shortenPath(path))
+		}
 		return toolResultSummary{
 			Fields: compactFields([]string{formatField("matches", fmt.Sprintf("%d", len(files)))}),
-			Lines:  linesWithEllipsis(shortenedPaths(files, 5), len(files), 5),
+			Lines:  linesWithEllipsis(shown, len(files), 5),
 		}
 	case "list_dir":
 		files := asObjects(raw["files"])
@@ -316,7 +326,11 @@ func summarizeToolResult(name string, args string, result string) toolResultSumm
 		stderr := stringValue(raw["stderr"])
 		fields := []string{formatField("exit code", valueString(raw["returncode"]))}
 		if stderr != "" {
-			fields = append(fields, formatField("stderr", TruncateString(firstLine(stderr), 100)))
+			first := stderr
+			if idx := strings.Index(stderr, "\n"); idx >= 0 {
+				first = stderr[:idx]
+			}
+			fields = append(fields, formatField("stderr", TruncateString(first, 100)))
 		}
 		lines := splitDisplayLines(stdout, 5, 160)
 		if len(lines) == 0 && stderr != "" {
@@ -328,9 +342,11 @@ func summarizeToolResult(name string, args string, result string) toolResultSumm
 	}
 }
 
+/*
 func printIndentedLines(prefix string, lines []string) {
 	fmt.Print(formatIndentedLines(prefix, lines))
 }
+*/
 
 func formatIndentedLines(prefix string, lines []string) string {
 	var b strings.Builder
@@ -485,6 +501,7 @@ func stringSlice(v interface{}) []string {
 	return result
 }
 
+/*
 func shortenedPaths(paths []string, limit int) []string {
 	shown := make([]string, 0, min(limit, len(paths)))
 	for i, path := range paths {
@@ -510,10 +527,18 @@ func firstLine(text string) string {
 	}
 	return text
 }
+*/
 
 func min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
+}
+
+func toolsDisplayName(name string) string {
+	if idx := strings.LastIndex(name, "."); idx >= 0 && idx < len(name)-1 {
+		return name[idx+1:]
+	}
+	return name
 }

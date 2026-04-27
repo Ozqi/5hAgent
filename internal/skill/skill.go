@@ -1,3 +1,7 @@
+// skill.go - 技能加载与管理
+// 功能：从 .5hagent/skills/*/SKILL.md 加载技能，支持启用/禁用
+// 主要类型：Skill, Manager
+// 导出函数：NewManager, LoadSkills, GetSkill, ListSkills, EnableSkill, DisableSkill
 package skill
 
 import (

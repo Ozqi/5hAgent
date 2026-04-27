@@ -4,7 +4,7 @@
 
 ---
 
-## Phase 3B 任务归档与压缩
+## Phase 3B 任务归档与压缩，待验收
 
 ### 3. `/compress` 手动压缩接入 `LMCOMPRESS`
 
@@ -49,7 +49,7 @@
 
 ---
 
-### 4. HistoryTask 归档机制
+### 4. HistoryTask 归档机制，待验收
 
 优先级：高  
 难度：中
@@ -130,7 +130,7 @@
 
 ---
 
-## Phase 3C 外部能力接入
+## Phase 3C 外部能力接入，待验收
 
 ### 5. MCP Client 设计
 
@@ -174,7 +174,7 @@
 
 ---
 
-### 6. 本地 Milvus + `claude-context` 验证
+### 5.1 本地 Milvus + `claude-context` 验证
 
 优先级：高  
 难度：中到高
@@ -205,7 +205,7 @@
 
 ---
 
-### 7. 5hAgent 接入 `claude-context`
+### 5.2 5hAgent 接入 `claude-context`
 
 优先级：高  
 难度：高
@@ -238,7 +238,7 @@
 
 ## Phase 3D 智能化增强
 
-### 8. 长期记忆 / 路书机制
+### 8. 长期记忆 / 路书机制式自动新建SKILL
 
 优先级：中  
 难度：高
@@ -290,27 +290,14 @@
 
 ---
 
-## 当前推荐执行顺序
+## NewIdeaTODO
 
-1. Tool 二级分类
-2. Task 系统重构：`task.md` 单一真源
-3. `/compress` 手动压缩接入 `LMCOMPRESS`
-4. HistoryTask 归档机制
-5. MCP Client 设计
-6. 本地 Milvus + `claude-context` 验证
-7. 5hAgent 接入 `claude-context`
-8. 长期记忆 / 路书机制
-9. 多 Agent / worktree
-
----
-
-## 已确定的设计决策
-
-- [x] `plan.md` 升级暂不做
-- [x] `task.md` 作为任务系统唯一来源
 - [x] 通过提示词约束 LLM 按模板修改 `task.md`
-- [x] 默认人工修改也遵守模板
-- [x] 压缩先依赖 `/compress` 手动触发
+- [ ] 默认人工修改也遵守模板, 即使没有人为遵守，只提醒用户task格式不对但不报错。
+- [ ] 压缩先依赖 `/compress` 手动触发，如果Task完成，自动触发压缩。
 - [x] HistoryTask 先做手动归档与手动恢复
-- [x] 先做 MCP Client，不先做 MCP Server
+- [x] 先做 MCP Client，不先做 MCP Server。
 - [x] 先接入 `claude-context`，不先原生重写其 core
+- [ ] 现有的工具描述在哪？？我希望工具描述，报错描述，直接放在每个Tools的实现文件里。并且根据不同的报错有不同的提示。
+- [ ] TOOLS的权限控制。主要是读写工具,读当前目录以外的东西需要批准,只读模式下,写命令需要批准.exeshell工具里,rm命令git命令,需要用正则的方式过滤并申请批准。
+- [ ]

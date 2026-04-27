@@ -12,53 +12,67 @@ import (
 	agentctx "github.com/lzq/5hAgent/internal/context"
 )
 
-type fakeCompressCommandModel struct{}
+type fakeCompressModel struct{}
 
-func (m *fakeCompressCommandModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
-	return &schema.Message{Content: "---\n目标: command compress\n进度: - ok\n发现: 无\n状态: compressed\n待处理: 无\n---"}, nil
+func (m *fakeCompressModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	return &schema.Message{Content: "summary"}, nil
 }
 
-func (m *fakeCompressCommandModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+func (m *fakeCompressModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	return nil, nil
 }
 
-func (m *fakeCompressCommandModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+func (m *fakeCompressModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
 	return m, nil
 }
 
-func TestHandleCompressContext(t *testing.T) {
+func TestHandleCompressCompressesContext(t *testing.T) {
 	mgr := agentctx.NewManager()
 	msgCtx, err := mgr.CreateContext()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 60; i++ {
-		if err := mgr.AddMessage(msgCtx, &schema.Message{Role: schema.User, Content: strings.Repeat("m", 10)}); err != nil {
+		if err := mgr.AddMessage(msgCtx, &schema.Message{Role: schema.User, Content: "x"}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	promptDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(promptDir, "compress.md"), []byte("compress now\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(promptDir, "compress.md"), []byte("compress please\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	compactRoot := filepath.Join(t.TempDir(), "compact")
 
-	result, err := HandleCompress(context.Background(), "/compress context", mgr, msgCtx, &fakeCompressCommandModel{}, promptDir, compactRoot)
+	result, err := HandleCompress(context.Background(), "/compress", mgr, msgCtx, &fakeCompressModel{}, promptDir, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "Compressed context") {
-		t.Fatalf("expected result summary, got %q", result)
+	if !strings.Contains(result, "Compressed context:") {
+		t.Fatalf("expected compression result, got %q", result)
 	}
-	if !strings.Contains(result, "compact/messages") {
-		t.Fatalf("expected compact path in result, got %q", result)
+	if !strings.Contains(result, "Archive:") {
+		t.Fatalf("expected archive path, got %q", result)
+	}
+	if !strings.Contains(result, "Compressed context messages:") {
+		t.Fatalf("expected compressed context dump, got %q", result)
+	}
+	if !strings.Contains(result, "[system] [对话历史摘要]\nsummary") {
+		t.Fatalf("expected summary message in result, got %q", result)
 	}
 }
 
-func TestHandleCompressRequiresContextObjects(t *testing.T) {
-	_, err := HandleCompress(context.Background(), "/compress context", nil, nil, &fakeCompressCommandModel{}, "prompt", "compact")
+func TestHandleCompressRejectsExtraArgs(t *testing.T) {
+	mgr := agentctx.NewManager()
+	msgCtx, err := mgr.CreateContext()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = HandleCompress(context.Background(), "/compress now", mgr, msgCtx, &fakeCompressModel{}, t.TempDir(), t.TempDir())
 	if err == nil {
-		t.Fatal("expected missing context error")
+		t.Fatal("expected usage error")
+	}
+	if !strings.Contains(err.Error(), "usage: /compress") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -1,3 +1,7 @@
+// mcp.go - MCP 协议定义
+// 功能：ServerConfig/ToolSpec 定义，FullToolName 工具名拼接
+// 主要类型：ServerConfig, ToolSpec, Client 接口
+// 导出函数：FullToolName
 package mcp
 
 import (

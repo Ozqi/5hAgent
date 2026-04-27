@@ -1,4 +1,7 @@
-// Package logger 提供极简的日志功能
+// logger.go - 日志输出
+// 功能：带标签的 DEBUG/INFO/WARN/ERROR 日志，支持颜色输出
+// 主要类型：Logger, Level
+// 导出函数：SetLevel, SetOutput, Debug, Info, Warn, Error, DebugTag, InfoTag, WarnTag, ErrorTag, TruncateString
 package logger
 
 import (

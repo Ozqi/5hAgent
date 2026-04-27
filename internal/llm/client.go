@@ -1,4 +1,7 @@
-// Package llm 提供 LLM 模型的封装和配置管理
+// client.go - LLM 客户端封装
+// 功能：从环境变量/.env 创建 Claude 模型客户端
+// 主要类型：Config, LLMClient
+// 导出函数：NewClientFromEnv, NewClient, GetModel, GetConfig
 package llm
 
 import (

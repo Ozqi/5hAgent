@@ -1,3 +1,7 @@
+// list_dir.go - 目录列表工具
+// 功能：列出目录内容，支持递归；返回文件/目录名、路径、大小
+// 主要类型：ListDirInput, ListDirOutput, FileInfo
+// 导出函数：NewListDirTool
 package tools
 
 import (

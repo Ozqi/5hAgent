@@ -1,3 +1,7 @@
+// write_file.go - 文件写入工具
+// 功能：创建或覆盖文件，自动创建父目录
+// 主要类型：WriteFileInput, WriteFileOutput
+// 导出函数：NewWriteFileTool
 package tools
 
 import (

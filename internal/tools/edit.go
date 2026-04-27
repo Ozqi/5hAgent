@@ -1,3 +1,7 @@
+// edit.go - 文件编辑工具
+// 功能：精确字符串替换（old_string -> new_string），支持全部替换
+// 主要类型：EditInput, EditOutput
+// 导出函数：NewEditTool
 package tools
 
 import (

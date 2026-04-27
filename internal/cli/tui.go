@@ -1,3 +1,7 @@
+// tui.go - 终端 UI 主界面
+// 功能：Bubble Tea 构建的交互式对话界面，显示对话/状态面板，支持 /task /skill /compress 命令
+// 主要类型：AppModel, conversationEntry, statusSnapshot
+// 导出函数：NewAppModel, LaunchTUI
 package cli
 
 import (
@@ -19,6 +23,7 @@ import (
 	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/skill"
+	"github.com/lzq/5hAgent/internal/task"
 	"github.com/lzq/5hAgent/internal/toolmeta"
 )
 
@@ -32,8 +37,10 @@ const (
 )
 
 type conversationEntry struct {
-	Role    string
-	Content string
+	Role     string
+	Content  string
+	ToolName string
+	ToolOpen bool
 }
 
 type statusSnapshot struct {
@@ -56,7 +63,7 @@ type AppModel struct {
 	ag         *agent.Agent
 	modelName  string
 	agentName  string
-	taskList   *agent.TaskList
+	taskList   *task.TaskList
 	skillMgr   *skill.Manager
 	ctxManager *agentctx.Manager
 	messageCtx *agentctx.Context
@@ -76,8 +83,10 @@ type AppModel struct {
 	currentAssistant int
 	currentStatus    string
 	spinnerFrame     int
+	sidebarCursor    int
 	escPending       bool
 	lastEscAt        time.Time
+	autoScroll       bool
 }
 
 type assistantTokenMsg struct {
@@ -100,27 +109,116 @@ var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 
 var launchMu sync.Mutex
 
-func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, taskList *agent.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context) *AppModel {
+var (
+	colorBg      = lipgloss.Color("#12131d")
+	colorSurface = lipgloss.Color("#1a1b26")
+	colorGreen   = lipgloss.Color("#9ece6a")
+	colorBlue    = lipgloss.Color("#7aa2f7")
+	colorPurple  = lipgloss.Color("#bb9af7")
+	colorYellow  = lipgloss.Color("#e0af68")
+	colorText    = lipgloss.Color("#a9b1d6")
+	colorGray    = lipgloss.Color("#565f89")
+	colorWhite   = lipgloss.Color("#e2e1f1")
+
+	sidebarStyle = lipgloss.NewStyle().
+			Width(24).
+			Border(lipgloss.NormalBorder(), false, true, false, false).
+			BorderForeground(colorSurface).
+			Padding(0, 1)
+
+	infoPanelStyle = lipgloss.NewStyle().
+			Width(30).
+			Border(lipgloss.NormalBorder(), false, false, false, true).
+			BorderForeground(colorSurface).
+			Padding(0, 1)
+
+	mainViewStyle = lipgloss.NewStyle().
+			Padding(0, 2)
+
+	titleStyle = lipgloss.NewStyle().
+			Foreground(colorGreen).
+			Bold(true)
+
+	sectionTitleStyle = lipgloss.NewStyle().
+				Foreground(colorBlue).
+				Bold(true).
+				MarginTop(1).
+				MarginBottom(1)
+
+	navItemStyle = lipgloss.NewStyle().
+			Foreground(colorGray).
+			PaddingLeft(2)
+
+	activeNavItemStyle = navItemStyle.Copy().
+				Foreground(colorBg).
+				Background(colorGreen).
+				Bold(true)
+
+	statusBarStyle = lipgloss.NewStyle().
+			Background(colorBlue).
+			Foreground(colorBg).
+			Bold(true)
+
+	inputShellStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorSurface).
+			Background(colorBg).
+			Padding(0, 1)
+
+	inputMetaStyle = lipgloss.NewStyle().
+			Foreground(colorGray)
+
+	messageBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorSurface).
+			Padding(0, 1)
+
+	messageBodyDimStyle = lipgloss.NewStyle().
+				Foreground(colorGray)
+
+	toolHeaderStyle = lipgloss.NewStyle().
+			Foreground(colorGray).
+			Faint(true)
+
+	toolBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(colorSurface).
+			Padding(0, 0)
+
+	hintStyle = lipgloss.NewStyle().
+			Foreground(colorGray).
+			Italic(true)
+)
+
+var menuItems = []string{"SESSION_01", "SESSION_02", "SESSION_03", "SESSION_04"}
+
+func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context) *AppModel {
 	vp := viewport.New(0, 0)
+	vp.MouseWheelEnabled = true
+	vp.MouseWheelDelta = 2
 
 	input := textarea.New()
-	input.Placeholder = "输入消息，Enter 发送"
+	input.Placeholder = ""
 	input.Focus()
 	input.ShowLineNumbers = false
 	input.SetHeight(1)
 	input.Prompt = "> "
-	input.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
-	input.FocusedStyle.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	input.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	input.FocusedStyle.CursorLine = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	input.FocusedStyle.CursorLineNumber = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	input.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(colorBlue).Background(colorSurface).Bold(true)
+	input.FocusedStyle.Text = lipgloss.NewStyle().Foreground(colorText).Background(colorSurface)
+	input.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(colorGray).Background(colorSurface)
+	input.FocusedStyle.CursorLine = lipgloss.NewStyle().Foreground(colorText).Background(colorSurface)
+	input.FocusedStyle.CursorLineNumber = lipgloss.NewStyle().Foreground(colorGray).Background(colorSurface)
 	input.BlurredStyle = input.FocusedStyle
-	input.Cursor.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	return &AppModel{
-		ag:               ag,
-		modelName:        modelName,
-		agentName:        fallback(agentName(ag), "Agent"),
+		ag:        ag,
+		modelName: modelName,
+		agentName: fallback(func() string {
+			if ag == nil {
+				return ""
+			}
+			return ag.Name()
+		}(), "Agent"),
 		taskList:         taskList,
 		skillMgr:         skillMgr,
 		ctxManager:       ctxManager,
@@ -130,11 +228,9 @@ func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, taskLis
 		input:            input,
 		currentAssistant: -1,
 		currentStatus:    "idle",
+		sidebarCursor:    0,
+		autoScroll:       true,
 	}
-}
-
-func (m *AppModel) SetProgram(p *tea.Program) {
-	m.program = p
 }
 
 func (m *AppModel) Init() tea.Cmd {
@@ -182,9 +278,19 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case toolEventMsg:
 		if msg.event.Kind == "call" {
 			m.toolCalls++
-			m.lastTool = extractToolName(msg.event.Text)
+			m.lastTool = fallback(toolmeta.DisplayName(msg.event.Name), msg.event.Name)
+			m.entries = append(m.entries, conversationEntry{Role: roleTool, Content: strings.TrimRight(msg.event.Text, "\n"), ToolName: msg.event.Name, ToolOpen: true})
+			m.refreshView()
+			return m, nil
 		}
-		m.entries = append(m.entries, conversationEntry{Role: roleTool, Content: strings.TrimRight(msg.event.Text, "\n")})
+		if idx := m.findToolEntry(msg.event.Name); idx >= 0 {
+			m.entries[idx].Content += "\n" + strings.TrimRight(msg.event.Text, "\n")
+			if msg.event.Kind == "result" || msg.event.Kind == "error" {
+				m.entries[idx].ToolOpen = false
+			}
+		} else {
+			m.entries = append(m.entries, conversationEntry{Role: roleTool, Content: strings.TrimRight(msg.event.Text, "\n"), ToolName: msg.event.Name, ToolOpen: msg.event.Kind != "result" && msg.event.Kind != "error"})
+		}
 		m.refreshView()
 		return m, nil
 	case tea.KeyMsg:
@@ -203,10 +309,29 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			return m, m.submit()
 		case "pgdown", "ctrl+f":
+			m.autoScroll = m.viewport.AtBottom()
 			m.viewport.ViewDown()
+			m.autoScroll = m.viewport.AtBottom()
 			return m, nil
 		case "pgup", "ctrl+b":
+			m.autoScroll = false
 			m.viewport.ViewUp()
+			return m, nil
+		case "down", "j", "ctrl+n":
+			m.viewport.LineDown(1)
+			m.autoScroll = m.viewport.AtBottom()
+			return m, nil
+		case "up", "k", "ctrl+p":
+			m.autoScroll = false
+			m.viewport.LineUp(1)
+			return m, nil
+		case "end":
+			m.viewport.GotoBottom()
+			m.autoScroll = true
+			return m, nil
+		case "home":
+			m.viewport.GotoTop()
+			m.autoScroll = false
 			return m, nil
 		}
 	}
@@ -215,36 +340,21 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.escPending = false
 	m.input, cmd = m.input.Update(msg)
 	m.viewport, _ = m.viewport.Update(msg)
+	m.autoScroll = m.viewport.AtBottom()
 	return m, cmd
 }
 
 func (m *AppModel) View() string {
 	m.resize()
-	conversationHeight := max(1, m.height-m.input.Height()-5)
-
-	conversation := lipgloss.NewStyle().
-		Width(max(1, m.width-m.statusWidth-1)).
-		Height(conversationHeight).
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("8")).
-		Render(m.viewport.View())
-
-	status := lipgloss.NewStyle().
-		Width(m.statusWidth).
-		Height(conversationHeight).
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("8")).
-		Render(renderStatusPanel(m.snapshot(), m.statusWidth-2))
-
-	mainRow := lipgloss.JoinHorizontal(lipgloss.Top, conversation, status)
-	inputMeta := logger.Gray(fmt.Sprintf("model: %s | agent: %s", fallback(m.modelName, "-"), m.agentName))
-	inputBox := lipgloss.NewStyle().
-		Width(m.width).
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("8")).
-		Render(lipgloss.JoinVertical(lipgloss.Left, m.input.View(), inputMeta))
-
-	return lipgloss.JoinVertical(lipgloss.Left, mainRow, inputBox)
+	sidebar := renderSidebar(m.sidebarCursor, m.height)
+	rightPanel := infoPanelStyle.Width(m.statusWidth).Height(max(1, m.height-1)).Render(renderStatusPanel(m.snapshot(), max(12, m.statusWidth-2)))
+	mainView := renderMainPane(m)
+	layout := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, mainView, rightPanel)
+	statusBar := renderBottomStatusBar(m.width, m.currentStatus, m.busy)
+	return lipgloss.JoinVertical(lipgloss.Left,
+		lipgloss.NewStyle().Height(max(1, m.height-1)).Render(layout),
+		statusBar,
+	)
 }
 
 func (m *AppModel) submit() tea.Cmd {
@@ -334,22 +444,30 @@ func (m *AppModel) resize() {
 	}
 	m.statusWidth = statusWidth
 
-	conversationWidth := max(20, m.width-m.statusWidth-4)
-	conversationHeight := max(1, m.height-m.input.Height()-5)
-	m.viewport.Width = conversationWidth
-	m.viewport.Height = conversationHeight
-	m.input.SetWidth(max(20, m.width-4))
+	sidebarWidth := 24
+	mainWidth := max(20, m.width-sidebarWidth-m.statusWidth-6)
+	headerHeight := 3
+	footerHeight := 1
+	inputHeight := 4
+	m.viewport.Width = max(8, mainWidth-4)
+	m.viewport.Height = max(1, m.height-headerHeight-footerHeight-inputHeight)
+	m.input.SetWidth(max(12, mainWidth-6))
 	m.input.SetHeight(1)
 }
 
 func (m *AppModel) refreshView() {
 	m.resize()
+	contentWidth := max(8, m.viewport.Width)
+	stickToBottom := m.autoScroll || m.viewport.AtBottom() || m.viewport.TotalLineCount() <= m.viewport.Height
 	parts := make([]string, 0, len(m.entries))
 	for _, entry := range m.entries {
-		parts = append(parts, renderConversationEntry(entry))
+		parts = append(parts, renderConversationEntry(entry, contentWidth))
 	}
 	m.viewport.SetContent(strings.Join(parts, "\n"))
-	m.viewport.GotoBottom()
+	if stickToBottom {
+		m.viewport.GotoBottom()
+		m.autoScroll = true
+	}
 }
 
 func (m *AppModel) snapshot() statusSnapshot {
@@ -380,7 +498,7 @@ func (m *AppModel) snapshot() statusSnapshot {
 		total, _, inProgress, _, _, _ := m.taskList.GetProgress()
 		snapshot.TaskTotal = total
 		snapshot.TaskInProgress = inProgress
-		tasks := m.taskList.ListTasksByStatus(agent.StatusInProgress)
+		tasks := m.taskList.ListTasksByStatus(task.StatusInProgress)
 		if len(tasks) == 0 {
 			tasks = m.taskList.ListTasks()
 		}
@@ -394,90 +512,295 @@ func (m *AppModel) snapshot() statusSnapshot {
 	return snapshot
 }
 
-func renderConversationEntry(entry conversationEntry) string {
+func renderSidebar(cursor int, height int) string {
+	items := []string{
+		titleStyle.MarginBottom(1).Render("WINDOWS"),
+	}
+	for i, item := range menuItems {
+		icon := " "
+		if i == 0 {
+			icon = ""
+		}
+		label := fmt.Sprintf("%s %s", icon, item)
+		if i == cursor {
+			items = append(items, activeNavItemStyle.Render(label))
+			continue
+		}
+		items = append(items, navItemStyle.Render(label))
+	}
+	items = append(items, "", lipgloss.NewStyle().Foreground(colorGray).Render("session switch pending"), lipgloss.NewStyle().Foreground(colorGreen).Render("● SYSTEM ONLINE"))
+	return sidebarStyle.Height(max(1, height-1)).Render(lipgloss.JoinVertical(lipgloss.Left, items...))
+}
+
+func renderMainPane(m *AppModel) string {
+	header := titleStyle.Foreground(colorBlue).Render(fmt.Sprintf("5HAGENT / %s", menuItems[max(0, min(len(menuItems)-1, m.sidebarCursor))]))
+	stateLine := lipgloss.NewStyle().Foreground(colorGray).Render(fmt.Sprintf("model=%s | agent=%s | state=%s", fallback(m.modelName, "-"), m.agentName, animatedStateLabel(m.busy, m.currentStatus, m.spinnerFrame)))
+	conversationHeight := max(1, m.viewport.Height)
+	conversation := lipgloss.NewStyle().Height(conversationHeight).Render(renderViewportPane(m.viewport))
+	inputBlock := renderInputPanel(m, max(12, m.viewport.Width+2))
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		stateLine,
+		"",
+		conversation,
+		"",
+		inputBlock,
+		"",
+		hintStyle.Render("-- 提示: 左侧为会话窗口占位，当前仅显示样式，切换逻辑尚未接入 --"),
+	)
+	return mainViewStyle.Width(max(20, m.width-24-m.statusWidth-4)).Height(max(1, m.height-1)).Render(content)
+}
+
+func renderInputPanel(m *AppModel, width int) string {
+	header := lipgloss.NewStyle().Foreground(colorBlue).Bold(true).Render("INPUT_BUFFER")
+	meta := lipgloss.JoinHorizontal(lipgloss.Top,
+		inputMetaStyle.Render("ENTER submit | ESC ESC quit | PGUP/PGDN scroll"),
+		inputMetaStyle.Render(" | "+fmt.Sprintf("entries=%d tools=%d", len(m.entries), m.toolCalls)),
+	)
+	body := lipgloss.JoinVertical(lipgloss.Left,
+		m.input.View(),
+		"",
+		meta,
+	)
+	return lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		inputShellStyle.Width(width).Render(body),
+	)
+}
+
+func renderBottomStatusBar(width int, status string, busy bool) string {
+	state := fallback(status, "idle")
+	if busy {
+		state = animatedStateLabel(busy, status, 0)
+	}
+	parts := []string{"^C EXIT", "ENTER SEND", "PGUP/PGDN SCROLL", "STATE " + strings.ToUpper(state)}
+	text := " " + strings.Join(parts, "  ")
+	padding := width - lipgloss.Width(text)
+	if padding < 0 {
+		padding = 0
+	}
+	return statusBarStyle.Width(max(1, width)).Render(text + strings.Repeat(" ", padding))
+}
+
+func renderRow(label, value string) string {
+	labelStyle := lipgloss.NewStyle().Foreground(colorGray).Width(8)
+	valueStyle := lipgloss.NewStyle().Foreground(colorText)
+	return lipgloss.JoinHorizontal(lipgloss.Top, labelStyle.Render(label), valueStyle.Render(value))
+}
+
+func snapshotModelName(snapshot statusSnapshot) string {
+	if snapshot.TokenLimit > 0 {
+		return "ACTIVE"
+	}
+	return "STANDBY"
+}
+
+func (m *AppModel) findToolEntry(name string) int {
+	for i := len(m.entries) - 1; i >= 0; i-- {
+		entry := m.entries[i]
+		if entry.Role != roleTool || !entry.ToolOpen {
+			continue
+		}
+		if name == "" || entry.ToolName == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func renderConversationEntry(entry conversationEntry, width int) string {
 	switch entry.Role {
 	case roleUser:
-		return logger.Bold(logger.Green("You: ")) + compactParagraph(strings.TrimSpace(entry.Content))
+		body := wrapVisibleText(compactParagraph(strings.TrimSpace(entry.Content)), max(8, width-4))
+		return renderMessageBlock("USER_ROOT", body, colorPurple, width, true)
 	case roleAssistant:
 		content := strings.TrimRight(renderMarkdownForTerminal(normalizeAssistantContent(entry.Content), true), "\n")
-		return logger.Bold(logger.Cyan("Agent: ")) + content
+		content = wrapVisibleText(content, max(8, width-4))
+		return renderMessageBlock("AGENT_CORE", content, colorGreen, width, false)
 	case roleTool:
-		return renderToolEntry(entry.Content)
+		return renderToolEntry(entry.Content, width)
 	case roleSystem:
-		return logger.Gray("system: " + strings.TrimSpace(entry.Content))
+		body := wrapVisibleText(strings.TrimSpace(entry.Content), max(8, width-4))
+		return renderMessageBlock("SYSTEM_BUS", body, colorBlue, width, true)
 	default:
-		return strings.TrimSpace(entry.Content)
+		return wrapVisibleText(strings.TrimSpace(entry.Content), width)
 	}
+}
+
+func renderMessageBlock(label string, body string, accent lipgloss.Color, width int, subdued bool) string {
+	blockWidth := max(8, width-1)
+	header := lipgloss.NewStyle().Foreground(accent).Bold(true).Render(label)
+	contentStyle := lipgloss.NewStyle().Foreground(colorText)
+	boxStyle := messageBoxStyle.Copy().Width(blockWidth).BorderForeground(accent)
+	if subdued {
+		contentStyle = messageBodyDimStyle.Copy()
+		boxStyle = boxStyle.BorderForeground(colorSurface)
+	}
+	content := contentStyle.Render(body)
+	return lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		boxStyle.Render(content),
+	)
 }
 
 func renderStatusPanel(snapshot statusSnapshot, width int) string {
 	lines := []string{
-		grayLabel("status"),
-		grayValue(fmt.Sprintf("busy: %v", snapshot.Busy)),
-		grayValue(fmt.Sprintf("state: %s", snapshot.CurrentState)),
+		sectionTitleStyle.Render("SYSTEM_RESOURCES"),
+		renderRow("STATE", snapshot.CurrentState),
+		renderRow("BUSY", fmt.Sprintf("%v", snapshot.Busy)),
+		renderRow("TOOLS", fmt.Sprintf("%d", snapshot.ToolCallsTotal)),
+		renderRow("LAST", fallback(toolmeta.DisplayName(snapshot.LastToolName), "-")),
 		"",
-		grayLabel("tokens"),
-		grayValue(fmt.Sprintf("%d/%d", snapshot.TokenUsed, snapshot.TokenLimit)),
+		sectionTitleStyle.Render("ENVIRONMENT_CTX"),
+		renderRow("MODEL", fallback(snapshotModelName(snapshot), "-")),
+		renderRow("TOKENS", fmt.Sprintf("%d/%d", snapshot.TokenUsed, snapshot.TokenLimit)),
+		renderRow("MSGS", fmt.Sprintf("%d", snapshot.ContextMessages)),
+		renderRow("SUM", fmt.Sprintf("%d", snapshot.ContextSummaries)),
 		"",
-		grayLabel("context"),
-		grayValue(fmt.Sprintf("messages: %d", snapshot.ContextMessages)),
-		grayValue(fmt.Sprintf("summaries: %d", snapshot.ContextSummaries)),
+		sectionTitleStyle.Render("PROCESS_TREE"),
+		renderRow("TASKS", fmt.Sprintf("%d", snapshot.TaskTotal)),
+		renderRow("ACTIVE", fmt.Sprintf("%d", snapshot.TaskInProgress)),
 		"",
-		grayLabel("tools"),
-		grayValue(fmt.Sprintf("calls: %d", snapshot.ToolCallsTotal)),
-		grayValue(fmt.Sprintf("last: %s", fallback(toolmeta.DisplayName(snapshot.LastToolName), "-"))),
-		"",
-		grayLabel("skills"),
+		sectionTitleStyle.Render("SKILLS"),
 	}
 	if len(snapshot.EnabledSkills) == 0 {
-		lines = append(lines, grayValue("(none)"))
+		lines = append(lines, lipgloss.NewStyle().Foreground(colorGray).Render("(none)"))
 	} else {
 		for _, skill := range snapshot.EnabledSkills {
-			lines = append(lines, grayValue(skill))
+			lines = append(lines, lipgloss.NewStyle().Foreground(colorGray).Render("• "+skill))
 		}
 	}
-	lines = append(lines,
-		"",
-		grayLabel("tasks"),
-		grayValue(fmt.Sprintf("total: %d", snapshot.TaskTotal)),
-		grayValue(fmt.Sprintf("in progress: %d", snapshot.TaskInProgress)),
-	)
 	if len(snapshot.HighlightedTaskLine) > 0 {
+		lines = append(lines, "", sectionTitleStyle.Render("TASK_FOCUS"))
 		for _, task := range snapshot.HighlightedTaskLine {
-			lines = append(lines, grayValue(task))
+			lines = append(lines, lipgloss.NewStyle().Foreground(colorGray).Render("• "+task))
 		}
+	} else {
+		lines = append(lines, "", sectionTitleStyle.Render("TASK_FOCUS"), lipgloss.NewStyle().Foreground(colorGray).Render("• awaiting work"))
 	}
 
 	wrapped := make([]string, 0, len(lines))
 	for _, line := range lines {
-		wrapped = append(wrapped, wrapLine(line, width)...)
+		wrapped = append(wrapped, wrapVisibleLines(line, width)...)
 	}
 	return strings.Join(wrapped, "\n")
 }
 
-func wrapLine(line string, width int) []string {
-	if width <= 0 || len([]rune(line)) <= width || strings.TrimSpace(line) == "" {
+func wrapVisibleLines(line string, width int) []string {
+	if width <= 0 || lipgloss.Width(line) <= width || strings.TrimSpace(stripANSI(line)) == "" {
 		return []string{line}
 	}
-	words := strings.Fields(line)
-	if len(words) == 0 {
-		return []string{line}
-	}
-	lines := make([]string, 0)
-	current := words[0]
-	for _, word := range words[1:] {
-		candidate := current + " " + word
-		if len([]rune(candidate)) > width {
-			lines = append(lines, current)
-			current = word
+
+	var lines []string
+	var current strings.Builder
+	visible := 0
+	runes := []rune(line)
+	for i := 0; i < len(runes); {
+		if runes[i] == '\x1b' {
+			j := i + 1
+			for j < len(runes) && runes[j] != 'm' {
+				j++
+			}
+			if j < len(runes) {
+				j++
+			}
+			current.WriteString(string(runes[i:j]))
+			i = j
 			continue
 		}
-		current = candidate
+		if visible >= width {
+			lines = append(lines, current.String())
+			current.Reset()
+			visible = 0
+		}
+		current.WriteRune(runes[i])
+		visible++
+		i++
 	}
-	lines = append(lines, current)
+	if current.Len() > 0 {
+		lines = append(lines, current.String())
+	}
+	if len(lines) == 0 {
+		return []string{line}
+	}
 	return lines
 }
 
+func wrapVisibleText(text string, width int) string {
+	lines := strings.Split(text, "\n")
+	result := make([]string, 0, len(lines)*2)
+	for _, line := range lines {
+		if line == "" {
+			result = append(result, "")
+			continue
+		}
+		wrapped := wrapVisibleLines(line, width)
+		result = append(result, wrapped...)
+	}
+	return strings.Join(result, "\n")
+}
+
+func stripANSI(text string) string {
+	return ansiPattern.ReplaceAllString(text, "")
+}
+
+func renderViewportPane(vp viewport.Model) string {
+	contentLines := strings.Split(vp.View(), "\n")
+	if len(contentLines) < vp.Height {
+		for len(contentLines) < vp.Height {
+			contentLines = append(contentLines, "")
+		}
+	}
+	barLines := renderScrollbar(vp)
+	rows := make([]string, 0, vp.Height)
+	for i := 0; i < vp.Height; i++ {
+		content := ""
+		if i < len(contentLines) {
+			content = contentLines[i]
+		}
+		bar := " "
+		if i < len(barLines) {
+			bar = barLines[i]
+		}
+		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, content, bar))
+	}
+	return strings.Join(rows, "\n")
+}
+
+func renderScrollbar(vp viewport.Model) []string {
+	height := max(1, vp.Height)
+	lines := make([]string, height)
+	for i := range lines {
+		lines[i] = lipgloss.NewStyle().Foreground(colorGray).Render("│")
+	}
+	total := max(1, vp.TotalLineCount())
+	if total <= height {
+		for i := range lines {
+			lines[i] = lipgloss.NewStyle().Foreground(colorGray).Render("┃")
+		}
+		return lines
+	}
+	thumbSize := max(1, height*height/total)
+	maxOffset := max(1, total-height)
+	thumbTop := (height - thumbSize) * vp.YOffset / maxOffset
+	for i := thumbTop; i < min(height, thumbTop+thumbSize); i++ {
+		lines[i] = lipgloss.NewStyle().Foreground(colorText).Render("┃")
+	}
+	return lines
+}
+
+func verticalBar(symbol string, height int) string {
+	if height <= 0 {
+		return ""
+	}
+	lines := make([]string, height)
+	for i := range lines {
+		lines[i] = symbol
+	}
+	return strings.Join(lines, "\n")
+}
+
+/*
 func extractToolName(text string) string {
 	trimmed := strings.TrimSpace(text)
 	trimmed = strings.TrimPrefix(trimmed, "● ")
@@ -491,6 +814,7 @@ func extractToolName(text string) string {
 	}
 	return trimmed
 }
+*/
 
 func fallback(value string, defaultValue string) string {
 	if strings.TrimSpace(value) == "" {
@@ -501,39 +825,188 @@ func fallback(value string, defaultValue string) string {
 
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
-func renderToolEntry(content string) string {
-	clean := strings.TrimSpace(ansiPattern.ReplaceAllString(content, ""))
+// toolEntry 表示解析后的工具条目
+type toolEntry struct {
+	Name   string
+	Args   []string
+	Result []string
+	Error  string
+}
+
+func parseToolBlock(text string) toolEntry {
+	clean := strings.TrimSpace(ansiPattern.ReplaceAllString(text, ""))
 	if clean == "" {
-		return logger.Gray("tool")
+		return toolEntry{}
 	}
+
 	lines := strings.Split(clean, "\n")
-	for i, line := range lines {
-		line = strings.TrimSpace(line)
-		line = strings.TrimPrefix(line, "● ")
-		if i == 0 {
-			lines[i] = logger.Gray("tool: " + line)
+	entry := toolEntry{}
+	seenResult := false
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
 			continue
 		}
+		if strings.HasPrefix(line, "● ") {
+			rest := strings.TrimPrefix(line, "● ")
+			rest = strings.TrimSuffix(rest, " [并发]")
+			entry.Name = extractToolNameFromCall(rest)
+			continue
+		}
+		if strings.HasPrefix(line, "⎿ ") {
+			seenResult = true
+			line = strings.TrimSpace(strings.TrimPrefix(line, "⎿ "))
+		}
+		if strings.HasPrefix(line, "✗") {
+			entry.Error = strings.TrimSpace(line)
+			seenResult = true
+			continue
+		}
+		if !seenResult {
+			entry.Args = append(entry.Args, line)
+			continue
+		}
+		entry.Result = append(entry.Result, line)
+	}
+	return entry
+}
+
+// extractToolName 从工具调用行提取工具名称
+func extractToolNameFromCall(text string) string {
+	// 格式: ToolName(args...) 或 ToolName
+	text = strings.TrimSpace(text)
+	// 找到第一个括号的位置
+	if idx := strings.Index(text, "("); idx > 0 {
+		text = text[:idx]
+	}
+	return strings.TrimSpace(text)
+}
+
+// parseToolArgs 解析工具调用的参数字段
+func parseToolArgs(lines []string) []string {
+	var fields []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
 		if line != "" {
-			lines[i] = logger.Gray("  " + line)
+			fields = append(fields, line)
 		}
 	}
-	return strings.Join(lines, "\n")
+	return fields
 }
 
-func grayLabel(text string) string {
-	return logger.Bold(logger.Gray(text))
-}
-
-func grayValue(text string) string {
-	return logger.Gray(text)
-}
-
-func agentName(ag *agent.Agent) string {
-	if ag == nil {
-		return ""
+// parseResultSummary 解析结果摘要行
+func parseResultSummary(firstLine string) []string {
+	parts := strings.SplitN(firstLine, ":", 2)
+	if len(parts) == 2 {
+		return []string{strings.TrimSpace(parts[0]) + ": " + strings.TrimSpace(parts[1])}
 	}
-	return ag.Name()
+	return []string{firstLine}
+}
+
+// parseResultContent 解析结果内容行
+func parseResultContent(lines []string) []string {
+	var content []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			content = append(content, line)
+		}
+	}
+	return content
+}
+
+func renderToolEntry(content string, width int) string {
+	entry := parseToolBlock(content)
+	if entry.Name == "" && len(entry.Args) == 0 && len(entry.Result) == 0 && entry.Error == "" {
+		return renderToolUnknownEntry(content, width)
+	}
+	return renderToolCompactEntry(entry, width)
+}
+
+func renderToolCompactEntry(entry toolEntry, width int) string {
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Foreground(colorYellow).Bold(true).Render("TOOL_EXEC " + strings.ToUpper(fallback(entry.Name, "event"))))
+
+	if len(entry.Args) > 0 {
+		joined := strings.Join(entry.Args, "   ·   ")
+		wrapped := wrapVisibleLines(joined, max(8, width-2))
+		b.WriteString("\n")
+		for _, wl := range wrapped {
+			b.WriteString(lipgloss.NewStyle().Foreground(colorGray).Render("  " + wl))
+			b.WriteString("\n")
+		}
+	}
+
+	if entry.Error != "" {
+		b.WriteString("\n")
+		for _, wl := range wrapVisibleLines(entry.Error, max(8, width-2)) {
+			b.WriteString(lipgloss.NewStyle().Foreground(colorBlue).Render("  " + wl))
+			b.WriteString("\n")
+		}
+		return renderMessageBoxWithHeader(strings.TrimRight(b.String(), "\n"), width)
+	}
+
+	if len(entry.Result) > 0 {
+		showLines := entry.Result
+		truncated := false
+		if len(showLines) > 2 {
+			showLines = showLines[:2]
+			truncated = true
+		}
+		b.WriteString("\n")
+		for _, line := range showLines {
+			wrapped := wrapVisibleLines(truncateMiddle(line, max(24, width+12)), max(8, width-2))
+			for _, wl := range wrapped {
+				b.WriteString(lipgloss.NewStyle().Foreground(colorText).Render("  " + wl))
+				b.WriteString("\n")
+			}
+		}
+		if truncated {
+			b.WriteString(lipgloss.NewStyle().Foreground(colorGray).Render("  ..."))
+			b.WriteString("\n")
+		}
+	}
+	return renderMessageBoxWithHeader(b.String(), width)
+}
+
+// renderToolUnknownEntry 渲染未知工具条目
+func renderToolUnknownEntry(content string, width int) string {
+	clean := strings.TrimSpace(ansiPattern.ReplaceAllString(content, ""))
+	if clean == "" {
+		return renderCompactToolBlock("TOOL_EXEC", "(empty)", width)
+	}
+	maxLen := width - 10
+	if maxLen < 20 {
+		maxLen = 20
+	}
+	return renderCompactToolBlock("TOOL_EXEC", truncateMiddle(clean, maxLen), width)
+}
+
+func renderMessageBoxWithHeader(text string, width int) string {
+	lines := strings.SplitN(text, "\n", 2)
+	if len(lines) == 1 {
+		return renderCompactToolBlock(lines[0], "", width)
+	}
+	return renderCompactToolBlock(lines[0], lines[1], width)
+}
+
+func renderCompactToolBlock(label string, body string, width int) string {
+	blockWidth := max(8, width-1)
+	header := toolHeaderStyle.Render(label)
+	content := messageBodyDimStyle.Render(strings.TrimRight(body, "\n"))
+	return lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		toolBoxStyle.Copy().Width(blockWidth).Render(content),
+	)
+}
+
+// truncateMiddle 截断中间部分
+func truncateMiddle(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	half := (maxLen - 3) / 2
+	return s[:half] + "..." + s[len(s)-half:]
 }
 
 func normalizeAssistantContent(content string) string {
@@ -558,12 +1031,12 @@ func tickSpinner() tea.Cmd {
 	})
 }
 
-func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, taskList *agent.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context) error {
+func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context) error {
 	launchMu.Lock()
 	defer launchMu.Unlock()
 	model := NewAppModel(ctx, ag, modelName, taskList, skillMgr, ctxManager, messageCtx)
 	p := tea.NewProgram(model, tea.WithAltScreen())
-	model.SetProgram(p)
+	model.program = p
 	prevOutput := logger.Output()
 	logger.SetToolEventSink(func(event logger.ToolEvent) {
 		p.Send(toolEventMsg{event: event})

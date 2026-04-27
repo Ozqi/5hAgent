@@ -1,3 +1,7 @@
+// glob.go - 文件模式匹配工具
+// 功能：支持 * 和 ** 通配符，递归/非递归搜索
+// 主要类型：GlobInput, GlobOutput
+// 导出函数：NewGlobTool, recursiveGlob
 package tools
 
 import (

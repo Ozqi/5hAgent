@@ -1,3 +1,7 @@
+// grep.go - 代码搜索工具
+// 功能：调用 ripgrep（或 fallback grep）搜索，支持正则和文件类型过滤
+// 主要类型：GrepInput, GrepOutput, GrepMatch
+// 导出函数：NewGrepTool, parseRipgrepJSON, grepFallback
 package tools
 
 import (

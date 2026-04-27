@@ -1,4 +1,7 @@
-// Package agent 提供 AI Agent 的核心实现
+// agent.go - Agent 核心实现
+// 功能：ReAct 循环、LLM 调用、工具执行协调、上下文管理
+// 主要类型：Agent, Config, State, tokenBudget, toolRepeatGuard
+// 导出函数：NewAgent, RunStream, GetSkillManager, SetModel, SetTools, Name, TokenUsage
 package agent
 
 import (
@@ -7,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"sync"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -15,6 +17,7 @@ import (
 	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/skill"
+	"github.com/lzq/5hAgent/internal/utils"
 )
 
 // Agent AI Agent 核心结构体
@@ -34,7 +37,7 @@ type Agent struct {
 	// 技能管理器
 	skillManager *skill.Manager // 技能注入管理
 	// token 预算（跨多次 Run/RunStream 调用持久化）
-	tokenBudget *tokenBudget
+	tokenBudget *utils.TokenBudget
 }
 
 // Config Agent 配置
@@ -59,11 +62,7 @@ type State struct {
 //   - config: Agent 配置（包含系统提示词）
 //
 // 返回: Agent 实例和可能的错误
-// 功能:
-//  1. 初始化 Agent 结构体
-//  2. 初始化 Agent 状态
-//  3. 构建工具名称映射表
-//  4. 初始化技能管理器
+
 func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *Config) (*Agent, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
@@ -81,14 +80,23 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 		logger.DebugTag("SKILL", "Failed to load skills: %v", err)
 	}
 
+	toolMap := make(map[string]tool.BaseTool)
+	for _, t := range tools {
+		info, err := t.Info(context.Background())
+		if err != nil {
+			continue
+		}
+		toolMap[info.Name] = t
+	}
+
 	return &Agent{
 		model:        model,
 		tools:        tools,
-		toolMap:      buildToolMap(tools),
+		toolMap:      toolMap,
 		config:       config,
 		ctxManager:   agentctx.NewManager(),
 		skillManager: skillMgr,
-		tokenBudget:  newTokenBudget(config.MaxTotalTokens),
+		tokenBudget:  utils.NewTokenBudget(config.MaxTotalTokens),
 		state: &State{
 			CurrentTurn: 0,
 			IsRunning:   false,
@@ -96,157 +104,8 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 	}, nil
 }
 
-// Run 运行 Agent，处理用户输入
-// 参数:
-//   - ctx: Go 标准上下文（超时、取消控制）
-//   - messageCtx: 消息上下文（对话历史管理）
-//   - input: 用户输入
-//
-// 返回: Agent 响应内容和可能的错误
-// 功能: 实现 ReAct 循环架构
-//  1. 注入SystemPrompt（如果messageCtx为空）
-//  2. 添加用户消息到 messageCtx
-//  3. 进入 ReAct 循环 (最多 MaxTurns 轮):
-//     a. 从 messageCtx 获取所有消息
-//     b. 调用 LLM 生成响应 (Reasoning)
-//     c. 检查响应中是否有工具调用
-//     d. 如果有工具调用:
-//     - 执行工具 (Acting)
-//     - 将工具结果添加到 messageCtx
-//     - 继续循环
-//     e. 如果没有工具调用:
-//     - 将 LLM 响应添加到 messageCtx
-//     - 返回响应内容
-//  4. 如果达到最大轮数，返回错误
-func (a *Agent) Run(ctx context.Context, messageCtx *agentctx.Context, input string) (string, error) {
-	// 1. 注入SystemPrompt和Skills（首次对话时）
-	if err := a.ensureConversationSetup(messageCtx); err != nil {
-		return "", err
-	}
-
-	// 2. 添加用户消息
-	userMsg := &schema.Message{
-		Role:    schema.User,
-		Content: input,
-	}
-	if err := a.ctxManager.AddMessage(messageCtx, userMsg); err != nil {
-		return "", fmt.Errorf("failed to add user message: %w", err)
-	}
-
-	// 3. ReAct 循环
-	a.state.IsRunning = true
-	defer func() { a.state.IsRunning = false }()
-	repeatGuard := newToolRepeatGuard(a.config.RepeatToolLimit)
-
-	for turn := 0; ; turn++ {
-		a.state.CurrentTurn = turn + 1
-		logger.DebugTag("REACT", "Turn %d", turn+1)
-
-		// a. 获取所有消息
-		messages, err := a.ctxManager.GetMessages(messageCtx)
-		if err != nil {
-			return "", fmt.Errorf("failed to get messages: %w", err)
-		}
-		logger.DebugTag("CTX", "Messages=%d", len(messages))
-		for i, msg := range messages {
-			contentPreview := logger.TruncateString(msg.Content, 40)
-			logger.DebugTag("CTX", "  [%d] role=%-9s tools=%d content=%s",
-				i, msg.Role, len(msg.ToolCalls), contentPreview)
-		}
-
-		// b. 调用 LLM 生成响应
-		logger.DebugTag("LLM", "Calling Generate")
-		resp, err := a.model.Generate(ctx, messages)
-		if err != nil {
-			logger.ErrorTag("LLM", "Generate failed: %v", err)
-			return "", fmt.Errorf("LLM generation failed: %w", err)
-		}
-		if err := a.tokenBudget.Add(resp.ResponseMeta); err != nil {
-			return "", err
-		}
-		logger.DebugTag("LLM", "Response received, tool_calls=%d", len(resp.ToolCalls))
-
-		// c. 检查是否有工具调用
-		if len(resp.ToolCalls) > 0 {
-			logger.DebugTag("LLM", "Tool calls requested: %d", len(resp.ToolCalls))
-			for i, tc := range resp.ToolCalls {
-				logger.DebugTag("LLM", "  [%d] id=%s name=%s args=%s",
-					i, tc.ID, tc.Function.Name, tc.Function.Arguments)
-			}
-
-			// d. 有工具调用 - 添加 assistant 消息
-			assistantMsg := &schema.Message{
-				Role:      schema.Assistant,
-				Content:   resp.Content,
-				ToolCalls: resp.ToolCalls,
-			}
-			if err := repeatGuard.Check(resp.ToolCalls); err != nil {
-				return "", err
-			}
-			if err := a.ctxManager.AddMessage(messageCtx, assistantMsg); err != nil {
-				return "", fmt.Errorf("failed to add assistant message: %w", err)
-			}
-
-			// 执行工具
-			if err := a.exeTools(ctx, messageCtx, resp.ToolCalls); err != nil {
-				return "", fmt.Errorf("tool execution failed: %w", err)
-			}
-
-			// 继续循环
-			continue
-		}
-
-		// e. 没有工具调用 - 返回响应
-		assistantMsg := &schema.Message{
-			Role:    schema.Assistant,
-			Content: resp.Content,
-		}
-		if err := a.ctxManager.AddMessage(messageCtx, assistantMsg); err != nil {
-			return "", fmt.Errorf("failed to add assistant message: %w", err)
-		}
-
-		return resp.Content, nil
-	}
-}
-
 // TokenCallback 流式输出的回调函数类型
 type TokenCallback func(token string)
-
-type tokenBudget struct {
-	limit int
-	used  int
-	mu    sync.Mutex
-}
-
-func newTokenBudget(limit int) *tokenBudget {
-	return &tokenBudget{limit: limit}
-}
-
-func (b *tokenBudget) Add(meta *schema.ResponseMeta) error {
-	if b == nil || b.limit <= 0 || meta == nil || meta.Usage == nil {
-		return nil
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	used := meta.Usage.TotalTokens
-	if used == 0 {
-		used = meta.Usage.PromptTokens + meta.Usage.CompletionTokens
-	}
-	b.used += used
-	if b.used > b.limit {
-		return fmt.Errorf("max total tokens exceeded: %d > %d", b.used, b.limit)
-	}
-	return nil
-}
-
-func (b *tokenBudget) Usage() (used int, limit int) {
-	if b == nil {
-		return 0, 0
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.used, b.limit
-}
 
 type toolRepeatGuard struct {
 	limit    int
@@ -265,7 +124,19 @@ func (g *toolRepeatGuard) Check(toolCalls []schema.ToolCall) error {
 		return nil
 	}
 	for _, tc := range toolCalls {
-		key := toolRepeatKey(tc)
+		args := tc.Function.Arguments
+		trimmed := strings.TrimSpace(args)
+		key := tc.Function.Name + ":"
+		if trimmed != "" {
+			var decoded interface{}
+			if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+				key += trimmed
+			} else if normalized, err := json.Marshal(decoded); err == nil {
+				key += string(normalized)
+			} else {
+				key += trimmed
+			}
+		}
 		g.attempts[key]++
 		if g.attempts[key] > g.limit {
 			return fmt.Errorf("repeated tool call detected after %d attempts: %s", g.limit, tc.Function.Name)
@@ -274,35 +145,13 @@ func (g *toolRepeatGuard) Check(toolCalls []schema.ToolCall) error {
 	return nil
 }
 
-func toolRepeatKey(tc schema.ToolCall) string {
-	return tc.Function.Name + ":" + normalizeToolArguments(tc.Function.Arguments)
-}
-
-func normalizeToolArguments(arguments string) string {
-	trimmed := strings.TrimSpace(arguments)
-	if trimmed == "" {
-		return ""
-	}
-	var decoded interface{}
-	if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
-		return trimmed
-	}
-	normalized, err := json.Marshal(decoded)
-	if err != nil {
-		return trimmed
-	}
-	return string(normalized)
-}
-
-func mergeResponseMeta(current *schema.ResponseMeta, incoming *schema.ResponseMeta) *schema.ResponseMeta {
+func mergeMeta(current *schema.ResponseMeta, incoming *schema.ResponseMeta) *schema.ResponseMeta {
 	if incoming == nil {
 		return current
 	}
 	if current == nil {
-		return &schema.ResponseMeta{
-			FinishReason: incoming.FinishReason,
-			Usage:        cloneUsage(incoming.Usage),
-		}
+		cloned := *incoming
+		return &cloned
 	}
 	if incoming.FinishReason != "" {
 		current.FinishReason = incoming.FinishReason
@@ -311,7 +160,8 @@ func mergeResponseMeta(current *schema.ResponseMeta, incoming *schema.ResponseMe
 		return current
 	}
 	if current.Usage == nil {
-		current.Usage = cloneUsage(incoming.Usage)
+		cloned := *incoming.Usage
+		current.Usage = &cloned
 		return current
 	}
 	if incoming.Usage.PromptTokens > current.Usage.PromptTokens {
@@ -328,14 +178,6 @@ func mergeResponseMeta(current *schema.ResponseMeta, incoming *schema.ResponseMe
 		current.Usage.TotalTokens = current.Usage.PromptTokens + current.Usage.CompletionTokens
 	}
 	return current
-}
-
-func cloneUsage(usage *schema.TokenUsage) *schema.TokenUsage {
-	if usage == nil {
-		return nil
-	}
-	cloned := *usage
-	return &cloned
 }
 
 // RunStream 运行 Agent 并流式输出响应
@@ -406,14 +248,14 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		collector := newStreamToolCollector()
 		var responseMeta *schema.ResponseMeta
 
-		toolQueue := make(chan streamToolRequest, 8)
-		toolResultCh := make(chan streamToolResult, 8)
+		toolQueue := make(chan toolRequest, 8)
+		toolResultCh := make(chan execResult, 8)
 		queuedCalls := make([]schema.ToolCall, 0)
 
 		go func() {
 			for req := range toolQueue {
-				result, execErr := a.executeToolCall(ctx, req.tc, req.idx, req.idx+1, false)
-				toolResultCh <- streamToolResult{idx: req.idx, tc: req.tc, result: result, err: execErr}
+				result, execErr := a.exeToolCall(ctx, req.tc, req.idx, req.idx+1, false)
+				toolResultCh <- execResult{idx: req.idx, tc: req.tc, result: result, err: execErr}
 			}
 			close(toolResultCh)
 		}()
@@ -430,7 +272,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			}
 
 			chunkCount++
-			responseMeta = mergeResponseMeta(responseMeta, chunk.ResponseMeta)
+			responseMeta = mergeMeta(responseMeta, chunk.ResponseMeta)
 			// if chunkCount <= 10 {
 			// 	logger.DebugTag("STREAM", "Chunk#%d: len=%d role=%s tools=%d",
 			// 		chunkCount, len(chunk.Content), chunk.Role, len(chunk.ToolCalls))
@@ -454,7 +296,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 					}
 					idx := len(queuedCalls)
 					queuedCalls = append(queuedCalls, tc)
-					toolQueue <- streamToolRequest{idx: idx, tc: tc}
+					toolQueue <- toolRequest{idx: idx, tc: tc}
 				}
 			}
 
@@ -471,14 +313,10 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 		content := fullContent.String()
 		logger.DebugTag("STREAM", "Complete, total_len=%d", len(content))
-		if err := a.tokenBudget.Add(responseMeta); err != nil {
-			for range toolResultCh {
-			}
-			return "", err
-		}
+		a.tokenBudget.Add(responseMeta)
 
 		toolCalls := collector.RunnableCalls()
-		toolResults := make([]streamToolResult, len(queuedCalls))
+		toolResults := make([]execResult, len(queuedCalls))
 		for res := range toolResultCh {
 			toolResults[res.idx] = res
 		}
@@ -504,7 +342,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			}
 
 			for _, res := range toolResults {
-				if err := a.addToolResultToContext(messageCtx, res.tc, res.result, res.err); err != nil {
+				if err := a.addToolResult(messageCtx, res.tc, res.result, res.err); err != nil {
 					return "", fmt.Errorf("tool execution failed: %w", err)
 				}
 			}
@@ -527,11 +365,6 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 	}
 }
 
-// exeTools 执行工具调用（支持并发）
-// 参数:
-//   - ctx: Go 标准上下文
-//   - messageCtx: 消息上下文
-//
 // GetSkillManager 获取技能管理器
 func (a *Agent) GetSkillManager() *skill.Manager {
 	return a.skillManager
@@ -552,7 +385,14 @@ func (a *Agent) GetModel() model.ToolCallingChatModel {
 // SetTools 设置工具列表
 func (a *Agent) SetTools(tools []tool.BaseTool) {
 	a.tools = tools
-	a.toolMap = buildToolMap(tools)
+	a.toolMap = make(map[string]tool.BaseTool)
+	for _, t := range tools {
+		info, err := t.Info(context.Background())
+		if err != nil {
+			continue
+		}
+		a.toolMap[info.Name] = t
+	}
 }
 
 func (a *Agent) Name() string {
@@ -569,18 +409,7 @@ func (a *Agent) TokenUsage() (used int, limit int) {
 	return a.tokenBudget.Usage()
 }
 
-func buildToolMap(tools []tool.BaseTool) map[string]tool.BaseTool {
-	toolMap := make(map[string]tool.BaseTool)
-	for _, t := range tools {
-		info, err := t.Info(context.Background())
-		if err != nil {
-			continue
-		}
-		toolMap[info.Name] = t
-	}
-	return toolMap
-}
-
+// 初始化，注入系统提示词，注入skill提示词。
 func (a *Agent) ensureConversationSetup(messageCtx *agentctx.Context) error {
 	messages, _ := a.ctxManager.GetMessages(messageCtx)
 	if len(messages) > 0 {

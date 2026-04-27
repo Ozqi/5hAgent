@@ -1,14 +1,17 @@
+// markdown_stream.go - Markdown 流式渲染
+// 功能：逐步输出 Markdown（代码块/标题/列表/引用），用于终端着色展示
+// 主要类型：MarkdownStreamRenderer
+// 导出函数：NewMarkdownStreamRenderer, renderMarkdownForTerminal
 package cli
 
 import (
-	"fmt"
-	"io"
 	"regexp"
 	"strings"
 
 	"github.com/lzq/5hAgent/internal/logger"
 )
 
+/*
 type MarkdownStreamRenderer struct {
 	w       io.Writer
 	prefix  string
@@ -52,6 +55,7 @@ func (r *MarkdownStreamRenderer) write(text string) {
 	}
 	fmt.Fprint(r.w, text)
 }
+*/
 
 func splitReadyMarkdown(input string, force bool) (string, string) {
 	if force {

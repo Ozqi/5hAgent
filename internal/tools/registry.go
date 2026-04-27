@@ -1,3 +1,6 @@
+// registry.go - 工具注册表
+// 功能：集中注册基础工具、Task 工具、Skill 工具、MCP 工具
+// 导出函数：InitRegistry, GetAllTools, GetToolByName, RegisterMCPTools
 package tools
 
 import (
@@ -6,9 +9,9 @@ import (
 	"sync"
 
 	"github.com/cloudwego/eino/components/tool"
-	"github.com/lzq/5hAgent/internal/agent"
 	"github.com/lzq/5hAgent/internal/mcp"
 	"github.com/lzq/5hAgent/internal/skill"
+	"github.com/lzq/5hAgent/internal/task"
 	"github.com/lzq/5hAgent/internal/toolmeta"
 )
 
@@ -17,7 +20,7 @@ var registry []tool.BaseTool
 var registryMu sync.RWMutex
 
 // InitRegistry 初始化工具注册表（需要在 main 中调用）
-func InitRegistry(taskList *agent.TaskList, skillMgr *skill.Manager) error {
+func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 

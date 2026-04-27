@@ -1,5 +1,7 @@
 # Tools - 工具系统
 
+> 如何构造tools给LLM使用
+
 ```text
 internal/tools/*.go
   -> registry.go 统一注册
@@ -16,18 +18,18 @@ internal/agent/tool_use.go
 
 ## 当前已注册工具
 
-| 工具名 | 文件 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `base.read_file` | `read_file.go` | 读 | 读取文件内容，支持 offset/limit |
-| `base.write_file` | `write_file.go` | 写 | 创建或覆盖文件，自动创建父目录 |
-| `base.edit` | `edit.go` | 写 | 精确字符串替换 |
-| `base.glob` | `glob.go` | 读 | 文件模式匹配 |
-| `base.grep` | `grep.go` | 读 | 文本搜索 |
-| `base.list_dir` | `list_dir.go` | 读 | 列目录 |
-| `base.exec_shell` | `exec_shell.go` | 写 | 执行 shell 命令 |
-| `task.task` | `task_tool.go` | 混合 | 统一任务管理入口，按 `action` 分流 |
-| `skill.skill` | `skill_tool.go` | 写 | 启用或禁用 skill |
-| `mcp.<server>.<tool>` | `mcp_tool.go` | 取决于远端 | 外部 MCP server 提供的远端工具包装 |
+| 工具名                | 文件            | 类型       | 说明                               |
+| --------------------- | --------------- | ---------- | ---------------------------------- |
+| `base.read_file`      | `read_file.go`  | 读         | 读取文件内容，支持 offset/limit    |
+| `base.write_file`     | `write_file.go` | 写         | 创建或覆盖文件，自动创建父目录     |
+| `base.edit`           | `edit.go`       | 写         | 精确字符串替换                     |
+| `base.glob`           | `glob.go`       | 读         | 文件模式匹配                       |
+| `base.grep`           | `grep.go`       | 读         | 文本搜索                           |
+| `base.list_dir`       | `list_dir.go`   | 读         | 列目录                             |
+| `base.exec_shell`     | `exec_shell.go` | 写         | 执行 shell 命令                    |
+| `task.task`           | `task_tool.go`  | 混合       | 统一任务管理入口，按 `action` 分流 |
+| `skill.skill`         | `skill_tool.go` | 写         | 启用或禁用 skill                   |
+| `mcp.<server>.<tool>` | `mcp_tool.go`   | 取决于远端 | 外部 MCP server 提供的远端工具包装 |
 
 当前真实注册结果见 [registry.go](../internal/tools/registry.go)。
 
@@ -43,7 +45,7 @@ internal/agent/tool_use.go
 
 - 统一暴露 `task.task` 工具。
 - `action` 支持 `create`、`update`、`get`、`list`、`delete`。
-- 底层调用 `internal/agent/tasklist.go`。
+- 底层调用 `internal/task/tasklist.go`。
 
 ### `skill_tool.go`
 
@@ -112,4 +114,4 @@ internal/agent/tool_use.go
 - [skill_tool.go](../internal/tools/skill_tool.go)
 - [mcp_tool.go](../internal/tools/mcp_tool.go)
 - [tool_use.go](../internal/agent/tool_use.go)
-- [tasklist.go](../internal/agent/tasklist.go)
+- [tasklist.go](../internal/task/tasklist.go)

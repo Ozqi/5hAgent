@@ -1,3 +1,7 @@
+// exec_shell.go - Shell 执行工具
+// 功能：执行 shell 命令，返回 stdout/stderr/returncode
+// 主要类型：ExecShellInput, ExecShellOutput
+// 导出函数：NewExecShellTool
 package tools
 
 import (

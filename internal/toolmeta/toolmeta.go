@@ -1,3 +1,7 @@
+// toolmeta.go - 工具元数据注册
+// 功能：工具分类（base/task/skill/mcp）、只读属性、显示名称
+// 主要类型：Meta, Category
+// 导出函数：Reset, Register, Lookup, DisplayName, IsReadOnly
 package toolmeta
 
 import (

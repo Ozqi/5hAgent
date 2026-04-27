@@ -1,5 +1,6 @@
-// 5hAgent 是一个轻量级 AI Agent 框架的命令行工具
-// 基于 Go + Eino 框架实现，支持工具调用和交互式对话
+// main.go - 5hAgent 程序入口
+// 功能：初始化 Agent、TUI、工具注册，启动交互式对话界面
+// 导出函数：main, runInteractive
 package main
 
 import (
@@ -13,6 +14,7 @@ import (
 	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/llm"
 	"github.com/lzq/5hAgent/internal/logger"
+	"github.com/lzq/5hAgent/internal/task"
 	"github.com/lzq/5hAgent/internal/tools"
 	"github.com/lzq/5hAgent/internal/utils"
 	"github.com/spf13/cobra"
@@ -43,7 +45,7 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 
 	taskListPath := "task.md"
-	taskList, err := agent.NewTaskList(taskListPath)
+	taskList, err := task.NewTaskList(taskListPath)
 	if err != nil {
 		cli.PrintError(fmt.Errorf("failed to initialize task list: %w", err))
 		os.Exit(1)
