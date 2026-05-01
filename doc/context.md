@@ -4,7 +4,13 @@
 
 ```mermaid
 flowchart TB
-    subgraph Context["Context 结构"]
+    subgraph Session["Session 持久化"]
+        store["Store"]
+        session["Session"]
+        jsonl["*.jsonl 文件"]
+    end
+
+    subgraph Context["Context 内存管理"]
         ctx["Context<br/>messages[]"]
     end
 
@@ -25,6 +31,8 @@ flowchart TB
         archive["writeCompressArchive()"]
     end
 
+    store --> session
+    session --> jsonl
     create --> ctx
     clone --> ctx
     add --> ctx
@@ -39,7 +47,65 @@ flowchart TB
 
 ## 位置
 
-- `internal/context/ctx.go`
+- `internal/context/ctx.go` - Context 内存管理
+- `internal/context/session.go` - Session 持久化
+
+## Session 持久化
+
+### 核心类型
+
+```go
+// Session 代表一次完整的对话会话
+type Session struct {
+    ID        string             // 唯一标识符 (格式: YYYYMMDDHHMMSS)
+    Title     string             // 会话标题（从第一条用户消息生成）
+    CreatedAt time.Time          // 创建时间
+    UpdatedAt time.Time          // 最后更新时间
+    messages  []*schema.Message  // 消息历史（内存缓存）
+    filePath  string             // JSONL 文件路径
+    dirty     bool               // 是否有未保存的修改
+}
+
+// Store 管理多个 Session 的持久化存储
+type Store struct {
+    dir   string              // 存储目录
+    cache map[string]*Session // 内存缓存
+}
+```
+
+### JSONL 文件格式
+
+```
+{"type":"session","id":"20260501120000","title":"用户消息摘要...","created_at":"...","updated_at":"..."}
+{"role":"user","content":"用户消息内容"}
+{"role":"assistant","content":"助手回复"}
+{"role":"tool","content":"工具调用结果"}
+...
+```
+
+### Store 接口
+
+| 方法 | 说明 |
+|------|------|
+| `NewStore(dir)` | 创建或打开会话存储 |
+| `GetOrCreate(id)` | 获取或创建 Session（空 id 生成新会话） |
+| `List()` | 列出所有会话（按更新时间倒序） |
+| `Delete(id)` | 删除会话 |
+| `Append(session, msg)` | 追加消息并持久化 |
+| `GetMessages(session)` | 获取会话消息 |
+| `LoadMessages(session)` | 从文件加载消息 |
+
+### Session 生命周期
+
+```
+创建 → 运行 → 持久化（每条消息） → 恢复（下次启动）
+   ↓         ↓
+ 生成ID    生成Title（首条用户消息）
+```
+
+### 存储位置
+
+默认：`~/.5hagent/sessions/`
 
 ## 核心类型
 
@@ -171,5 +237,6 @@ if a.ctxManager.ShouldCompress(messageCtx) {
 ## 相关代码
 
 - [ctx.go](../internal/context/ctx.go)
+- [session.go](../internal/context/session.go)
 - [agent.go](../internal/agent/agent.go)
 - [compress.go](../internal/commands/compress.go)
