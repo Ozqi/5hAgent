@@ -281,7 +281,44 @@ Phase 1 ──┬── Phase 2 ─── Phase 3 ─── Phase 4
 
 | 指标 | 现状 | 重构后 |
 |------|------|--------|
-| 代码行数 (tool_use.go) | ~400 | ~150 |
-| 代码行数 (agent.go) | ~480 | ~350 |
+| 代码行数 (tool_use.go) | ~400 | ~280 |
+| 代码行数 (agent.go) | ~480 | ~400 |
 | 测试覆盖 | 手动 | 可用 Eino 测试 |
 | 可观测性 | 有限 | Callback 完整 |
+
+---
+
+## 当前进度
+
+### ✅ Phase 1: Callback 日志系统 (已完成)
+- 新增 `callbacks.go`: AgentCallbacks 处理器
+- 模型/工具调用日志统一管理
+- Token 统计
+
+### ✅ Phase 2: 简化 streamToolCollector (已完成)
+- 使用 `map[int]` 替代 slice + ID 映射
+- 利用 Index 字段简化合并逻辑
+- 代码从 141 行减少到 93 行
+
+### ✅ Phase 3: 删除未使用代码 (已完成)
+- 移除 `exeTools()` (未被调用)
+- 移除 `exeToolsPar()` (未被调用)
+- 移除 `isReadOnly()` (未被调用)
+- tool_use.go 从 408 行减少到 280 行
+
+### ⏸️ Phase 4: ToolsNode 架构 (待定)
+- 当前流式执行模式与 ToolsNode 批量执行模式不同
+- 需要较大架构变更
+- 建议: 保持当前实现，未来按需迁移
+
+---
+
+## Git 提交记录
+
+```bash
+# Phase 1: Callback 系统
+git commit -m "refactor(agent): Phase 1 - 引入 Eino Callback 系统"
+
+# Phase 2-3: 简化工具调用代码
+git commit -m "refactor(agent): Phase 2-3 简化工具调用代码"
+```
