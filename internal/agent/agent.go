@@ -273,7 +273,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 		var fullContent strings.Builder
 		chunkCount := 0
-		collector := newStreamToolCollector()
+		collector := newToolCollector()
 		var responseMeta *schema.ResponseMeta
 
 		toolQueue := make(chan toolRequest, 8)
