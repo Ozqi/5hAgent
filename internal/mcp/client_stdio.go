@@ -40,14 +40,14 @@ type jsonrpcError struct {
 
 // StdioClient MCP stdio 传输客户端
 type StdioClient struct {
-	serverName  string
-	command     string
-	args        []string
-	env         map[string]string
+	serverName string
+	command    string
+	args       []string
+	env        map[string]string
 
-	cmd         *exec.Cmd
-	stdin       io.Writer
-	stdout      *bufio.Reader
+	cmd    *exec.Cmd
+	stdin  io.Writer
+	stdout *bufio.Reader
 
 	mu          sync.RWMutex
 	requestID   atomic.Int64

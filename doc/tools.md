@@ -1,111 +1,231 @@
 # Tools - 工具系统
 
-> 如何构造tools给LLM使用
+## 架构
 
-```text
-internal/tools/*.go
-  -> registry.go 统一注册
-internal/agent/tool_use.go
-  -> 只读工具并发
-  -> 写工具串行
+```mermaid
+flowchart TB
+    subgraph Registry["工具注册表"]
+        init["InitRegistry()"]
+        base["base.*<br/>7个内置工具"]
+        task["task.task<br/>任务工具"]
+        skill["skill.skill<br/>技能工具"]
+        mcp["mcp.*<br/>MCP工具"]
+    end
+
+    subgraph Meta["元数据"]
+        tm["toolmeta<br/>分类/只读"]
+    end
+
+    subgraph Dispatch["调度层"]
+        exec["exeTools()"]
+        par["exeToolsPar()"]
+        serial["串行执行"]
+    end
+
+    init --> base
+    init --> task
+    init --> skill
+    init --> mcp
+    init --> tm
+
+    exec --> par
+    exec --> serial
 ```
 
 ## 位置
 
-- `internal/tools/*.go`
-- `internal/tools/registry.go`
-- `internal/agent/tool_use.go`
+- `internal/tools/registry.go` - 工具注册表
+- `internal/agent/tool_use.go` - 工具调度
+- `internal/toolmeta/toolmeta.go` - 工具元数据
 
-## 当前已注册工具
+## 已注册工具
 
-| 工具名                | 文件            | 类型       | 说明                               |
-| --------------------- | --------------- | ---------- | ---------------------------------- |
-| `base.read_file`      | `read_file.go`  | 读         | 读取文件内容，支持 offset/limit    |
-| `base.write_file`     | `write_file.go` | 写         | 创建或覆盖文件，自动创建父目录     |
-| `base.edit`           | `edit.go`       | 写         | 精确字符串替换                     |
-| `base.glob`           | `glob.go`       | 读         | 文件模式匹配                       |
-| `base.grep`           | `grep.go`       | 读         | 文本搜索                           |
-| `base.list_dir`       | `list_dir.go`   | 读         | 列目录                             |
-| `base.exec_shell`     | `exec_shell.go` | 写         | 执行 shell 命令                    |
-| `task.task`           | `task_tool.go`  | 混合       | 统一任务管理入口，按 `action` 分流 |
-| `skill.skill`         | `skill_tool.go` | 写         | 启用或禁用 skill                   |
-| `mcp.<server>.<tool>` | `mcp_tool.go`   | 取决于远端 | 外部 MCP server 提供的远端工具包装 |
+| 工具名 | 文件 | 类型 | 说明 |
+|--------|------|------|------|
+| `base.read_file` | `read_file.go` | 只读 | 读取文件内容，支持 offset/limit |
+| `base.write_file` | `write_file.go` | 写 | 创建或覆盖文件，自动创建父目录 |
+| `base.edit` | `edit.go` | 写 | 精确字符串替换 |
+| `base.glob` | `glob.go` | 只读 | 文件模式匹配（* 和 **） |
+| `base.grep` | `grep.go` | 只读 | 文本搜索，支持正则 |
+| `base.list_dir` | `list_dir.go` | 只读 | 列目录（递归/非递归） |
+| `base.exec_shell` | `exec_shell.go` | 写 | 执行 shell 命令 |
+| `task.task` | `task_tool.go` | 混合 | 统一任务管理入口 |
+| `skill.skill` | `skill_tool.go` | 写 | 启用或禁用技能 |
+| `mcp.<server>.<tool>` | `mcp_tool.go` | 取决于远端 | MCP Server 提供的工具 |
 
-当前真实注册结果见 [registry.go](../internal/tools/registry.go)。
+## InitRegistry
 
-## 关键文件
+入口函数（[registry.go:23-66](internal/tools/registry.go)）：
 
-### `registry.go`
+```go
+func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
+    // 注册 base 工具
+    tools := []struct {
+        meta toolmeta.Meta
+        fn   func() (tool.BaseTool, error)
+    }{
+        {meta: toolmeta.Meta{..., FullName: "base.read_file"}, fn: NewReadFileTool},
+        {meta: toolmeta.Meta{..., FullName: "base.write_file"}, fn: NewWriteFileTool},
+        // ...
+    }
+    for _, t := range tools {
+        tool, err := t.fn()
+        registry = append(registry, tool)
+        toolmeta.Register(t.meta)
+    }
 
-- `InitRegistry(taskList, skillMgr)` 负责构造并注册所有工具。
-- `GetAllTools()` 返回当前工具切片。
-- `GetToolByName(name)` 提供按名查找。
+    // 注册 task 工具
+    registry = append(registry, NewTaskTool(taskList))
+    toolmeta.Register(toolmeta.Meta{..., FullName: "task.task"})
 
-### `task_tool.go`
+    // 注册 skill 工具
+    registry = append(registry, NewSkillTool(skillMgr))
+    toolmeta.Register(toolmeta.Meta{..., FullName: "skill.skill"})
+}
+```
 
-- 统一暴露 `task.task` 工具。
-- `action` 支持 `create`、`update`、`get`、`list`、`delete`。
-- 底层调用 `internal/task/tasklist.go`。
+## 关键函数
 
-### `skill_tool.go`
+| 函数 | 说明 |
+|------|------|
+| `InitRegistry(taskList, skillMgr)` | 初始化注册表 |
+| `GetAllTools()` | 获取所有工具 |
+| `GetToolByName(name)` | 按名称查找工具 |
+| `RegisterMCPTools(server, client, specs)` | 注册 MCP 工具 |
 
-- 暴露 `skill.skill` 工具。
-- `action` 支持 `enable`、`disable`。
-- 底层调用 `internal/skill/skill.go`。
+## 工具实现类型
 
-### `mcp_tool.go`
+### EnhancedInvokableTool
 
-- 暴露统一的远端 MCP 工具包装。
-- 完整名称格式为 `mcp.<server>.<tool>`。
-- 底层通过 `internal/mcp.Client` 调用外部 server。
-- 当前仓库只实现 foundation，还没有接入真实 stdio MCP 协议。
+框架自动解码 JSON 到 Go struct（[read_file.go](internal/tools/read_file.go)）：
+
+```go
+func NewReadFileTool() (tool.BaseTool, error) {
+    return utils.InferEnhancedTool(
+        "base.read_file",
+        "Reads file content...",
+        func(ctx context.Context, input ReadFileInput) (*schema.ToolResult, error) {
+            // input 已经是解析好的 Go struct
+            data, err := os.ReadFile(input.Path)
+            return &schema.ToolResult{
+                Parts: []*schema.ToolPart{{Type: schema.ToolPartTypeText, Text: string(data)}},
+            }, nil
+        },
+    )
+}
+
+type ReadFileInput struct {
+    Path   string `json:"path"`
+    Offset int    `json:"offset,omitempty"`
+    Limit  int    `json:"limit,omitempty"`
+}
+```
+
+### InvokableTool
+
+工具自己解析 JSON（[task_tool.go](internal/tools/task_tool.go)）：
+
+```go
+func (t *TaskTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
+    return &schema.ToolInfo{
+        Name: "task",
+        Desc: "Manage tasks...",
+        ParamsOneOf: schema.NewParamsOneOfByParams(...),
+    }, nil
+}
+
+func (t *TaskTool) InvokableRun(ctx context.Context, args string) (string, error) {
+    var input struct {
+        Action string `json:"action"`
+        ID     string `json:"id,omitempty"`
+    }
+    if err := json.Unmarshal([]byte(args), &input); err != nil {
+        return "", err
+    }
+    // 手动解析并执行
+}
+```
+
+## 工具调用接口适配
+
+Agent 层统一调用（[tool_use.go:251-270](internal/agent/tool_use.go)）：
+
+```go
+func (a *Agent) invokeTool(ctx, t, tc) (string, error) {
+    if enhanced, ok := t.(tool.EnhancedInvokableTool); ok {
+        toolArg := &schema.ToolArgument{Text: tc.Function.Arguments}
+        result, err := enhanced.InvokableRun(ctx, toolArg)
+        return formatToolResult(result), nil
+    }
+
+    if invokable, ok := t.(tool.InvokableTool); ok {
+        return invokable.InvokableRun(ctx, tc.Function.Arguments)
+    }
+}
+```
 
 ## 并发执行策略
 
-工具调度在 [tool_use.go](../internal/agent/tool_use.go)。
+| 分类 | 工具 | 策略 |
+|------|------|------|
+| 只读 | `base.read_file`, `base.glob`, `base.grep`, `base.list_dir` | 并发 |
+| 写 | `base.write_file`, `base.edit`, `base.exec_shell` | 串行 |
+| 任务只读 | `task.task get/list` | 并发 |
+| 任务写 | `task.task create/update/delete/archive/reopen` | 串行 |
+| 技能 | `skill.skill` | 串行 |
+| MCP | 取决于远端定义 | 按 `ReadOnly` 标记 |
 
-- 只读工具走并发执行。
-- 写工具走串行执行。
-- 结果会按原始调用顺序写回上下文。
+## 只读判断逻辑
 
-当前只读能力由 `toolmeta` 元信息 + `task.task` 的 `action` 共同决定。当前只读工具包括：
+```go
+func isReadOnly(tc schema.ToolCall) bool {
+    // 第一层：toolmeta 注册表
+    if toolmeta.IsReadOnly(tc.Function.Name) {
+        return true
+    }
 
-- `base.read_file`
-- `base.glob`
-- `base.grep`
-- `base.list_dir`
+    // 第二层：task.task 根据 action 判断
+    if tc.Function.Name == "task.task" || tc.Function.Name == "task" {
+        var input struct{ Action string `json:"action"` }
+        if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err != nil {
+            return false
+        }
+        return input.Action == "get" || input.Action == "list"
+    }
 
-另外，统一 `task.task` 工具会在运行时进一步按参数分类：
-
-- `{"action":"get"}` -> 只读并发
-- `{"action":"list"}` -> 只读并发
-- `create` / `update` / `delete` -> 串行写入
-
-## 当前实现备注
-
-这里现在只保留新命名：
-
-- 本地基础工具统一使用 `base.*`
-- 任务工具统一使用 `task.task`
-- skill 工具统一使用 `skill.skill`
-- MCP 工具使用 `mcp.<server>.<tool>`
-
-## 工具返回约定
-
-- `base.read_file`、`base.write_file`、`base.edit`、`base.exec_shell` 等工具多使用 JSON 文本作为结果体。
-- 读写类工具优先实现 `tool.EnhancedInvokableTool`。
-- `invokeTool()` 会优先走 `EnhancedInvokableTool`，再降级到 `InvokableTool`。
+    return false
+}
+```
 
 ## 添加新工具
 
-1. 在 `internal/tools/` 新增实现文件。
-2. 定义输入输出结构体和 JSON tag。
-3. 实现 `NewXxxTool()`。
-4. 在 `InitRegistry(...)` 中注册。
-5. 如果工具确实无副作用，在注册时更新对应 `toolmeta.Meta.ReadOnly`。
-6. 更新本文档和 `README.md`。
+1. 在 `internal/tools/` 创建实现文件
+2. 定义输入输出结构体
+3. 实现 `NewXxxTool()` 工厂函数
+4. 在 `InitRegistry()` 中注册
+5. 更新 `toolmeta.Meta.ReadOnly` 如需要
 
-对于 MCP 工具，当前入口是 `RegisterMCPTools(serverName, client, specs)`，由外部 server discovery 代码先拿到 tool 列表，再统一注册。
+示例（[exec_shell.go](internal/tools/exec_shell.go)）：
+
+```go
+type ExecShellInput struct {
+    Command string `json:"command" jsonschema:"required,description=Shell command to execute"`
+}
+
+func NewExecShellTool() (tool.BaseTool, error) {
+    return utils.InferEnhancedTool(
+        "base.exec_shell",
+        "Executes a shell command...",
+        func(ctx context.Context, input ExecShellInput) (*schema.ToolResult, error) {
+            cmd := exec.CommandContext(ctx, "sh", "-c", input.Command)
+            output, err := cmd.CombinedOutput()
+            return &schema.ToolResult{
+                Parts: []*schema.ToolPart{{Type: schema.ToolPartTypeText, Text: string(output)}},
+            }, err
+        },
+    )
+}
+```
 
 ## 相关代码
 
@@ -114,4 +234,4 @@ internal/agent/tool_use.go
 - [skill_tool.go](../internal/tools/skill_tool.go)
 - [mcp_tool.go](../internal/tools/mcp_tool.go)
 - [tool_use.go](../internal/agent/tool_use.go)
-- [tasklist.go](../internal/task/tasklist.go)
+- [toolmeta.go](../internal/toolmeta/toolmeta.go)

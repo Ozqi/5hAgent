@@ -1,80 +1,125 @@
 # Commands - 斜杠命令
 
-```text
-REPL input
-  -> cmd/5hagent/main.go
-     -> /skill => internal/commands/skill.go
-     -> /task  => internal/commands/task.go
-     -> /compress => internal/commands/compress.go
+## 架构
+
+```mermaid
+flowchart LR
+    subgraph Input["用户输入"]
+        user["/skill<br/>/task<br/>/compress<br/>/mcp"]
+    end
+
+    subgraph Handle["命令处理"]
+        submit["AppModel.submit()"]
+        skill["HandleSkill()"]
+        task["HandleTask()"]
+        compress["HandleCompress()"]
+        mcp["HandleMCP()"]
+    end
+
+    user --> submit
+    submit --> skill
+    submit --> task
+    submit --> compress
+    submit --> mcp
 ```
+
+## 位置
+
+- `internal/commands/skill.go` - `/skill`
+- `internal/commands/task.go` - `/task`
+- `internal/commands/compress.go` - `/compress`
+- `internal/commands/mcp.go` - `/mcp`
 
 ## 概述
 
-这里记录的是 CLI 斜杠命令，不是 LLM tool。
+斜杠命令由 TUI 直接解析处理，不经过 LLM。命令处理在 [tui.go:342-407](internal/cli/tui.go)：
 
-- 斜杠命令由主 REPL 直接解析
-- 不经过 LLM
-- 返回值直接打印到终端
+```go
+func (m *AppModel) submit() tea.Cmd {
+    text := strings.TrimSpace(m.input.Value())
+    
+    if strings.HasPrefix(text, "/skill") {
+        result, err := commands.HandleSkill(text, m.skillMgr)
+        m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: result})
+        return nil
+    }
+    
+    if strings.HasPrefix(text, "/task") {
+        result, err := commands.HandleTask(text, m.taskList)
+        // ...
+    }
+    
+    // ...
+}
+```
 
-## 当前命令
+## /skill 命令
 
-### `/skill`
+| 命令 | 说明 |
+|------|------|
+| `/skill list` | 列出所有技能 |
+| `/skill enable <name>` | 启用技能 |
+| `/skill disable <name>` | 禁用技能 |
 
-文件：`internal/commands/skill.go`
+底层调用 [skill.Manager](../internal/skill/skill.go)。
 
-支持：
+## /task 命令
 
-- `/skill list`
-- `/skill enable <name>`
-- `/skill disable <name>`
+| 命令 | 说明 |
+|------|------|
+| `/task list [status]` | 列出任务 |
+| `/task create <id> <title> <description>` | 创建任务 |
+| `/task update <id> <status>` | 更新状态 |
+| `/task get <id>` | 获取任务详情 |
+| `/task delete <id>` | 删除任务 |
+| `/task archive <id>` | 归档任务 |
+| `/task reopen <id> [status]` | 重新打开 |
 
-底层依赖：`internal/skill/skill.go`
+底层调用 [task.TaskList](../internal/task/tasklist.go)。
 
-### `/task`
+## /compress 命令
 
-文件：`internal/commands/task.go`
+| 命令 | 说明 |
+|------|------|
+| `/compress` | 手动压缩上下文并归档 |
 
-支持：
+底层调用 [context.Manager.ManualCompress](../internal/context/ctx.go)。
 
-- `/task list [status]`
-- `/task create <id> <title> <description>`
-- `/task update <id> <status>`
-- `/task get <id>`
-- `/task delete <id>`
+## /mcp 命令
 
-底层依赖：`internal/task/tasklist.go`
+| 命令 | 说明 |
+|------|------|
+| `/mcp list` | 列出 MCP 服务器 |
+| `/mcp add <name> <command> [args...]` | 添加服务器 |
+| `/mcp remove <name>` | 删除服务器 |
+| `/mcp enable <name>` | 启用服务器 |
+| `/mcp disable <name>` | 禁用服务器 |
 
-## 处理流程
-
-1. REPL 读到一行输入
-2. `main.go` 判断是否以 `/skill`、`/task` 或 `/compress` 开头
-3. 调用对应的 `HandleSkill()`、`HandleTask()` 或 `HandleCompress()`
-4. 函数内部用 `strings.Fields()` 解析参数
-5. 返回结果字符串或错误
+配置文件：`~/.5hAgent/mcp.json`
 
 ## 与 LLM 工具的关系
 
-当前仓库同时存在：
-
-- CLI 命令：`/skill`、`/task`、`/compress`
-- LLM 工具：`skill.skill`、`task.task`
-
-两者职责类似，但入口不同：
+| CLI 命令 | LLM 工具 | 说明 |
+|----------|----------|------|
+| `/skill` | `skill.skill` | 功能相同，入口不同 |
+| `/task` | `task.task` | 功能相同，入口不同 |
+| `/compress` | 无 | 仅 CLI |
+| `/mcp` | 无 | 仅 CLI |
 
 - CLI 命令给用户直接操作
 - LLM 工具给 Agent 自主调用
-- `/compress` 走手动上下文压缩，并把归档写到 `compact/messages/`，同时打印压缩后的当前 ctx
 
 ## 扩展方式
 
 1. 在 `internal/commands/` 新增命令处理文件
-2. 实现 `HandleXxx(...)`
-3. 在 `cmd/5hagent/main.go` 中添加分支
-4. 同步更新本文档
+2. 实现 `HandleXxx(...) (string, error)` 函数
+3. 在 [tui.go](internal/cli/tui.go) 的 `submit()` 中添加分支
+4. 更新本文档
 
 ## 相关代码
 
-- [main.go](../cmd/5hagent/main.go)
+- [tui.go](../internal/cli/tui.go)
 - [skill.go](../internal/commands/skill.go)
 - [task.go](../internal/commands/task.go)
 - [compress.go](../internal/commands/compress.go)
+- [mcp.go](../internal/commands/mcp.go)

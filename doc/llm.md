@@ -1,70 +1,146 @@
-# LLM - 客户端封装
+# LLM - 大语言模型客户端
 
-```text
-.env / env vars
-  -> internal/llm/client.go NewClientFromEnv()
-  -> NewClient()
-  -> claude.NewChatModel(...)
+## 架构
+
+```mermaid
+flowchart LR
+    subgraph Config["配置"]
+        env[".env 或环境变量"]
+    end
+
+    subgraph Create["创建"]
+        load["godotenv.Load()"]
+        config["llm.Config"]
+        client["llm.LLMClient"]
+    end
+
+    subgraph Model["模型"]
+        claude["eino claude.ChatModel"]
+        withtools["model.WithTools()"]
+        stream["Stream()"]
+        generate["Generate()"]
+    end
+
+    env --> load
+    load --> config
+    config --> client
+    client --> claude
+    claude --> withtools
+    withtools --> stream
+    withtools --> generate
 ```
 
 ## 位置
 
 - `internal/llm/client.go`
 - `internal/llm/client_test.go`
-- `.env.example`
-
-## 概述
-
-当前 LLM 封装很薄，职责只有两层：
-
-- 从环境变量构造 `Config`
-- 调用 Eino Claude 兼容 chat model
 
 ## 核心类型
 
-### `Config`
+### Config
 
-- `APIKey`
-- `BaseURL`
-- `Model`
-- `MaxTokens`
+```go
+type Config struct {
+    APIKey    string  // API Key
+    BaseURL   string  // Base URL
+    Model     string  // 模型名称
+    MaxTokens int     // 最大 token 数
+}
+```
 
-### `LLMClient`
+### LLMClient
 
-- `GetModel()` 返回底层 `model.ToolCallingChatModel`
-- `GetConfig()` 返回配置
+```go
+type LLMClient struct {
+    config *Config
+    model  model.ToolCallingChatModel
+}
+```
 
-## 环境变量
+## 配置方式
 
-`NewClientFromEnv()` 读取：
+### 环境变量
 
-- `CLAUDE_API_KEY`
-- `CLAUDE_BASE_URL`
-- `CLAUDE_MODEL`
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `CLAUDE_API_KEY` | API Key | - |
+| `CLAUDE_BASE_URL` | Base URL | `https://api.anthropic.com` |
+| `CLAUDE_MODEL` | 模型名 | `claude-sonnet-4-6` |
+| `CLAUDE_MAX_TOKENS` | 最大 token | `4096` |
 
-默认值：
+### .env 文件
 
-- `CLAUDE_BASE_URL=https://api.anthropic.com`
-- `CLAUDE_MODEL=claude-sonnet-4-6`
-- `MaxTokens=4096`
-
-注意：虽然 README 中提到“Claude API 兼容格式”，当前代码默认值仍指向 Anthropic 官方地址；如果要接别的兼容服务，需要自行修改 `.env`。
+```bash
+CLAUDE_API_KEY=your_api_key
+CLAUDE_BASE_URL=https://api.anthropic.com
+CLAUDE_MODEL=claude-sonnet-4-6
+```
 
 ## 创建流程
 
-1. 可选加载 `.env`
-2. 读取环境变量
-3. 组装 `Config`
-4. 调用 `claude.NewChatModel(...)`
-5. 返回 `LLMClient`
+```go
+// 方式 1：从环境变量
+client, err := llm.NewClientFromEnv(ctx, ".env")
 
-## 使用位置
+// 方式 2：直接创建
+client, err := llm.NewClient(ctx, &llm.Config{
+    APIKey:    "...",
+    BaseURL:   "...",
+    Model:     "claude-sonnet-4-6",
+    MaxTokens: 4096,
+})
+```
 
-主程序中由 `cmd/5hagent/main.go` 调用：
+## 使用方式
 
 ```go
-client, err := llm.NewClientFromEnv(ctx, ".env")
+// 获取模型
+model := client.GetModel()
+
+// 绑定工具
+modelWithTools, err := model.WithTools(toolInfos)
+
+// 流式调用
+reader, err := modelWithTools.Stream(ctx, messages)
+for {
+    chunk, err := reader.Recv()
+    if err == io.EOF { break }
+    // 处理 chunk
+}
+
+// 非流式调用
+resp, err := modelWithTools.Generate(ctx, messages)
+```
+
+## 与 Agent 的集成
+
+[main.go](cmd/5hagent/main.go)：
+
+```go
+// 创建客户端
+client, err := llm.NewClient(ctx, &llm.Config{
+    APIKey:    appConfig.LLM.APIKey,
+    BaseURL:   appConfig.LLM.BaseURL,
+    Model:     appConfig.LLM.Model,
+    MaxTokens: appConfig.LLM.MaxTokens,
+})
+
+// 绑定工具
 modelWithTools, err := client.GetModel().WithTools(toolInfos)
+
+// 设置到 Agent
+ag.SetModel(modelWithTools)
+```
+
+## LLM 压缩
+
+LLM 也用于上下文压缩：
+
+```go
+// Agent.RunStream 中
+if a.ctxManager.ShouldCompress(messageCtx) {
+    a.ctxManager.LMCompress(ctx, messageCtx, a.model, "prompt")
+}
 ```
 
 ## 相关代码
@@ -72,4 +148,3 @@ modelWithTools, err := client.GetModel().WithTools(toolInfos)
 - [client.go](../internal/llm/client.go)
 - [client_test.go](../internal/llm/client_test.go)
 - [main.go](../cmd/5hagent/main.go)
-- [env example](../.env.example)

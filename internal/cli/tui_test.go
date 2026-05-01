@@ -56,7 +56,7 @@ func TestRenderConversationEntryUsesMarkdownRenderer(t *testing.T) {
 	got := renderConversationEntry(conversationEntry{
 		Role:    roleAssistant,
 		Content: "# Title\n\nHello\nworld with `code`",
-	})
+	}, 80)
 
 	if !strings.Contains(got, "Agent") {
 		t.Fatalf("expected agent prefix, got %q", got)
@@ -76,7 +76,7 @@ func TestRenderToolEntryIsDimAndCompact(t *testing.T) {
 	got := renderConversationEntry(conversationEntry{
 		Role:    roleTool,
 		Content: "\n● base.read_file\n  path: foo/bar.txt\n  lines: 1-20\n",
-	})
+	}, 80)
 
 	if !strings.Contains(got, "tool") || !strings.Contains(got, "read_file") {
 		t.Fatalf("expected compact tool entry, got %q", got)
@@ -97,8 +97,7 @@ func TestAnimatedStateLabel(t *testing.T) {
 }
 
 func TestInitOnlyStartsCursorBlink(t *testing.T) {
-	m := NewAppModel(nil, nil, "", nil, skill.NewManager(""), nil, nil)
-
+	m := NewAppModel(nil, nil, "", nil, skill.NewManager(""), nil, nil, "")
 	if cmd := m.Init(); cmd == nil {
 		t.Fatal("expected init to return cursor blink command")
 	}
@@ -109,7 +108,7 @@ func TestInitOnlyStartsCursorBlink(t *testing.T) {
 }
 
 func TestDoubleEscQuits(t *testing.T) {
-	m := NewAppModel(nil, nil, "", nil, skill.NewManager(""), nil, nil)
+	m := NewAppModel(nil, nil, "", nil, skill.NewManager(""), nil, nil, "")
 	m.width = 100
 	m.height = 30
 
@@ -129,7 +128,7 @@ func TestDoubleEscQuits(t *testing.T) {
 }
 
 func TestEnterSubmitsMessage(t *testing.T) {
-	m := NewAppModel(nil, nil, "", nil, skill.NewManager(""), nil, nil)
+	m := NewAppModel(nil, nil, "", nil, skill.NewManager(""), nil, nil, "")
 	m.width = 100
 	m.height = 30
 	m.input.SetValue("hello")
@@ -151,7 +150,7 @@ func TestEnterSubmitsMessage(t *testing.T) {
 }
 
 func TestTypingUpdatesInputValueAndView(t *testing.T) {
-	m := NewAppModel(nil, nil, "", nil, skill.NewManager(""), nil, nil)
+	m := NewAppModel(nil, nil, "", nil, skill.NewManager(""), nil, nil, "")
 	m.width = 100
 	m.height = 30
 	m.resize()
@@ -169,7 +168,7 @@ func TestTypingUpdatesInputValueAndView(t *testing.T) {
 }
 
 func TestAssistantEntryCreatedOnFirstToken(t *testing.T) {
-	m := NewAppModel(nil, nil, "", nil, skill.NewManager(""), nil, nil)
+	m := NewAppModel(nil, nil, "", nil, skill.NewManager(""), nil, nil, "")
 	m.width = 100
 	m.height = 30
 	m.input.SetValue("hello")
@@ -189,7 +188,7 @@ func TestRenderConversationEntryTrimsTrailingAssistantNewlines(t *testing.T) {
 	got := renderConversationEntry(conversationEntry{
 		Role:    roleAssistant,
 		Content: "Hello\n\n",
-	})
+	}, 80)
 
 	if strings.HasSuffix(got, "\n\n") {
 		t.Fatalf("expected assistant entry not to end with extra blank lines, got %q", got)
@@ -197,7 +196,7 @@ func TestRenderConversationEntryTrimsTrailingAssistantNewlines(t *testing.T) {
 }
 
 func TestSubmitStartsSpinnerTick(t *testing.T) {
-	m := NewAppModel(nil, nil, "", nil, skill.NewManager(""), nil, nil)
+	m := NewAppModel(nil, nil, "", nil, skill.NewManager(""), nil, nil, "")
 	m.width = 100
 	m.height = 30
 	m.input.SetValue("hello")
@@ -215,7 +214,7 @@ func TestSubmitStartsSpinnerTick(t *testing.T) {
 }
 
 func TestInitialSubmitRendersConversationBeforeWindowSize(t *testing.T) {
-	m := NewAppModel(nil, nil, "", nil, skill.NewManager(""), nil, nil)
+	m := NewAppModel(nil, nil, "", nil, skill.NewManager(""), nil, nil, "")
 	m.input.SetValue("hello")
 
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})

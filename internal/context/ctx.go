@@ -28,12 +28,13 @@ const (
 // 每个 Agent 实例拥有独立的 Context
 type Context struct {
 	messages []*schema.Message
+	Session  *Session // 关联的持久化会话（可选）
 }
 
-// Manager 上下文管理器
-// 负责创建、克隆、管理多个 Context 实例
+// Context Manager 负责创建、克隆、管理多个 Context 实例
+// 同时管理 Session 持久化
 type Manager struct {
-	// 最简单的实现，不需要额外字段
+	store *Store // 会话存储
 }
 
 type CompressResult struct {
@@ -43,18 +44,53 @@ type CompressResult struct {
 }
 
 // NewManager 创建新的上下文管理器
+// 参数:
+//   - sessionDir: 会话存储目录（可选，为空则不启用持久化）
+//
 // 返回: Manager 实例
-func NewManager() *Manager {
-	return &Manager{}
+func NewManager(sessionDir ...string) *Manager {
+	var store *Store
+	if len(sessionDir) > 0 && sessionDir[0] != "" {
+		store, _ = NewStore(sessionDir[0])
+	}
+	return &Manager{store: store}
+}
+
+// NewManagerWithStore 创建带有持久化存储的上下文管理器
+// 参数:
+//   - store: 已初始化的会话存储
+//
+// 返回: Manager 实例
+func NewManagerWithStore(store *Store) *Manager {
+	return &Manager{store: store}
 }
 
 // CreateContext 创建新的 Context
+// 参数:
+//   - sessionID: 会话 ID（可选，为空则创建新会话）
+//
 // 返回: Context 实例和可能的错误
-// 功能: 创建一个空的 Context
-func (m *Manager) CreateContext() (*Context, error) {
-	return &Context{
+// 功能: 创建一个 Context，可选择关联到指定会话
+func (m *Manager) CreateContext(sessionID string) (*Context, error) {
+	ctx := &Context{
 		messages: make([]*schema.Message, 0),
-	}, nil
+	}
+
+	if m.store != nil {
+		session, err := m.store.GetOrCreate(sessionID)
+		if err != nil {
+			return nil, err
+		}
+		ctx.Session = session
+
+		// 从 Session 加载已有消息
+		messages, err := m.store.LoadMessages(session)
+		if err == nil && len(messages) > 0 {
+			ctx.messages = messages
+		}
+	}
+
+	return ctx, nil
 }
 
 // CloneContext 克隆 Context（用于 sub-agent）
@@ -88,6 +124,14 @@ func (m *Manager) GetMessages(ctx *Context) ([]*schema.Message, error) {
 // 返回: 可能的错误
 func (m *Manager) AddMessage(ctx *Context, msg *schema.Message) error {
 	ctx.messages = append(ctx.messages, msg)
+
+	// 持久化到 Session
+	if m.store != nil && ctx.Session != nil {
+		if err := m.store.Append(ctx.Session, msg); err != nil {
+			return fmt.Errorf("persist message: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -99,6 +143,66 @@ func (m *Manager) AddMessage(ctx *Context, msg *schema.Message) error {
 func (m *Manager) Clear(ctx *Context) error {
 	ctx.messages = make([]*schema.Message, 0)
 	return nil
+}
+
+// GetStore 返回 Manager 的 Store 实例
+func (m *Manager) GetStore() *Store {
+	return m.store
+}
+
+// GetSessionID 返回 Context 关联的 Session ID
+func (m *Manager) GetSessionID(ctx *Context) string {
+	if ctx.Session == nil {
+		return ""
+	}
+	return ctx.Session.ID
+}
+
+// GetSessionTitle 返回 Context 关联的 Session 标题
+func (m *Manager) GetSessionTitle(ctx *Context) string {
+	if ctx.Session == nil {
+		return ""
+	}
+	return ctx.Session.Title
+}
+
+// ListSessions 列出所有会话
+// 返回: Session 列表和可能的错误
+func (m *Manager) ListSessions() ([]*Session, error) {
+	if m.store == nil {
+		return nil, nil
+	}
+	return m.store.List()
+}
+
+// SwitchSession 切换到指定会话
+// 参数:
+//   - ctx: Context 实例
+//   - sessionID: 目标会话 ID
+//
+// 返回: 新的 Context 实例和可能的错误
+func (m *Manager) SwitchSession(ctx *Context, sessionID string) (*Context, error) {
+	if m.store == nil {
+		return nil, fmt.Errorf("session store not initialized")
+	}
+
+	newCtx := &Context{
+		messages: make([]*schema.Message, 0),
+	}
+
+	session, err := m.store.GetOrCreate(sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	newCtx.Session = session
+
+	messages, err := m.store.LoadMessages(session)
+	if err == nil {
+		newCtx.messages = messages
+	}
+
+	return newCtx, nil
 }
 
 // Compress 压缩上下文（保留最近的消息）

@@ -1,6 +1,6 @@
 // config.go - 配置管理
 // 功能：统一配置加载、验证、默认值管理
-// 主要类型：AppConfig, LLMConfig, AgentConfig, MCPConfig
+// 主要类型：AppConfig, LLMConfig, AgentConfig
 // 导出函数：Load, GetConfigDir, GetConfigPath
 package config
 
@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 
 	"github.com/joho/godotenv"
-	"github.com/lzq/5hAgent/internal/mcp"
 	"gopkg.in/yaml.v3"
 )
 
@@ -18,7 +17,6 @@ import (
 type AppConfig struct {
 	LLM   LLMConfig   `yaml:"llm"`
 	Agent AgentConfig `yaml:"agent"`
-	MCP   MCPConfig   `yaml:"mcp"`
 }
 
 // LLMConfig LLM 提供商配置
@@ -35,11 +33,6 @@ type AgentConfig struct {
 	MaxTotalTokens  int    `yaml:"max_total_tokens"`
 	RepeatToolLimit int    `yaml:"repeat_tool_limit"`
 	Debug           bool   `yaml:"debug"`
-}
-
-// MCPConfig MCP 服务器配置
-type MCPConfig struct {
-	Servers []mcp.ServerConfig `yaml:"servers"`
 }
 
 // 默认值常量
@@ -118,9 +111,6 @@ func defaultConfig() *AppConfig {
 			RepeatToolLimit: DefaultRepeatToolLimit,
 			Debug:           false,
 		},
-		MCP: MCPConfig{
-			Servers: []mcp.ServerConfig{},
-		},
 	}
 }
 
@@ -179,28 +169,6 @@ func createDefaultConfig(path string) error {
 `
 	content := header + string(data)
 
-	// 添加 MCP 示例注释
-	content += `
-# Example MCP server configuration:
-# mcp:
-#   servers:
-#     - name: filesystem
-#       command: npx
-#       args:
-#         - -y
-#         - @modelcontextprotocol/server-filesystem
-#         - /tmp
-#       startup_timeout: 10s
-#     - name: brave_search
-#       command: npx
-#       args:
-#         - -y
-#         - @modelcontextprotocol/server-brave-search
-#       env:
-#         BRAVE_API_KEY: your_key_here
-#       startup_timeout: 10s
-`
-
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
@@ -230,13 +198,6 @@ func (c *AppConfig) Validate() error {
 	}
 	if c.Agent.RepeatToolLimit <= 0 {
 		return fmt.Errorf("agent.repeat_tool_limit must be positive")
-	}
-
-	// 验证 MCP 服务器
-	for i, server := range c.MCP.Servers {
-		if err := server.Validate(); err != nil {
-			return fmt.Errorf("mcp.servers[%d]: %w", i, err)
-		}
 	}
 
 	return nil

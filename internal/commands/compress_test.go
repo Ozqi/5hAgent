@@ -28,7 +28,7 @@ func (m *fakeCompressModel) WithTools(tools []*schema.ToolInfo) (model.ToolCalli
 
 func TestHandleCompressCompressesContext(t *testing.T) {
 	mgr := agentctx.NewManager()
-	msgCtx, err := mgr.CreateContext()
+	msgCtx, err := mgr.CreateContext("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestHandleCompressCompressesContext(t *testing.T) {
 
 func TestHandleCompressRejectsExtraArgs(t *testing.T) {
 	mgr := agentctx.NewManager()
-	msgCtx, err := mgr.CreateContext()
+	msgCtx, err := mgr.CreateContext("")
 	if err != nil {
 		t.Fatal(err)
 	}

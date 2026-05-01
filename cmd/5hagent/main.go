@@ -12,6 +12,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/lzq/5hAgent/internal/agent"
 	"github.com/lzq/5hAgent/internal/cli"
+	"github.com/lzq/5hAgent/internal/commands"
 	"github.com/lzq/5hAgent/internal/config"
 	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/llm"
@@ -24,6 +25,7 @@ import (
 )
 
 var debugMode bool
+var sessionID string
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -33,6 +35,7 @@ func main() {
 		Run:   runInteractive,
 	}
 	rootCmd.Flags().BoolVar(&debugMode, "debug", false, "Enable debug mode with verbose logging")
+	rootCmd.Flags().StringVar(&sessionID, "session", "", "Resume from existing session ID")
 	if err := rootCmd.Execute(); err != nil {
 		cli.PrintError(err)
 		os.Exit(1)
@@ -56,7 +59,7 @@ func runInteractive(cmd *cobra.Command, args []string) {
 
 	ctx := context.Background()
 
-	// 使用配置目录存放 task list
+	// *使用配置目录存放 task list
 	configDir, err := config.GetConfigDir()
 	if err != nil {
 		cli.PrintError(fmt.Errorf("failed to get config directory: %w", err))
@@ -71,7 +74,30 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	}
 	logger.DebugTag("SYS", "Task list initialized at %s", taskListPath)
 
-	// 从配置创建 LLM 客户端
+	// *初始化会话存储
+	sessionDir := filepath.Join(configDir, "sessions")
+	ctxManager := agentctx.NewManager(sessionDir)
+
+	// 处理 --session 参数
+	var messageCtx *agentctx.Context
+	if sessionID != "" {
+		messageCtx, err = ctxManager.CreateContext(sessionID)
+		if err != nil {
+			cli.PrintError(fmt.Errorf("failed to load session %s: %w", sessionID, err))
+			os.Exit(1)
+		}
+		logger.InfoTag("SESSION", "Resumed session: %s", sessionID)
+	} else {
+		messageCtx, err = ctxManager.CreateContext("")
+		if err != nil {
+			cli.PrintError(fmt.Errorf("failed to create context: %w", err))
+			os.Exit(1)
+		}
+		sessionID = ctxManager.GetSessionID(messageCtx)
+		logger.InfoTag("SESSION", "Created new session: %s", sessionID)
+	}
+
+	// *从配置创建 LLM 客户端
 	llmConfig := &llm.Config{
 		APIKey:    appConfig.LLM.APIKey,
 		BaseURL:   appConfig.LLM.BaseURL,
@@ -93,7 +119,7 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	}
 	logger.DebugTag("SYS", "System prompt loaded: %d chars", len(systemPrompt))
 
-	// 从配置创建 Agent
+	// *从配置创建 Agent
 	agentConfig := &agent.Config{
 		Name:            appConfig.Agent.Name,
 		MaxTotalTokens:  appConfig.Agent.MaxTotalTokens,
@@ -112,9 +138,13 @@ func runInteractive(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// 初始化 MCP 服务器
-	mcpClients := make([]*mcp.StdioClient, 0, len(appConfig.MCP.Servers))
-	for _, serverConfig := range appConfig.MCP.Servers {
+	// *初始化 MCP 服务器（从 ~/.5hAgent/mcp.json 加载）
+	mcpServers, err := commands.LoadMCPServers()
+	if err != nil {
+		logger.WarnTag("MCP", "Failed to load MCP config: %v", err)
+	}
+	mcpClients := make([]*mcp.StdioClient, 0, len(mcpServers))
+	for _, serverConfig := range mcpServers {
 		logger.InfoTag("MCP", "Starting MCP server: %s", serverConfig.Name)
 
 		mcpClient, err := mcp.NewStdioClient(ctx, mcp.StdioClientConfig{
@@ -131,7 +161,7 @@ func runInteractive(cmd *cobra.Command, args []string) {
 
 		mcpClients = append(mcpClients, mcpClient)
 
-		// 注册 MCP 工具
+		// *注册 MCP 工具
 		toolSpecs := mcpClient.ListTools()
 		if err := tools.RegisterMCPTools(serverConfig.Name, mcpClient, toolSpecs); err != nil {
 			logger.ErrorTag("MCP", "Failed to register tools for %s: %v", serverConfig.Name, err)
@@ -172,14 +202,7 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	ag.SetModel(modelWithTools)
 	ag.SetTools(allTools)
 
-	ctxManager := agentctx.NewManager()
-	messageCtx, err := ctxManager.CreateContext()
-	if err != nil {
-		cli.PrintError(fmt.Errorf("failed to create message context: %w", err))
-		os.Exit(1)
-	}
-
-	if err := cli.LaunchTUI(ctx, ag, llmConfig.Model, taskList, ag.GetSkillManager(), ctxManager, messageCtx); err != nil {
+	if err := cli.LaunchTUI(ctx, ag, llmConfig.Model, taskList, ag.GetSkillManager(), ctxManager, messageCtx, sessionID); err != nil {
 		cli.PrintError(fmt.Errorf("tui error: %w", err))
 		os.Exit(1)
 	}

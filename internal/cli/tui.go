@@ -63,6 +63,7 @@ type AppModel struct {
 	ag         *agent.Agent
 	modelName  string
 	agentName  string
+	sessionID  string
 	taskList   *task.TaskList
 	skillMgr   *skill.Manager
 	ctxManager *agentctx.Manager
@@ -174,7 +175,7 @@ var (
 
 var menuItems = []string{"CHATS", "HISTORY", "LOGS", "AGENTS"}
 
-func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context) *AppModel {
+func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string) *AppModel {
 	vp := viewport.New(0, 0)
 	vp.MouseWheelEnabled = true
 	vp.MouseWheelDelta = 2
@@ -201,13 +202,14 @@ func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, taskLis
 			}
 			return ag.Name()
 		}(), "Agent"),
-		taskList:         taskList,
-		skillMgr:         skillMgr,
-		ctxManager:       ctxManager,
-		messageCtx:       messageCtx,
-		ctx:              ctx,
-		viewport:         vp,
-		input:            input,
+		sessionID:  sessionID,
+		taskList:   taskList,
+		skillMgr:   skillMgr,
+		ctxManager: ctxManager,
+		messageCtx: messageCtx,
+		ctx:        ctx,
+		viewport:   vp,
+		input:      input,
 		currentAssistant: -1,
 		currentStatus:    "idle",
 		sidebarCursor:    0,
@@ -386,6 +388,28 @@ func (m *AppModel) submit() tea.Cmd {
 		return nil
 	}
 
+	if strings.HasPrefix(text, "/mcp") {
+		result, err := commands.HandleMCP(text)
+		if err != nil {
+			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: err.Error()})
+		} else {
+			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: result})
+		}
+		m.refreshView()
+		return nil
+	}
+
+	if strings.HasPrefix(text, "/session") {
+		result, err := m.handleSessionCommand(text)
+		if err != nil {
+			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: err.Error()})
+		} else {
+			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: result})
+		}
+		m.refreshView()
+		return nil
+	}
+
 	m.busy = true
 	m.currentStatus = "thinking"
 	m.currentAssistant = -1
@@ -407,6 +431,59 @@ func (m *AppModel) runAgent(input string) {
 		return
 	}
 	m.program.Send(assistantDoneMsg{})
+}
+
+// handleSessionCommand 处理 /session 命令
+// /session list - 列出所有会话
+// /session new - 创建新会话
+// /session <id> - 切换到指定会话
+func (m *AppModel) handleSessionCommand(text string) (string, error) {
+	parts := strings.Fields(text)
+	if len(parts) < 2 {
+		return fmt.Sprintf("Current session: %s (%s)", m.sessionID, m.ctxManager.GetSessionTitle(m.messageCtx)), nil
+	}
+
+	cmd := parts[1]
+	switch cmd {
+	case "list", "ls":
+		sessions, err := m.ctxManager.ListSessions()
+		if err != nil {
+			return "", err
+		}
+		if len(sessions) == 0 {
+			return "No sessions found", nil
+		}
+		var sb strings.Builder
+		sb.WriteString("Sessions:\n")
+		for _, s := range sessions {
+			marker := "  "
+			if s.ID == m.sessionID {
+				marker = "→ "
+			}
+			sb.WriteString(fmt.Sprintf("  %s%s - %s (updated: %s)\n", marker, s.ID, s.Title, s.UpdatedAt.Format("2006-01-02 15:04")))
+		}
+		return sb.String(), nil
+	case "new":
+		newCtx, err := m.ctxManager.CreateContext("")
+		if err != nil {
+			return "", err
+		}
+		m.messageCtx = newCtx
+		m.sessionID = m.ctxManager.GetSessionID(newCtx)
+		m.entries = nil
+		m.refreshView()
+		return fmt.Sprintf("Created new session: %s", m.sessionID), nil
+	default:
+		newCtx, err := m.ctxManager.SwitchSession(m.messageCtx, cmd)
+		if err != nil {
+			return "", err
+		}
+		m.messageCtx = newCtx
+		m.sessionID = cmd
+		m.entries = nil
+		m.refreshView()
+		return fmt.Sprintf("Switched to session: %s (%s)", m.sessionID, m.ctxManager.GetSessionTitle(newCtx)), nil
+	}
 }
 
 func (m *AppModel) resize() {
@@ -433,7 +510,7 @@ func (m *AppModel) resize() {
 	inputHeight := 4
 	m.viewport.Width = max(8, mainWidth-4)
 	m.viewport.Height = max(1, m.height-headerHeight-footerHeight-inputHeight)
-	m.input.SetWidth(max(12, mainWidth-6))
+	m.input.SetWidth(max(8, m.viewport.Width-4))
 	m.input.SetHeight(1)
 }
 
@@ -519,7 +596,7 @@ func renderMainPane(m *AppModel) string {
 	stateLine := lipgloss.NewStyle().Foreground(colorGray).Render(fmt.Sprintf("model=%s | agent=%s | state=%s", fallback(m.modelName, "-"), m.agentName, animatedStateLabel(m.busy, m.currentStatus, m.spinnerFrame)))
 	conversationHeight := max(1, m.viewport.Height)
 	conversation := lipgloss.NewStyle().Height(conversationHeight).Render(renderViewportPane(m.viewport))
-	inputBlock := inputShellStyle.Width(max(12, m.viewport.Width+2)).Render(m.input.View())
+	inputBlock := inputShellStyle.Width(max(12, m.viewport.Width)).Render(m.input.View())
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		header,
 		stateLine,
@@ -981,10 +1058,10 @@ func tickSpinner() tea.Cmd {
 	})
 }
 
-func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context) error {
+func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string) error {
 	launchMu.Lock()
 	defer launchMu.Unlock()
-	model := NewAppModel(ctx, ag, modelName, taskList, skillMgr, ctxManager, messageCtx)
+	model := NewAppModel(ctx, ag, modelName, taskList, skillMgr, ctxManager, messageCtx, sessionID)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	model.program = p
 	prevOutput := logger.Output()

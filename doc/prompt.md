@@ -1,65 +1,108 @@
-# Prompt - 提示词加载
+# Prompt - 提示词系统
 
-```text
-prompt/*.md
-  -> internal/utils/utils.go Load()
-  -> cmd/5hagent/main.go / internal/context/ctx.go
+## 架构
+
+```mermaid
+flowchart LR
+    subgraph File["Prompt 文件"]
+        main["prompt/main.md"]
+        compress["prompt/compress.md"]
+        plan["prompt/plan.md"]
+        worker["prompt/worker.md"]
+    end
+
+    subgraph Load["加载"]
+        utils["utils.Load()"]
+    end
+
+    subgraph Use["使用"]
+        agent["Agent"]
+        context["Context"]
+        compress_cmd["/compress"]
+    end
+
+    main --> utils
+    compress --> utils
+    plan --> utils
+    worker --> utils
+
+    utils --> agent
+    utils --> context
+    utils --> compress_cmd
 ```
 
 ## 位置
 
-- `internal/utils/utils.go`
-- `internal/utils/utils_test.go`
-- `prompt/*.md`
-- `cmd/5hagent/main.go`
-- `internal/context/ctx.go`
+- `internal/utils/utils.go` - 加载器
+- `prompt/*.md` - Prompt 文件
 
-## 概述
-
-当前 prompt 系统是一个非常轻的文件读取约定，没有单独的 loader、缓存和 frontmatter 解析。
-
-调用方直接使用：
+## utils.Load
 
 ```go
-content, err := utils.Load("prompt", "main")
+func Load(dir, name string) (string, error) {
+    data, err := os.ReadFile(filepath.Join(dir, name+".md"))
+    if err != nil {
+        return "", fmt.Errorf("prompt %q not found: %w", name, err)
+    }
+    return strings.TrimSpace(string(data)), nil
+}
 ```
 
-它会读取 `prompt/main.md`，返回去掉首尾空白后的内容。
+用法：`utils.Load("prompt", "main")` → 读取 `prompt/main.md`
 
-## 当前调用点
+## 当前 Prompt 文件
 
-- `cmd/5hagent/main.go` 用 `utils.Load("prompt", "main")` 加载主 system prompt
-- `internal/context/ctx.go` 用 `utils.Load(promptDir, "compress")` 加载上下文压缩 prompt
-- `internal/commands/compress.go` 通过 `internal/context/ctx.go` 的手动压缩入口复用同一个 `prompt/compress.md`
+| 文件 | 用途 | 调用点 |
+|------|------|--------|
+| `prompt/main.md` | Agent 主 prompt | `main.go` |
+| `prompt/compress.md` | 上下文压缩 prompt | `ctx.go` |
+| `prompt/plan.md` | 规划 prompt | 待实现 |
+| `prompt/worker.md` | Worker prompt | 待实现 |
 
-## 文件约定
+## 使用方式
 
-- prompt 文件放在 `prompt/` 目录下
-- 文件名就是调用名加 `.md`
-- 当前实际使用的是：
-  - `prompt/main.md`
-  - `prompt/compress.md`
-  - `prompt/plan.md`
-  - `prompt/worker.md`
+### 加载主 Prompt
 
-例如：
+[main.go:90-95](cmd/5hagent/main.go)：
 
-- `utils.Load("prompt", "main")` -> `prompt/main.md`
-- `utils.Load("prompt", "compress")` -> `prompt/compress.md`
+```go
+systemPrompt, err := utils.Load("prompt", "main")
+if err != nil {
+    cli.PrintError(fmt.Errorf("failed to get system prompt: %w", err))
+    os.Exit(1)
+}
+```
+
+### 加载压缩 Prompt
+
+[ctx.go:139-142](internal/context/ctx.go)：
+
+```go
+compressPrompt, err := utils.Load(promptDir, "compress")
+if err != nil {
+    return m.Compress(ctx)  // 降级到简单截断
+}
+```
 
 ## 设计边界
+
+当前设计刻意保持简单：
 
 - 不递归扫描目录
 - 不解析 frontmatter
 - 不做变量替换
 - 不做缓存
-- 找不到文件时直接返回错误
+- 找不到文件直接返回错误
 
-这个设计刻意保持简单，适合当前仓库里“少量固定 prompt 文件”的使用方式。
+## Prompt 模板约定
+
+1. 文件放在 `prompt/` 目录
+2. 文件名 = 调用名 + `.md`
+3. 内容为纯 Markdown
+4. 可包含 LLM 指令、示例、约束等
 
 ## 相关代码
 
 - [utils.go](../internal/utils/utils.go)
-- [utils_test.go](../internal/utils/utils_test.go)
 - [main.go](../cmd/5hagent/main.go)
 - [ctx.go](../internal/context/ctx.go)
