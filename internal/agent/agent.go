@@ -15,8 +15,8 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	agentctx "github.com/lzq/5hAgent/internal/context"
 	agentconfig "github.com/lzq/5hAgent/internal/config"
+	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/skill"
 	"github.com/lzq/5hAgent/internal/utils"
@@ -27,19 +27,21 @@ import (
 type Agent struct {
 	// 核心组件
 	model   model.ToolCallingChatModel // LLM 模型
-	tools   []tool.BaseTool            // 工具列表
-	toolMap map[string]tool.BaseTool   // 工具名称映射表（优化查找）
+	tools   []tool.BaseTool           // 工具列表
+	toolMap map[string]tool.BaseTool  // 工具名称映射表
 
 	// 配置
 	config *Config // Agent 配置
 	// 状态
-	state *State // Agent 状态
+	state *State // Agent 运行状态
 	// 上下文管理器
-	ctxManager *agentctx.Manager // 复用Manager实例
+	ctxManager *agentctx.Manager // 消息历史管理
 	// 技能管理器
 	skillManager *skill.Manager // 技能注入管理
-	// token 预算（跨多次 Run/RunStream 调用持久化）
+	// token 预算
 	tokenBudget *utils.TokenBudget
+	// 回调处理器
+	callbacks *AgentCallbacks
 }
 
 // Config Agent 配置
@@ -109,17 +111,25 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 			CurrentTurn: 0,
 			IsRunning:   false,
 		},
+		callbacks: NewAgentCallbacks(config.Debug),
 	}, nil
 }
 
 // TokenCallback 流式输出的回调函数类型
 type TokenCallback func(token string)
 
+// toolRepeatGuard 工具重复调用防护结构
+// 限制同一工具（含相同参数）被重复调用的次数，防止死循环
 type toolRepeatGuard struct {
 	limit    int
 	attempts map[string]int
 }
 
+// newToolRepeatGuard 创建工具重复调用防护实例
+// 参数:
+//   - limit: 单工具（含相同参数）最大重复次数
+//
+// 返回: toolRepeatGuard 实例
 func newToolRepeatGuard(limit int) *toolRepeatGuard {
 	return &toolRepeatGuard{
 		limit:    limit,
@@ -127,6 +137,11 @@ func newToolRepeatGuard(limit int) *toolRepeatGuard {
 	}
 }
 
+// Check 检查工具调用是否超限
+// 参数:
+//   - toolCalls: 待检查的工具调用列表
+//
+// 返回: 超限返回错误，否则返回 nil
 func (g *toolRepeatGuard) Check(toolCalls []schema.ToolCall) error {
 	if g == nil || g.limit <= 0 {
 		return nil
@@ -153,6 +168,12 @@ func (g *toolRepeatGuard) Check(toolCalls []schema.ToolCall) error {
 	return nil
 }
 
+// mergeMeta 合并 LLM 流式响应元数据
+// 参数:
+//   - current: 当前累计的响应元数据（可能被 nil）
+//   - incoming: 新到来的响应元数据
+//
+// 返回: 合并后的元数据（优先保留较大的 token 计数）
 func mergeMeta(current *schema.ResponseMeta, incoming *schema.ResponseMeta) *schema.ResponseMeta {
 	if incoming == nil {
 		return current
@@ -227,29 +248,28 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 	for turn := 0; ; turn++ {
 		a.state.CurrentTurn = turn + 1
-		logger.DebugTag("REACT", "Turn %d", turn+1)
+		if a.config.Debug {
+			logger.DebugTag("REACT", "Turn %d", turn+1)
+		}
 
 		// a. 获取所有消息
 		messages, err := a.ctxManager.GetMessages(messageCtx)
 		if err != nil {
 			return "", fmt.Errorf("failed to get messages: %w", err)
 		}
-		logger.DebugTag("CTX", "Messages=%d", len(messages))
-		for i, msg := range messages {
-			contentPreview := logger.TruncateString(msg.Content, 40)
-			logger.DebugTag("CTX", "  [%d] role=%-9s tools=%d content=%s",
-				i, msg.Role, len(msg.ToolCalls), contentPreview)
+		if a.config.Debug {
+			logger.DebugTag("CTX", "Messages=%d", len(messages))
 		}
 
-		// b. 调用 LLM 流式生成响应
-		logger.DebugTag("LLM", "Calling Stream")
+		// b. 调用 LLM 流式生成响应（使用 Callback）
+		cb := a.callbacks
+		cb.OnModelStart(ctx, nil, &model.CallbackInput{Messages: messages})
+
 		reader, err := a.model.Stream(ctx, messages)
 		if err != nil {
-			logger.ErrorTag("LLM", "Stream failed: %v", err)
+			cb.OnModelError(ctx, nil, err)
 			return "", fmt.Errorf("LLM stream failed: %w", err)
 		}
-
-		logger.Debug("Stream started, reading chunks...")
 
 		var fullContent strings.Builder
 		chunkCount := 0
@@ -268,31 +288,24 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			close(toolResultCh)
 		}()
 
-		for { // 读取流式响应
+		// 读取流式响应
+		for {
 			chunk, err := reader.Recv()
 			if err == io.EOF {
-				logger.DebugTag("STREAM", "EOF, chunks=%d", chunkCount)
 				break
 			}
 			if err != nil {
 				reader.Close()
+				cb.OnModelError(ctx, nil, err)
 				return "", fmt.Errorf("stream read failed: %w", err)
 			}
 
 			chunkCount++
 			responseMeta = mergeMeta(responseMeta, chunk.ResponseMeta)
-			// if chunkCount <= 10 {
-			// 	logger.DebugTag("STREAM", "Chunk#%d: len=%d role=%s tools=%d",
-			// 		chunkCount, len(chunk.Content), chunk.Role, len(chunk.ToolCalls))
-			// }
 
-			// *处理包含ToolCalls的chunk
+			// 处理 ToolCalls
 			if len(chunk.ToolCalls) > 0 {
-				logger.DebugTag("STREAM", "Chunk#%d contains ToolCalls: %d", chunkCount, len(chunk.ToolCalls))
-				for i, tc := range chunk.ToolCalls {
-					logger.DebugTag("STREAM", "  [%d] id='%s' name='%s' args='%s'",
-						i, tc.ID, tc.Function.Name, tc.Function.Arguments)
-				}
+				cb.LogChunk(chunk, chunkCount)
 
 				for _, tc := range collector.Add(chunk.ToolCalls) {
 					if err := repeatGuard.Check([]schema.ToolCall{tc}); err != nil {
@@ -320,8 +333,20 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		close(toolQueue)
 
 		content := fullContent.String()
-		logger.DebugTag("STREAM", "Complete, total_len=%d", len(content))
-		a.tokenBudget.Add(responseMeta)
+		
+		// 转换 token usage 类型
+		var tokenUsage *model.TokenUsage
+		if responseMeta != nil && responseMeta.Usage != nil {
+			tokenUsage = &model.TokenUsage{
+				PromptTokens:       responseMeta.Usage.PromptTokens,
+				CompletionTokens:   responseMeta.Usage.CompletionTokens,
+				TotalTokens:        responseMeta.Usage.TotalTokens,
+			}
+		}
+		cb.OnModelEnd(ctx, nil, &model.CallbackOutput{
+			Message:    &schema.Message{Content: content, ResponseMeta: responseMeta},
+			TokenUsage: tokenUsage,
+		})
 
 		toolCalls := collector.RunnableCalls()
 		toolResults := make([]execResult, len(queuedCalls))
@@ -338,13 +363,9 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 		// c. 检查是否有工具调用
 		if len(finalMessage.ToolCalls) > 0 {
-			logger.DebugTag("LLM", "Tool calls requested: %d", len(finalMessage.ToolCalls))
-			for i, tc := range finalMessage.ToolCalls {
-				logger.DebugTag("LLM", "  [%d] id=%s name=%s args=%s",
-					i, tc.ID, tc.Function.Name, tc.Function.Arguments)
-			}
+			cb.LogToolCalls(finalMessage.ToolCalls)
 
-			// d. 有工具调用 - 添加 assistant 消息
+			// 添加 assistant 消息
 			if err := a.ctxManager.AddMessage(messageCtx, finalMessage); err != nil {
 				return "", fmt.Errorf("failed to add assistant message: %w", err)
 			}
@@ -359,8 +380,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			continue
 		}
 
-		// e. 没有工具调用 - 返回响应
-		// 只有当内容不为空时才添加消息
+		// d. 没有工具调用 - 返回响应
 		if content != "" {
 			if err := a.ctxManager.AddMessage(messageCtx, finalMessage); err != nil {
 				return "", fmt.Errorf("failed to add assistant message: %w", err)
@@ -383,6 +403,8 @@ func (a *Agent) SetModel(model model.ToolCallingChatModel) {
 	a.model = model
 }
 
+// GetModel 返回当前绑定的 LLM 模型
+// 返回: ToolCallingChatModel 实例，可能为 nil
 func (a *Agent) GetModel() model.ToolCallingChatModel {
 	if a == nil {
 		return nil
@@ -403,6 +425,8 @@ func (a *Agent) SetTools(tools []tool.BaseTool) {
 	}
 }
 
+// Name 返回 Agent 名称
+// 返回: Agent 配置中的名称字符串
 func (a *Agent) Name() string {
 	if a == nil || a.config == nil {
 		return ""
@@ -410,6 +434,8 @@ func (a *Agent) Name() string {
 	return a.config.Name
 }
 
+// TokenUsage 获取当前 token 使用情况
+// 返回: (已用 token 数, token 上限)
 func (a *Agent) TokenUsage() (used int, limit int) {
 	if a == nil || a.tokenBudget == nil {
 		return 0, 0
