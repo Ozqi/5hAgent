@@ -17,9 +17,10 @@
 - updated_at: 2026-05-01T06:45:00Z
 
 ### test-notion-mcp-001 | 测试Notion MCP
-- status: in_progress
-- description: 测试notion MCP的集成功能，包括连接、读写等操作
+- status: completed
+- description: MCP 配置完成，连接成功(22工具)，搜索和读取正常。发现需用 OPENAPI_MCP_HEADERS 代替 NOTION_API_KEY。
+- evidence: "Registered 22 tools from notion" + search 返回实际数据
 - created_at: 2026-04-26T18:16:54Z
-- updated_at: 2026-04-26T18:18:51Z
+- updated_at: 2026-05-01T10:40:00Z
 
 <!-- 5hagent:tasks:end -->
