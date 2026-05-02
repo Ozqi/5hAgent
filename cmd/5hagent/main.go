@@ -26,6 +26,7 @@ import (
 
 var debugMode bool
 var sessionID string
+var resumeLast bool
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -36,6 +37,7 @@ func main() {
 	}
 	rootCmd.Flags().BoolVar(&debugMode, "debug", false, "Enable debug mode with verbose logging")
 	rootCmd.Flags().StringVar(&sessionID, "session", "", "Resume from existing session ID")
+	rootCmd.Flags().BoolVarP(&resumeLast, "resume", "r", false, "Resume from the last session")
 	if err := rootCmd.Execute(); err != nil {
 		cli.PrintError(err)
 		os.Exit(1)
@@ -59,13 +61,14 @@ func runInteractive(cmd *cobra.Command, args []string) {
 
 	ctx := context.Background()
 
-	// *使用配置目录存放 task list
-	configDir, err := config.GetConfigDir()
+	// *使用启动目录存放 task list 和 sessions（便于项目管理）
+	workDir, err := config.GetWorkDir()
 	if err != nil {
-		cli.PrintError(fmt.Errorf("failed to get config directory: %w", err))
+		cli.PrintError(fmt.Errorf("failed to get working directory: %w", err))
 		os.Exit(1)
 	}
-	taskListPath := filepath.Join(configDir, "tasks.json")
+	taskListPath := filepath.Join(workDir, ".5hagent", "tasks.json")
+	sessionsPath := filepath.Join(workDir, ".5hagent", "sessions")
 
 	taskList, err := task.NewTaskList(taskListPath)
 	if err != nil {
@@ -75,8 +78,19 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	logger.DebugTag("SYS", "Task list initialized at %s", taskListPath)
 
 	// *初始化会话存储
-	sessionDir := filepath.Join(configDir, "sessions")
-	ctxManager := agentctx.NewManager(sessionDir)
+	ctxManager := agentctx.NewManager(sessionsPath)
+
+	// 处理 -r/--resume 参数：自动获取最新会话
+	if resumeLast && sessionID == "" {
+		sessions, err := ctxManager.ListSessions()
+		if err != nil || len(sessions) == 0 {
+			logger.InfoTag("SESSION", "No previous session found, creating new one")
+			resumeLast = false
+		} else {
+			sessionID = sessions[0].ID
+			logger.InfoTag("SESSION", "Auto-resume last session: %s", sessionID)
+		}
+	}
 
 	// 处理 --session 参数
 	var messageCtx *agentctx.Context
