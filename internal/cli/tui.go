@@ -623,9 +623,9 @@ func renderBottomStatusBar(width int, status string, busy bool) string {
 }
 
 func renderRow(label, value string) string {
-	labelStyle := lipgloss.NewStyle().Foreground(colorGray).Width(8)
-	valueStyle := lipgloss.NewStyle().Foreground(colorText)
-	return lipgloss.JoinHorizontal(lipgloss.Top, labelStyle.Render(label), valueStyle.Render(value))
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.NewStyle().Foreground(colorGray).Width(8).Render(label),
+		lipgloss.NewStyle().Foreground(colorText).Render(value))
 }
 
 func snapshotModelName(snapshot statusSnapshot) string {
@@ -637,11 +637,10 @@ func snapshotModelName(snapshot statusSnapshot) string {
 
 func (m *AppModel) findToolEntry(name string) int {
 	for i := len(m.entries) - 1; i >= 0; i-- {
-		entry := m.entries[i]
-		if entry.Role != roleTool || !entry.ToolOpen {
+		if m.entries[i].Role != roleTool || !m.entries[i].ToolOpen {
 			continue
 		}
-		if name == "" || entry.ToolName == name {
+		if name == "" || m.entries[i].ToolName == name {
 			return i
 		}
 	}
@@ -823,33 +822,6 @@ func renderScrollbar(vp viewport.Model) []string {
 	return lines
 }
 
-func verticalBar(symbol string, height int) string {
-	if height <= 0 {
-		return ""
-	}
-	lines := make([]string, height)
-	for i := range lines {
-		lines[i] = symbol
-	}
-	return strings.Join(lines, "\n")
-}
-
-/*
-func extractToolName(text string) string {
-	trimmed := strings.TrimSpace(text)
-	trimmed = strings.TrimPrefix(trimmed, "● ")
-	if trimmed == "" {
-		return ""
-	}
-	for i, r := range trimmed {
-		if r == ' ' || r == '\n' || r == '[' {
-			return trimmed[:i]
-		}
-	}
-	return trimmed
-}
-*/
-
 func fallback(value string, defaultValue string) string {
 	if strings.TrimSpace(value) == "" {
 		return defaultValue
@@ -914,39 +886,6 @@ func extractToolNameFromCall(text string) string {
 		text = text[:idx]
 	}
 	return strings.TrimSpace(text)
-}
-
-// parseToolArgs 解析工具调用的参数字段
-func parseToolArgs(lines []string) []string {
-	var fields []string
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			fields = append(fields, line)
-		}
-	}
-	return fields
-}
-
-// parseResultSummary 解析结果摘要行
-func parseResultSummary(firstLine string) []string {
-	parts := strings.SplitN(firstLine, ":", 2)
-	if len(parts) == 2 {
-		return []string{strings.TrimSpace(parts[0]) + ": " + strings.TrimSpace(parts[1])}
-	}
-	return []string{firstLine}
-}
-
-// parseResultContent 解析结果内容行
-func parseResultContent(lines []string) []string {
-	var content []string
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			content = append(content, line)
-		}
-	}
-	return content
 }
 
 func renderToolEntry(content string, width int) string {

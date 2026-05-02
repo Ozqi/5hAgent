@@ -26,7 +26,6 @@ import (
 
 var debugMode bool
 var sessionID string
-var continueLast bool
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -37,7 +36,6 @@ func main() {
 	}
 	rootCmd.Flags().BoolVar(&debugMode, "debug", false, "Enable debug mode with verbose logging")
 	rootCmd.Flags().StringVar(&sessionID, "session", "", "Resume from existing session ID")
-	rootCmd.Flags().BoolVarP(&continueLast, "continue", "c", false, "Resume from the last session")
 	if err := rootCmd.Execute(); err != nil {
 		cli.PrintError(err)
 		os.Exit(1)
@@ -61,14 +59,13 @@ func runInteractive(cmd *cobra.Command, args []string) {
 
 	ctx := context.Background()
 
-	// *使用启动目录存放 task list 和 sessions（便于项目管理）
-	workDir, err := config.GetWorkDir()
+	// *Task 持久化到项目启动目录
+	projectDataDir, err := config.GetProjectDataDir()
 	if err != nil {
-		cli.PrintError(fmt.Errorf("failed to get working directory: %w", err))
+		cli.PrintError(fmt.Errorf("failed to get project data directory: %w", err))
 		os.Exit(1)
 	}
-	taskListPath := filepath.Join(workDir, ".5hagent", "tasks.json")
-	sessionsPath := filepath.Join(workDir, ".5hagent", "sessions")
+	taskListPath := filepath.Join(projectDataDir, "tasks.json")
 
 	taskList, err := task.NewTaskList(taskListPath)
 	if err != nil {
@@ -77,20 +74,14 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	}
 	logger.DebugTag("SYS", "Task list initialized at %s", taskListPath)
 
-	// *初始化会话存储
-	ctxManager := agentctx.NewManager(sessionsPath)
-
-	// 处理 -c/--continue 参数：自动获取最新会话
-	if continueLast && sessionID == "" {
-		sessions, err := ctxManager.ListSessions()
-		if err != nil || len(sessions) == 0 {
-			logger.InfoTag("SESSION", "No previous session found, creating new one")
-			continueLast = false
-		} else {
-			sessionID = sessions[0].ID
-			logger.InfoTag("SESSION", "Auto-resume last session: %s", sessionID)
-		}
+	// *Session 持久化到 ~/.5hAgent（全局无关）
+	sessionDir, err := config.GetConfigDir()
+	if err != nil {
+		cli.PrintError(fmt.Errorf("failed to get config directory: %w", err))
+		os.Exit(1)
 	}
+	sessionDir = filepath.Join(sessionDir, "sessions")
+	ctxManager := agentctx.NewManager(sessionDir)
 
 	// 处理 --session 参数
 	var messageCtx *agentctx.Context

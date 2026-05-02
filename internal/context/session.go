@@ -251,60 +251,36 @@ func (s *Store) saveToFile(session *Session) error {
 }
 
 func (s *Store) loadFromFile(filePath string, data []byte) (*Session, error) {
-	session := &Session{
-		filePath: filePath,
-	}
-
-	lines := splitJSONLines(data)
-	for _, line := range lines {
+	session := &Session{filePath: filePath}
+	for _, line := range splitJSONLines(data) {
 		var entry sessionFileEntry
 		if err := json.Unmarshal(line, &entry); err != nil {
 			continue
 		}
-
 		if entry.Type == "session" {
-			session.ID = entry.ID
-			session.Title = entry.Title
+			session.ID, session.Title = entry.ID, entry.Title
 			if t, err := time.Parse(time.RFC3339, entry.CreatedAt); err == nil {
 				session.CreatedAt = t
 			}
 			if t, err := time.Parse(time.RFC3339, entry.UpdatedAt); err == nil {
 				session.UpdatedAt = t
 			}
-	} else if entry.Role != "" {
-		session.messages = append(session.messages, &schema.Message{
-			Role:    schema.User,
-			Content: entry.Content,
-		})
+		} else if entry.Role != "" {
+			session.messages = append(session.messages, &schema.Message{Role: schema.User, Content: entry.Content})
+		}
 	}
-	}
-
 	return session, nil
 }
 
 func (s *Store) parseMessages(data []byte) ([]*schema.Message, error) {
-	messages := make([]*schema.Message, 0)
-	lines := splitJSONLines(data)
-
-	for _, line := range lines {
+	var messages []*schema.Message
+	for _, line := range splitJSONLines(data) {
 		var entry sessionFileEntry
-		if err := json.Unmarshal(line, &entry); err != nil {
+		if err := json.Unmarshal(line, &entry); err != nil || entry.Role == "" || entry.Type == "session" {
 			continue
 		}
-
-		if entry.Type == "session" {
-			continue
-		}
-		if entry.Role == "" {
-			continue
-		}
-
-		messages = append(messages, &schema.Message{
-			Role:    schema.User, // 所有非 session 类型的消息都作为 user role 加载
-			Content: entry.Content,
-		})
+		messages = append(messages, &schema.Message{Role: schema.User, Content: entry.Content})
 	}
-
 	return messages, nil
 }
 
