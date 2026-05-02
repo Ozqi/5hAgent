@@ -26,7 +26,7 @@ import (
 
 var debugMode bool
 var sessionID string
-var resumeLast bool
+var continueLast bool
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -37,7 +37,7 @@ func main() {
 	}
 	rootCmd.Flags().BoolVar(&debugMode, "debug", false, "Enable debug mode with verbose logging")
 	rootCmd.Flags().StringVar(&sessionID, "session", "", "Resume from existing session ID")
-	rootCmd.Flags().BoolVarP(&resumeLast, "resume", "r", false, "Resume from the last session")
+	rootCmd.Flags().BoolVarP(&continueLast, "continue", "c", false, "Resume from the last session")
 	if err := rootCmd.Execute(); err != nil {
 		cli.PrintError(err)
 		os.Exit(1)
@@ -80,12 +80,12 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	// *初始化会话存储
 	ctxManager := agentctx.NewManager(sessionsPath)
 
-	// 处理 -r/--resume 参数：自动获取最新会话
-	if resumeLast && sessionID == "" {
+	// 处理 -c/--continue 参数：自动获取最新会话
+	if continueLast && sessionID == "" {
 		sessions, err := ctxManager.ListSessions()
 		if err != nil || len(sessions) == 0 {
 			logger.InfoTag("SESSION", "No previous session found, creating new one")
-			resumeLast = false
+			continueLast = false
 		} else {
 			sessionID = sessions[0].ID
 			logger.InfoTag("SESSION", "Auto-resume last session: %s", sessionID)
