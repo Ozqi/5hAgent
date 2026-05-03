@@ -93,12 +93,36 @@ func (m *Manager) CreateContext(sessionID string) (*Context, error) {
 	return ctx, nil
 }
 
+// GetSessionID 返回 Context 关联的 Session ID
+func (m *Manager) GetSessionID(ctx *Context) string {
+	if ctx.Session != nil {
+		return ctx.Session.ID
+	}
+	return ""
+}
+
+// GetLatestSessionID 返回最新会话的 ID（按更新时间倒序）
+func (m *Manager) GetLatestSessionID() (string, error) {
+	if m.store == nil {
+		return "", nil
+	}
+	return m.store.GetLatestID()
+}
+
+// GetStore 返回关联的 Store
+func (m *Manager) GetStore() *Store {
+	return m.store
+}
+
+// GetSessionTitle 返回 Context 关联的 Session 标题
+func (m *Manager) GetSessionTitle(ctx *Context) string {
+	if ctx.Session == nil {
+		return ""
+	}
+	return ctx.Session.Title
+}
+
 // CloneContext 克隆 Context（用于 sub-agent）
-// 参数:
-//   - parent: 父 Context
-//
-// 返回: 新的 Context 实例和可能的错误
-// 功能: 克隆父 Context 的消息历史，创建隔离的副本
 func (m *Manager) CloneContext(parent *Context) (*Context, error) {
 	cloned := &Context{
 		messages: make([]*schema.Message, len(parent.messages)),
@@ -143,27 +167,6 @@ func (m *Manager) AddMessage(ctx *Context, msg *schema.Message) error {
 func (m *Manager) Clear(ctx *Context) error {
 	ctx.messages = make([]*schema.Message, 0)
 	return nil
-}
-
-// GetStore 返回 Manager 的 Store 实例
-func (m *Manager) GetStore() *Store {
-	return m.store
-}
-
-// GetSessionID 返回 Context 关联的 Session ID
-func (m *Manager) GetSessionID(ctx *Context) string {
-	if ctx.Session == nil {
-		return ""
-	}
-	return ctx.Session.ID
-}
-
-// GetSessionTitle 返回 Context 关联的 Session 标题
-func (m *Manager) GetSessionTitle(ctx *Context) string {
-	if ctx.Session == nil {
-		return ""
-	}
-	return ctx.Session.Title
 }
 
 // ListSessions 列出所有会话
