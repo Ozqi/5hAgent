@@ -5,9 +5,10 @@ package cli
 
 import (
 	"fmt"
+	"os"
 )
 
 // PrintError prints error messages in red (using ANSI color codes)
 func PrintError(err error) {
-	fmt.Printf("\033[31mError: %v\033[0m\n", err)
+	fmt.Fprintf(os.Stderr, "\033[31mError: %v\033[0m\n", err)
 }

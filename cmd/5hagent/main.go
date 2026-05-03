@@ -55,12 +55,16 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	if debugMode {
 		appConfig.Agent.Debug = true
 		logger.SetLevel(logger.DEBUG)
-		logFile, err := logger.InitDebugLog()
-		if err != nil {
-			cli.PrintError(fmt.Errorf("failed to init debug log: %w", err))
-			os.Exit(1)
-		}
-		logger.InfoTag("SYS", "Debug mode enabled, log: %s", logFile)
+	}
+	logFile, err := logger.InitLog()
+	if err != nil {
+		cli.PrintError(fmt.Errorf("failed to init log: %w", err))
+		os.Exit(1)
+	}
+	defer logger.CloseDebugLog()
+	logger.InfoTag("SYS", "Log initialized: %s", logFile)
+	if appConfig.Agent.Debug {
+		logger.InfoTag("SYS", "Debug mode enabled")
 	}
 
 	ctx := context.Background()

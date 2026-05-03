@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/tidwall/gjson"
 )
 
@@ -170,7 +171,7 @@ func (c *StdioClient) readLoop() {
 			line, err := c.stdout.ReadBytes('\n')
 			if err != nil {
 				if err != io.EOF {
-					fmt.Printf("[MCP %s] read error: %v\n", c.serverName, err)
+					logger.ErrorTag("MCP", "Read error from %s: %v", c.serverName, err)
 				}
 				return
 			}

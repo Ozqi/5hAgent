@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	agentctx "github.com/lzq/5hAgent/internal/context"
@@ -25,7 +26,7 @@ type toolCallState struct {
 // toolCollector 流式工具调用收集器
 // 合并 LLM 分片返回的 ToolCall
 type toolCollector struct {
-	states map[int]*toolCallState  // index -> state
+	states map[int]*toolCallState // index -> state
 	byID   map[string]int         // id -> index
 }
 
@@ -131,8 +132,9 @@ func (a *Agent) exeToolCall(ctx context.Context, tc schema.ToolCall, idx, total 
 	}
 
 	// 记录工具调用
+	runInfo := &callbacks.RunInfo{Name: tc.Function.Name}
 	if a.callbacks != nil {
-		a.callbacks.OnToolStart(ctx, nil, &tool.CallbackInput{
+		a.callbacks.OnToolStart(ctx, runInfo, &tool.CallbackInput{
 			ArgumentsInJSON: tc.Function.Arguments,
 		})
 	}
@@ -150,9 +152,9 @@ func (a *Agent) exeToolCall(ctx context.Context, tc schema.ToolCall, idx, total 
 	// 记录结果
 	if a.callbacks != nil {
 		if err != nil {
-			a.callbacks.OnToolError(ctx, nil, err)
+			a.callbacks.OnToolError(ctx, runInfo, err)
 		} else {
-			a.callbacks.OnToolEnd(ctx, nil, &tool.CallbackOutput{Response: result})
+			a.callbacks.OnToolEnd(ctx, runInfo, &tool.CallbackOutput{Response: result})
 		}
 	}
 

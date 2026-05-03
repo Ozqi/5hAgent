@@ -32,6 +32,7 @@ const (
 	roleAssistant    = "assistant"
 	roleTool         = "tool"
 	roleSystem       = "system"
+	roleHint         = "hint"
 	defaultTUIWidth  = 100
 	defaultTUIHeight = 30
 )
@@ -262,7 +263,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshView()
 		return m, nil
 	case assistantTokenMsg:
-		if m.currentAssistant == -1 {
+		if m.currentAssistant == -1 || m.currentAssistant >= len(m.entries) || m.entries[m.currentAssistant].Role != roleAssistant {
 			m.entries = append(m.entries, conversationEntry{Role: roleAssistant, Content: msg.token})
 			m.currentAssistant = len(m.entries) - 1
 		} else if m.currentAssistant < len(m.entries) {
@@ -292,21 +293,13 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case toolEventMsg:
+		text := compactToolEventText(msg.event)
 		if msg.event.Kind == "call" {
 			m.toolCalls++
 			m.lastTool = fallback(toolmeta.DisplayName(msg.event.Name), msg.event.Name)
-			m.entries = append(m.entries, conversationEntry{Role: roleTool, Content: strings.TrimRight(msg.event.Text, "\n"), ToolName: msg.event.Name, ToolOpen: true})
-			m.refreshView()
-			return m, nil
 		}
-		if idx := m.findToolEntry(msg.event.Name); idx >= 0 {
-			m.entries[idx].Content += "\n" + strings.TrimRight(msg.event.Text, "\n")
-			if msg.event.Kind == "result" || msg.event.Kind == "error" {
-				m.entries[idx].ToolOpen = false
-			}
-		} else {
-			m.entries = append(m.entries, conversationEntry{Role: roleTool, Content: strings.TrimRight(msg.event.Text, "\n"), ToolName: msg.event.Name, ToolOpen: msg.event.Kind != "result" && msg.event.Kind != "error"})
-		}
+		m.entries = append(m.entries, conversationEntry{Role: roleHint, Content: text})
+		m.currentAssistant = -1
 		m.refreshView()
 		return m, nil
 	case tea.KeyMsg:
@@ -679,23 +672,111 @@ func (m *AppModel) findToolEntry(name string) int {
 	return -1
 }
 
+func compactToolEventText(event logger.ToolEvent) string {
+	clean := strings.TrimSpace(stripANSI(event.Text))
+	if clean == "" {
+		return fmt.Sprintf("[tool] %s", fallback(toolmeta.DisplayName(event.Name), event.Name))
+	}
+
+	entry := parseToolBlock(clean)
+	displayName := fallback(entry.Name, toolmeta.DisplayName(event.Name))
+	displayName = fallback(displayName, event.Name)
+	if displayName == "" {
+		displayName = "tool"
+	}
+
+	switch event.Kind {
+	case "call":
+		parts := []string{fmt.Sprintf("[tool] %s", displayName)}
+		if len(entry.Args) > 0 {
+			parts = append(parts, strings.Join(entry.Args, " · "))
+		}
+		return truncateInline(strings.Join(parts, " "), 180)
+	case "result":
+		result := strings.Join(entry.Result, " · ")
+		if result == "" {
+			result = strings.TrimPrefix(clean, "⎿ ")
+		}
+		return truncateInline(fmt.Sprintf("[tool] %s done: %s", displayName, result), 180)
+	case "error":
+		message := fallback(entry.Error, clean)
+		return truncateInline(fmt.Sprintf("[tool] %s error: %s", displayName, message), 180)
+	default:
+		return truncateInline("[tool] "+strings.ReplaceAll(clean, "\n", " · "), 180)
+	}
+}
+
+func truncateInline(text string, maxLen int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	return truncateMiddle(text, maxLen)
+}
+
 func renderConversationEntry(entry conversationEntry, width int) string {
 	switch entry.Role {
 	case roleUser:
-		body := wrapVisibleText(compactParagraph(strings.TrimSpace(entry.Content)), max(8, width-4))
-		return renderMessageBlock("USER_ROOT", body, colorPurple, width)
+		body := compactParagraph(strings.TrimSpace(entry.Content))
+		return renderPrefixedPlainText("> ", body, colorPurple, width)
 	case roleAssistant:
 		content := strings.TrimRight(renderMarkdownForTerminal(normalizeAssistantContent(entry.Content), true), "\n")
-		content = wrapVisibleText(content, max(8, width-4))
-		return renderMessageBlock("AGENT_CORE", content, colorGreen, width)
+		return wrapVisibleText(content, max(8, width))
+	case roleHint:
+		return renderHintEntry(entry.Content, width)
 	case roleTool:
 		return renderToolEntry(entry.Content, width)
 	case roleSystem:
-		body := wrapVisibleText(strings.TrimSpace(entry.Content), max(8, width-4))
-		return renderMessageBlock("SYSTEM_BUS", body, colorBlue, width)
+		return renderPrefixedPlainText("! ", strings.TrimSpace(entry.Content), colorBlue, width)
 	default:
 		return wrapVisibleText(strings.TrimSpace(entry.Content), width)
 	}
+}
+
+func renderHintEntry(content string, width int) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return renderPrefixedPlainText("  · ", "", colorGray, width)
+	}
+	lineWidth := max(8, width-lipgloss.Width("  · "))
+	lines := wrapVisibleLines(content, lineWidth)
+	for i, line := range lines {
+		prefix := strings.Repeat(" ", lipgloss.Width("  · "))
+		if i == 0 {
+			prefix = lipgloss.NewStyle().Foreground(colorGray).Render("  · ")
+		}
+		lines[i] = prefix + colorizeToolHintLine(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func colorizeToolHintLine(line string) string {
+	plain := stripANSI(line)
+	if !strings.HasPrefix(plain, "[tool] ") {
+		return logger.Gray(line)
+	}
+	rest := strings.TrimPrefix(plain, "[tool] ")
+	toolName := rest
+	suffix := ""
+	if idx := strings.IndexAny(rest, " \t:"); idx >= 0 {
+		toolName = rest[:idx]
+		suffix = rest[idx:]
+	}
+	return logger.Bold(logger.Blue("[tool]")) + " " + logger.Yellow(toolName) + logger.Gray(suffix)
+}
+
+func renderPrefixedPlainText(prefix string, content string, color lipgloss.Color, width int) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return lipgloss.NewStyle().Foreground(color).Render(prefix)
+	}
+	lineWidth := max(8, width-lipgloss.Width(prefix))
+	lines := wrapVisibleLines(content, lineWidth)
+	for i, line := range lines {
+		if i == 0 {
+			lines[i] = lipgloss.NewStyle().Foreground(color).Render(prefix) + line
+			continue
+		}
+		lines[i] = strings.Repeat(" ", lipgloss.Width(prefix)) + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 func renderMessageBlock(label string, body string, accent lipgloss.Color, width int) string {

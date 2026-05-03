@@ -1,7 +1,7 @@
 // logger.go - 日志输出
 // 功能：带标签的 DEBUG/INFO/WARN/ERROR 日志，支持颜色输出
 //
-//	debug 模式下自动写入独立日志文件 ~/.5hAgent/logs/
+//	启动时写入独立日志文件 ~/.5hAgent/logs/，不污染 TUI
 //
 // 主要类型：Logger, Level
 // 导出函数：SetLevel, InitDebugLog, CloseDebugLog, Debug, Info, Warn, Error,
@@ -33,37 +33,34 @@ const (
 const (
 	maxLogFiles   = 30
 	logDirName    = "logs"
-	logFilePrefix = "5hagent-debug-"
+	logFilePrefix = "5hagent-"
+	oldLogPrefix  = "5hagent-debug-"
 )
 
 // Logger 日志记录器
 type Logger struct {
 	level  Level
 	output io.Writer // 实际写入器，已封装 color
+	file   *os.File
 	mu     sync.Mutex
 }
 
-// teeWriter 同时写两个 writer，第二个写无颜色版本
-type teeWriter struct {
-	w1, w2 io.Writer
+type colorStripWriter struct {
+	w io.Writer
 }
 
-func (t *teeWriter) Write(p []byte) (int, error) {
-	n1, err1 := t.w1.Write(p)
-	if t.w2 != nil {
-		// 第二个 writer 写无颜色纯文本
-		clean := stripANSIColors(string(p))
-		_, err2 := t.w2.Write([]byte(clean))
-		if err2 != nil {
-			return n1, err2
-		}
+func (w colorStripWriter) Write(p []byte) (int, error) {
+	clean := stripANSIColors(string(p))
+	_, err := w.w.Write([]byte(clean))
+	if err != nil {
+		return 0, err
 	}
-	return n1, err1
+	return len(p), nil
 }
 
 var std = &Logger{
 	level:  INFO,
-	output: os.Stdout,
+	output: io.Discard,
 }
 
 // SetLevel 设置全局日志级别
@@ -73,10 +70,10 @@ func SetLevel(level Level) {
 	std.level = level
 }
 
-// InitDebugLog 初始化 debug 日志文件，写入 ~/.5hAgent/logs/
-// 每次启动新建一个带时间戳的日志文件，并清理超过 maxLogFiles 个旧文件
-// 返回日志文件路径
-func InitDebugLog() (string, error) {
+// InitLog 初始化日志文件，写入 ~/.5hAgent/logs/
+// 每次启动新建一个带时间戳的日志文件，并清理超过 maxLogFiles 个旧文件。
+// logger 只写文件，不写 stdout/stderr，避免污染 TUI。
+func InitLog() (string, error) {
 	std.mu.Lock()
 	defer std.mu.Unlock()
 
@@ -97,19 +94,36 @@ func InitDebugLog() (string, error) {
 	logFile := filepath.Join(logDir, logFilePrefix+timestamp+".log")
 	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		return "", fmt.Errorf("failed to open debug log: %w", err)
+		return "", fmt.Errorf("failed to open log file: %w", err)
 	}
 
-	// stdout 带颜色，文件无颜色
-	std.output = &teeWriter{w1: os.Stdout, w2: f}
+	std.closeFileLocked()
+	// logger 只写文件，避免 stdout/stderr 干扰 Bubble Tea/TUI 渲染。
+	std.output = colorStripWriter{w: f}
+	std.file = f
 	return logFile, nil
 }
 
-// CloseDebugLog 关闭 debug 日志文件，恢复 stdout
+// InitDebugLog 初始化日志文件。
+// Deprecated: use InitLog. Debug 级别由 SetLevel(DEBUG) 控制。
+func InitDebugLog() (string, error) {
+	return InitLog()
+}
+
+// CloseDebugLog 关闭日志文件，恢复静默输出
 func CloseDebugLog() {
 	std.mu.Lock()
 	defer std.mu.Unlock()
-	std.output = os.Stdout
+	std.closeFileLocked()
+	std.output = io.Discard
+	std.file = nil
+}
+
+func (l *Logger) closeFileLocked() {
+	if l.file != nil {
+		_ = l.file.Close()
+		l.file = nil
+	}
 }
 
 // cleanOldLogs 删除多余的旧日志文件，只保留最近 maxLogFiles 个
@@ -121,7 +135,7 @@ func cleanOldLogs(logDir string) {
 
 	var logFiles []string
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasPrefix(e.Name(), logFilePrefix) {
+		if !e.IsDir() && (strings.HasPrefix(e.Name(), logFilePrefix) || strings.HasPrefix(e.Name(), oldLogPrefix)) {
 			logFiles = append(logFiles, e.Name())
 		}
 	}
@@ -221,24 +235,21 @@ func TruncateString(s string, maxLen int) string {
 // stripANSIColors 移除 ANSI 颜色转义码
 func stripANSIColors(s string) string {
 	var b strings.Builder
-	inEscape := false
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\033' && i < len(s)-1 && s[i+1] == '[' {
-			inEscape = true
-			// 跳过 \033[ 到下一个字母
-			i++
-			for i < len(s)-1 {
-				c := s[i]
-				i++
+			// 跳过 \033[ 到下一个字母，外层循环会继续处理后续普通字符。
+			j := i + 2
+			for j < len(s) {
+				c := s[j]
 				if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
 					break
 				}
+				j++
 			}
+			i = j
 			continue
 		}
-		if !inEscape {
-			b.WriteByte(s[i])
-		}
+		b.WriteByte(s[i])
 	}
 	return b.String()
 }
