@@ -75,7 +75,7 @@ func runInteractive(cmd *cobra.Command, args []string) {
 		cli.PrintError(fmt.Errorf("failed to get project data directory: %w", err))
 		os.Exit(1)
 	}
-	taskListPath := filepath.Join(projectDataDir, "tasks.json")
+	taskListPath := filepath.Join(projectDataDir, "task.md")
 
 	taskList, err := task.NewTaskList(taskListPath)
 	if err != nil {

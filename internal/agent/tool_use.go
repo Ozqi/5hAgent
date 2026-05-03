@@ -45,6 +45,7 @@ func (c *toolCollector) Add(chunks []schema.ToolCall) []schema.ToolCall {
 	}
 
 	for _, tc := range chunks {
+		logger.DebugTag("COLL", "Add chunk: id=%s name=%s args=%q", tc.ID, tc.Function.Name, logger.TruncateString(tc.Function.Arguments, 100))
 		c.merge(tc)
 	}
 	return c.extractReady()
@@ -89,7 +90,8 @@ func (c *toolCollector) extractReady() []schema.ToolCall {
 			continue
 		}
 		tc := state.tc
-		if tc.ID == "" || tc.Function.Name == "" || !isValidJSON(tc.Function.Arguments) {
+		// 只有 id、name、arguments 都有效才算完成
+		if tc.ID == "" || tc.Function.Name == "" || tc.Function.Arguments == "" || !isValidJSON(tc.Function.Arguments) {
 			continue
 		}
 		state.dispatched = true

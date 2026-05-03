@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/lzq/5hAgent/internal/logger"
 )
 
@@ -79,5 +80,21 @@ func TestRenderConversationEntryUsesPlainTimelineStyle(t *testing.T) {
 	}
 	if hintRendered == hint {
 		t.Fatalf("hint render = %q, want ANSI color for [tool] and tool name", hintRendered)
+	}
+}
+
+func TestWrapVisibleLinesPreservesANSIAndWideWidth(t *testing.T) {
+	colored := logger.Green("这是一段很长的中文文本")
+	wrapped := wrapVisibleLines(colored, 6)
+	if len(wrapped) < 2 {
+		t.Fatalf("wrapped lines = %#v, want multiple lines", wrapped)
+	}
+	for _, line := range wrapped {
+		if strings.Contains(line, "\x1b[") && !strings.HasSuffix(line, "\x1b[0m") {
+			t.Fatalf("wrapped line has unterminated ANSI sequence: %q", line)
+		}
+		if width := lipgloss.Width(line); width > 6 {
+			t.Fatalf("wrapped line %q width = %d, want <= 6", line, width)
+		}
 	}
 }

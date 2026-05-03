@@ -359,6 +359,19 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		})
 
 		toolCalls := collector.RunnableCalls()
+
+		// 过滤掉空 ID 的调用（流式输出中不完整的调用），避免发给 LLM 造成格式错误
+		var validCalls []schema.ToolCall
+		for _, tc := range toolCalls {
+			if tc.ID == "" || tc.Function.Name == "" {
+				logger.WarnTag("TOOL", "Skipping incomplete tool call: id=%s name=%s", tc.ID, tc.Function.Name)
+				continue
+			}
+			validCalls = append(validCalls, tc)
+		}
+		toolCalls = validCalls
+
+		// 收集已执行的结果（按 queuedCalls 顺序）
 		toolResults := make([]execResult, len(queuedCalls))
 		for res := range toolResultCh {
 			toolResults[res.idx] = res
@@ -375,12 +388,16 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		if len(finalMessage.ToolCalls) > 0 {
 			cb.LogToolCalls(finalMessage.ToolCalls)
 
-			// 添加 assistant 消息
+			// 添加 assistant 消息（即使 content 为空，只要有效工具调用就要加入上下文）
 			if err := a.ctxManager.AddMessage(messageCtx, finalMessage); err != nil {
 				return "", fmt.Errorf("failed to add assistant message: %w", err)
 			}
 
 			for _, res := range toolResults {
+				// 只添加有效工具的结果（id 不为空）
+				if res.tc.ID == "" {
+					continue
+				}
 				if err := a.addToolResult(messageCtx, res.tc, res.result, res.err); err != nil {
 					return "", fmt.Errorf("tool execution failed: %w", err)
 				}

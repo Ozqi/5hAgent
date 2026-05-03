@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	ansi "github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
 	"github.com/lzq/5hAgent/internal/agent"
 	"github.com/lzq/5hAgent/internal/commands"
@@ -836,36 +837,10 @@ func wrapVisibleLines(line string, width int) []string {
 	if width <= 0 || lipgloss.Width(line) <= width || strings.TrimSpace(stripANSI(line)) == "" {
 		return []string{line}
 	}
-
-	var lines []string
-	var current strings.Builder
-	visible := 0
-	runes := []rune(line)
-	for i := 0; i < len(runes); {
-		if runes[i] == '\x1b' {
-			j := i + 1
-			for j < len(runes) && runes[j] != 'm' {
-				j++
-			}
-			if j < len(runes) {
-				j++
-			}
-			current.WriteString(string(runes[i:j]))
-			i = j
-			continue
-		}
-		if visible >= width {
-			lines = append(lines, current.String())
-			current.Reset()
-			visible = 0
-		}
-		current.WriteRune(runes[i])
-		visible++
-		i++
+	if line != stripANSI(line) {
+		line = stripANSI(line)
 	}
-	if current.Len() > 0 {
-		lines = append(lines, current.String())
-	}
+	lines := strings.Split(ansi.Wrap(line, width, " \t"), "\n")
 	if len(lines) == 0 {
 		return []string{line}
 	}
