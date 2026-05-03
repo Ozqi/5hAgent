@@ -2,6 +2,31 @@
 // 功能：执行 shell 命令，返回 stdout/stderr/returncode
 // 主要类型：ExecShellInput, ExecShellOutput
 // 导出函数：NewExecShellTool
+//
+// ============================================================
+// 工具描述（供人类审阅）
+// ============================================================
+// Tool: exec_shell
+// Desc: 执行 shell 命令，返回 stdout、stderr 和返回码。
+//
+//	可执行系统命令、脚本、CLI 工具。是唯一有副作用的工具。
+//
+// Input Parameters:
+//   - command (string, required)  : 要执行的 shell 命令
+//
+// Error Scenarios (LLM Hints):
+//   - empty command              → command 不能为空
+//   - command not found          → 命令不存在或不在 PATH 中；检查命令是否正确安装
+//   - context cancelled           → 命令执行超时或被取消；简化命令或分步执行
+//   - non-zero exit code         → 命令执行失败；查看 stderr 定位错误原因
+//   - permission denied          → 无执行权限；检查命令文件权限
+//
+// Tips:
+//   - 优先使用专门的工具（read_file/edit/write_file/grep/glob）而非 exec_shell
+//   - 命令失败时，查看 stderr 而非只依赖 stdout
+//   - 破坏性操作（rm -rf、dd 等）请先确认路径和参数
+//
+// ============================================================
 package tools
 
 import (
@@ -13,6 +38,21 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"
+)
+
+// --- LLM 描述常量（供 InferEnhancedTool 使用）---
+const (
+	execShellToolName = "base.exec_shell"
+	execShellToolDesc = `执行 shell 命令，返回 stdout、stderr 和返回码。可执行系统命令、脚本、CLI 工具。
+- command: 要执行的 shell 命令（必填）`
+	execShellToolErrors = `empty command: command 不能为空
+command not found: 命令不存在或不在 PATH 中；检查命令是否正确安装
+context cancelled: 命令执行超时或被取消；简化命令或分步执行
+non-zero exit code: 命令执行失败；查看 stderr 定位错误原因
+permission denied: 无执行权限；检查命令文件权限`
+	execShellToolTips = `优先使用专门的工具（read_file/edit/write_file/grep/glob）而非 exec_shell
+命令失败时，查看 stderr 而非只依赖 stdout
+破坏性操作（rm -rf、dd 等）请先确认路径和参数`
 )
 
 // ExecShellInput defines the input parameters for exec_shell tool
@@ -35,30 +75,25 @@ func NewExecShellTool() (tool.EnhancedInvokableTool, error) {
 	}
 
 	return utils.InferEnhancedTool(
-		"base.exec_shell",
-		fmt.Sprintf("Execute a shell command and return stdout, stderr, and return code. Use this tool to run system commands, scripts, or CLI tools. The current workspace root is %s. Prefer paths under this workspace instead of guessing unrelated directories.", workspaceRoot),
+		execShellToolName,
+		fmt.Sprintf("%s (workspace root: %s)", execShellToolDesc, workspaceRoot),
 		func(ctx context.Context, input ExecShellInput) (*schema.ToolResult, error) {
-			// Validate input
 			if input.Command == "" {
-				return nil, fmt.Errorf("command cannot be empty")
+				return nil, fmt.Errorf("command cannot be empty. Provide a valid shell command to execute.")
 			}
 
-			// Execute command using sh -c to support shell features
 			cmd := exec.CommandContext(ctx, "sh", "-c", input.Command)
 
-			// Capture stdout and stderr
 			stdout, err := cmd.Output()
 			var stderr []byte
 			var returnCode int
 
 			if err != nil {
-				// Check if it's an ExitError (command ran but returned non-zero)
 				if exitErr, ok := err.(*exec.ExitError); ok {
 					stderr = exitErr.Stderr
 					returnCode = exitErr.ExitCode()
 				} else {
-					// Other errors (e.g., command not found, context cancelled)
-					return nil, fmt.Errorf("failed to execute command: %w", err)
+					return nil, fmt.Errorf("failed to execute command: %w. Check that the command exists and is in your PATH.", err)
 				}
 			} else {
 				returnCode = 0

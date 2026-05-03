@@ -61,7 +61,7 @@ func NewToolPrinter() *ToolPrinter {
 // PrintToolCall 打印工具调用
 // 格式: ● ToolName(args...)
 func (p *ToolPrinter) PrintToolCall(name string, args string, concurrent bool) {
-	text := formatToolCallText(p.indent, name, args, concurrent)
+	text := formatToolCall(p.indent, name, args, concurrent)
 	if sink := currentToolEventSink(); sink != nil {
 		sink(ToolEvent{Kind: "call", Name: name, Text: text})
 		return
@@ -69,7 +69,7 @@ func (p *ToolPrinter) PrintToolCall(name string, args string, concurrent bool) {
 	fmt.Print(text)
 }
 
-func formatToolCallText(indent string, name string, args string, concurrent bool) string {
+func formatToolCall(indent string, name string, args string, concurrent bool) string {
 	mode := ""
 	if concurrent {
 		mode = " [并发]"

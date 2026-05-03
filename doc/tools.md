@@ -51,6 +51,7 @@ flowchart TB
 | `base.exec_shell` | `exec_shell.go` | 写 | 执行 shell 命令 |
 | `task.task` | `task_tool.go` | 混合 | 统一任务管理入口 |
 | `skill.skill` | `skill_tool.go` | 写 | 启用或禁用技能 |
+| `mcp.list_tools` | `mcp_list_tools.go` | 只读 | 列出 MCP 服务器及工具 |
 | `mcp.<server>.<tool>` | `mcp_tool.go` | 取决于远端 | MCP Server 提供的工具 |
 
 ## InitRegistry
@@ -75,11 +76,11 @@ func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
     }
 
     // 注册 task 工具
-    registry = append(registry, NewTaskTool(taskList))
+    registry = append(registry, &TaskTool{taskList: taskList})
     toolmeta.Register(toolmeta.Meta{..., FullName: "task.task"})
 
     // 注册 skill 工具
-    registry = append(registry, NewSkillTool(skillMgr))
+    registry = append(registry, &SkillTool{mgr: skillMgr})
     toolmeta.Register(toolmeta.Meta{..., FullName: "skill.skill"})
 }
 ```
@@ -233,5 +234,6 @@ func NewExecShellTool() (tool.BaseTool, error) {
 - [task_tool.go](../internal/tools/task_tool.go)
 - [skill_tool.go](../internal/tools/skill_tool.go)
 - [mcp_tool.go](../internal/tools/mcp_tool.go)
+- [mcp_list_tools.go](../internal/tools/mcp_list_tools.go)
 - [tool_use.go](../internal/agent/tool_use.go)
 - [toolmeta.go](../internal/toolmeta/toolmeta.go)

@@ -24,7 +24,7 @@ import (
 	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/skill"
 	"github.com/lzq/5hAgent/internal/task"
-	"github.com/lzq/5hAgent/internal/toolmeta"
+	"github.com/lzq/5hAgent/internal/tools"
 )
 
 const (
@@ -296,7 +296,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		text := compactToolEventText(msg.event)
 		if msg.event.Kind == "call" {
 			m.toolCalls++
-			m.lastTool = fallback(toolmeta.DisplayName(msg.event.Name), msg.event.Name)
+			m.lastTool = fallback(tools.DisplayName(msg.event.Name), msg.event.Name)
 		}
 		m.entries = append(m.entries, conversationEntry{Role: roleHint, Content: text})
 		m.currentAssistant = -1
@@ -675,11 +675,11 @@ func (m *AppModel) findToolEntry(name string) int {
 func compactToolEventText(event logger.ToolEvent) string {
 	clean := strings.TrimSpace(stripANSI(event.Text))
 	if clean == "" {
-		return fmt.Sprintf("[tool] %s", fallback(toolmeta.DisplayName(event.Name), event.Name))
+		return fmt.Sprintf("[tool] %s", fallback(tools.DisplayName(event.Name), event.Name))
 	}
 
 	entry := parseToolBlock(clean)
-	displayName := fallback(entry.Name, toolmeta.DisplayName(event.Name))
+	displayName := fallback(entry.Name, tools.DisplayName(event.Name))
 	displayName = fallback(displayName, event.Name)
 	if displayName == "" {
 		displayName = "tool"
@@ -795,7 +795,7 @@ func renderStatusPanel(snapshot statusSnapshot, width int) string {
 		renderRow("STATE", snapshot.CurrentState),
 		renderRow("BUSY", fmt.Sprintf("%v", snapshot.Busy)),
 		renderRow("TOOLS", fmt.Sprintf("%d", snapshot.ToolCallsTotal)),
-		renderRow("LAST", fallback(toolmeta.DisplayName(snapshot.LastToolName), "-")),
+		renderRow("LAST", fallback(tools.DisplayName(snapshot.LastToolName), "-")),
 		"",
 		sectionTitleStyle.Render("ENVIRONMENT_CTX"),
 		renderRow("MODEL", fallback(snapshotModelName(snapshot), "-")),

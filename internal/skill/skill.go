@@ -114,6 +114,7 @@ func (m *Manager) loadSkillFile(path string) (*Skill, error) {
 }
 
 // GetSkill 获取指定技能
+// GetSkill retrieves a skill by name. Returns (skill, true) if found, (nil, false) otherwise.
 func (m *Manager) GetSkill(name string) (*Skill, bool) {
 	skill, ok := m.skills[name]
 	return skill, ok
