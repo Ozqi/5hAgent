@@ -19,7 +19,6 @@ import (
 	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/skill"
 	"github.com/lzq/5hAgent/internal/utils"
-	
 )
 
 // Agent AI Agent 核心结构体
@@ -27,8 +26,8 @@ import (
 type Agent struct {
 	// 核心组件
 	model   model.ToolCallingChatModel // LLM 模型
-	tools   []tool.BaseTool           // 工具列表
-	toolMap map[string]tool.BaseTool  // 工具名称映射表
+	tools   []tool.BaseTool            // 工具列表
+	toolMap map[string]tool.BaseTool   // 工具名称映射表
 
 	// 配置
 	config *Config // Agent 配置
@@ -340,17 +339,29 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			}
 		}
 		reader.Close()
+
+		for _, tc := range collector.PendingRunnableCalls() {
+			if err := repeatGuard.Check([]schema.ToolCall{tc}); err != nil {
+				close(toolQueue)
+				for range toolResultCh {
+				}
+				return "", err
+			}
+			idx := len(queuedCalls)
+			queuedCalls = append(queuedCalls, tc)
+			toolQueue <- toolRequest{idx: idx, tc: tc}
+		}
 		close(toolQueue)
 
 		content := fullContent.String()
-		
+
 		// 转换 token usage 类型
 		var tokenUsage *model.TokenUsage
 		if responseMeta != nil && responseMeta.Usage != nil {
 			tokenUsage = &model.TokenUsage{
-				PromptTokens:       responseMeta.Usage.PromptTokens,
-				CompletionTokens:   responseMeta.Usage.CompletionTokens,
-				TotalTokens:        responseMeta.Usage.TotalTokens,
+				PromptTokens:     responseMeta.Usage.PromptTokens,
+				CompletionTokens: responseMeta.Usage.CompletionTokens,
+				TotalTokens:      responseMeta.Usage.TotalTokens,
 			}
 		}
 		cb.OnModelEnd(ctx, nil, &model.CallbackOutput{
@@ -358,7 +369,8 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			TokenUsage: tokenUsage,
 		})
 
-		toolCalls := collector.RunnableCalls()
+		toolCalls := make([]schema.ToolCall, len(queuedCalls))
+		copy(toolCalls, queuedCalls)
 
 		// 过滤掉空 ID 的调用（流式输出中不完整的调用），避免发给 LLM 造成格式错误
 		var validCalls []schema.ToolCall

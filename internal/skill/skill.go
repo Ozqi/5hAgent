@@ -108,7 +108,7 @@ func (m *Manager) loadSkillFile(path string) (*Skill, error) {
 	}
 
 	skill.Content = strings.TrimSpace(parts[1])
-	skill.Enabled = false // 默认禁用
+	skill.Enabled = true // 默认启用所有 skills
 
 	return &skill, nil
 }

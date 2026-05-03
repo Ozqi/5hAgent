@@ -39,3 +39,32 @@ func TestExeToolCallDebugCallbackDoesNotPanic(t *testing.T) {
 		t.Fatalf("exeToolCall() result = %q, want ok", result)
 	}
 }
+
+func TestToolCollectorPendingRunnableCallsNormalizesEmptyArguments(t *testing.T) {
+	idx := 0
+	collector := newToolCollector()
+
+	ready := collector.Add([]schema.ToolCall{{
+		Index: &idx,
+		ID:    "call_1",
+		Function: schema.FunctionCall{
+			Name: "mcp.notion.API-get-self",
+		},
+	}})
+	if len(ready) != 0 {
+		t.Fatalf("Add() ready calls = %d, want 0 before stream ends", len(ready))
+	}
+
+	pending := collector.PendingRunnableCalls()
+	if len(pending) != 1 {
+		t.Fatalf("PendingRunnableCalls() = %d, want 1", len(pending))
+	}
+	if pending[0].Function.Arguments != "{}" {
+		t.Fatalf("arguments = %q, want {}", pending[0].Function.Arguments)
+	}
+
+	again := collector.PendingRunnableCalls()
+	if len(again) != 0 {
+		t.Fatalf("second PendingRunnableCalls() = %d, want 0", len(again))
+	}
+}

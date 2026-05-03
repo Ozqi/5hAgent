@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,11 +47,13 @@ type StdioClient struct {
 	args       []string
 	env        map[string]string
 
-	cmd    *exec.Cmd
-	stdin  io.Writer
-	stdout *bufio.Reader
+	cmd        *exec.Cmd
+	stdin      io.Writer
+	stdout     *bufio.Reader
+	stdoutPipe io.ReadCloser
 
 	mu          sync.RWMutex
+	stdinMu     sync.Mutex
 	requestID   atomic.Int64
 	pendingReqs map[int64]chan *jsonrpcResponse
 
@@ -98,14 +101,20 @@ func NewStdioClient(ctx context.Context, config StdioClientConfig) (*StdioClient
 func (c *StdioClient) start(ctx context.Context) error {
 	cmd := exec.Command(c.command, c.args...)
 
-	// 设置环境变量
-	if c.env != nil {
-		for k, v := range c.env {
-			cmd.Env = append(cmd.Env, k+"="+v)
+	// 设置环境变量：先继承系统环境，再用自定义值覆盖
+	envMap := make(map[string]string)
+	for _, e := range os.Environ() {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			envMap[k] = v
 		}
 	}
-	// 继承当前环境
-	cmd.Env = append(cmd.Env, os.Environ()...)
+	for k, v := range c.env {
+		envMap[k] = v
+	}
+	cmd.Env = make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
 
 	// 设置 stdio
 	stdin, err := cmd.StdinPipe()
@@ -130,6 +139,7 @@ func (c *StdioClient) start(ctx context.Context) error {
 
 	c.cmd = cmd
 	c.stdin = stdin
+	c.stdoutPipe = stdout
 	c.stdout = bufio.NewReaderSize(stdout, 64*1024)
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
@@ -161,51 +171,62 @@ func (c *StdioClient) start(ctx context.Context) error {
 	return nil
 }
 
-// readLoop 读取 stdout 并分发响应
+// readLoop 读取 stdout 并分发响应/通知
 func (c *StdioClient) readLoop() {
 	for {
-		select {
-		case <-c.ctx.Done():
+		line, err := c.stdout.ReadBytes('\n')
+		if err != nil {
+			if err != io.EOF {
+				logger.ErrorTag("MCP", "Read error from %s: %v", c.serverName, err)
+			}
 			return
-		default:
-			line, err := c.stdout.ReadBytes('\n')
-			if err != nil {
-				if err != io.EOF {
-					logger.ErrorTag("MCP", "Read error from %s: %v", c.serverName, err)
+		}
+
+		if len(line) == 0 {
+			continue
+		}
+
+		// 解析消息
+		lineStr := string(line)
+		if gjson.Valid(lineStr) {
+			msg := gjson.Parse(lineStr)
+
+			// 检查是否有 id 字段（响应消息 vs 通知）
+			if id := msg.Get("id"); id.Exists() {
+				idVal := id.Int()
+
+				c.mu.Lock()
+				ch, ok := c.pendingReqs[idVal]
+				if ok {
+					delete(c.pendingReqs, idVal)
 				}
-				return
-			}
+				c.mu.Unlock()
 
-			if len(line) == 0 {
-				continue
-			}
-
-			// 解析消息
-			lineStr := string(line)
-			if gjson.Valid(lineStr) {
-				msg := gjson.Parse(lineStr)
-
-				// 检查是否有 id 字段（响应消息）
-				if id := msg.Get("id"); id.Exists() {
-					idVal := id.Int()
-
-					c.mu.Lock()
-					ch, ok := c.pendingReqs[idVal]
-					if ok {
-						delete(c.pendingReqs, idVal)
-					}
-					c.mu.Unlock()
-
-					if ok && ch != nil {
-						var resp jsonrpcResponse
-						if err := json.Unmarshal(line, &resp); err == nil {
-							select {
-							case ch <- &resp:
-							case <-time.After(5 * time.Second):
-								// 超时丢弃
-							}
+				if ok && ch != nil {
+					var resp jsonrpcResponse
+					if err := json.Unmarshal(line, &resp); err == nil {
+						select {
+						case ch <- &resp:
+						case <-time.After(5 * time.Second):
+							// 超时丢弃
 						}
 					}
+				}
+			} else {
+				// 通知消息（无 id），例如 tools/list_changed
+				method := msg.Get("method").String()
+				if method == "notifications/tools/list_changed" {
+					logger.InfoTag("MCP", "Server %s notified tools changed, refreshing...", c.serverName)
+					// 异步刷新，避免阻塞 readLoop 导致死锁
+					go func() {
+						ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						defer cancel()
+						if err := c.refreshTools(ctx); err != nil {
+							logger.WarnTag("MCP", "Failed to refresh tools from %s: %v", c.serverName, err)
+						}
+					}()
+				} else {
+					logger.DebugTag("MCP", "Received notification from %s: %s", c.serverName, method)
 				}
 			}
 		}
@@ -281,6 +302,9 @@ func (c *StdioClient) refreshTools(ctx context.Context) error {
 					Description: t.Get("description").Str,
 					ReadOnly:    t.Get("readOnly").Bool(),
 				}
+				if inputSchemaRaw := t.Get("inputSchema").Raw; inputSchemaRaw != "" {
+					tool.InputSchema = json.RawMessage(inputSchemaRaw)
+				}
 				tools = append(tools, tool)
 			}
 			c.tools = tools
@@ -322,23 +346,42 @@ func (c *StdioClient) CallTool(ctx context.Context, toolName string, arguments s
 		return "", fmt.Errorf("tool call error: %s", resp.Error.Message)
 	}
 
-	// 提取 content
+	// 提取 content 和 isError
 	resultStr := string(resp.Result)
-	content := gjson.Parse(resultStr).Get("content").Raw
+	result := gjson.Parse(resultStr)
+	isError := result.Get("isError").Bool()
+	content := result.Get("content").Raw
 
 	// 解析 content 数组，提取文本
+	var texts []string
 	var contents []map[string]interface{}
 	if err := json.Unmarshal([]byte(content), &contents); err == nil {
 		for _, item := range contents {
+			// 检查单个 item 的 isError
+			if itemIsErr, ok := item["isError"].(bool); ok && itemIsErr {
+				isError = true
+			}
 			if item["type"] == "text" {
 				if text, ok := item["text"].(string); ok {
-					return text, nil
+					texts = append(texts, text)
 				}
 			}
 		}
 	}
 
+	if len(texts) > 0 {
+		combined := strings.Join(texts, "\n")
+		if isError {
+			return "", fmt.Errorf("MCP tool error: %s", combined)
+		}
+		return combined, nil
+	}
+
+	if isError {
+		return "", fmt.Errorf("MCP tool error: %s", resultStr)
+	}
 	return resultStr, nil
+
 }
 
 // sendRequest 发送请求并等待响应
@@ -369,10 +412,10 @@ func (c *StdioClient) sendRequest(ctx context.Context, method string, params jso
 		c.mu.Unlock()
 	}()
 
-	// 发送请求
-	c.mu.RLock()
+	// 发送请求（stdinMu 保护并发写入）
+	c.stdinMu.Lock()
 	_, err = c.stdin.Write(append(reqJSON, '\n'))
-	c.mu.RUnlock()
+	c.stdinMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("write request failed: %w", err)
 	}
@@ -401,7 +444,12 @@ func (c *StdioClient) sendNotification(method string, params interface{}) {
 		Params:  paramsJSON,
 	}
 	reqJSON, _ := json.Marshal(req)
-	c.stdin.Write(append(reqJSON, '\n'))
+	c.stdinMu.Lock()
+	_, err := c.stdin.Write(append(reqJSON, '\n'))
+	c.stdinMu.Unlock()
+	if err != nil {
+		logger.WarnTag("MCP", "Failed to send notification to %s: %v", c.serverName, err)
+	}
 }
 
 // ListTools 返回可用工具列表
@@ -416,6 +464,11 @@ func (c *StdioClient) ListTools() []ToolSpec {
 // Close 关闭连接
 func (c *StdioClient) Close() error {
 	c.cancel()
+
+	// 关闭 stdout pipe 以中断 readLoop 中的 ReadBytes 阻塞
+	if c.stdoutPipe != nil {
+		c.stdoutPipe.Close()
+	}
 
 	if c.stdin != nil {
 		if w, ok := c.stdin.(io.Closer); ok {

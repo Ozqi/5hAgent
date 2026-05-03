@@ -51,6 +51,12 @@ func (c *toolCollector) Add(chunks []schema.ToolCall) []schema.ToolCall {
 	return c.extractReady()
 }
 
+// PendingRunnableCalls returns complete calls that were not dispatched while streaming.
+// Empty arguments are normalized to {} for no-argument tools after the stream ends.
+func (c *toolCollector) PendingRunnableCalls() []schema.ToolCall {
+	return c.runnableCalls(false, true)
+}
+
 // merge 合并单个 ToolCall
 func (c *toolCollector) merge(tc schema.ToolCall) {
 	idx := 0
@@ -83,14 +89,22 @@ func (c *toolCollector) merge(tc schema.ToolCall) {
 
 // extractReady 提取已完成的调用
 func (c *toolCollector) extractReady() []schema.ToolCall {
+	return c.runnableCalls(false, false)
+}
+
+func (c *toolCollector) runnableCalls(includeDispatched bool, allowEmptyArguments bool) []schema.ToolCall {
 	var ready []schema.ToolCall
 	for idx := range c.states {
 		state := c.states[idx]
-		if state.dispatched {
+		if state.dispatched && !includeDispatched {
 			continue
 		}
 		tc := state.tc
-		// 只有 id、name、arguments 都有效才算完成
+		// Streaming cannot distinguish "no arguments" from "arguments not arrived yet" until EOF.
+		if allowEmptyArguments && tc.Function.Arguments == "" {
+			tc.Function.Arguments = "{}"
+			state.tc.Function.Arguments = tc.Function.Arguments
+		}
 		if tc.ID == "" || tc.Function.Name == "" || tc.Function.Arguments == "" || !isValidJSON(tc.Function.Arguments) {
 			continue
 		}
@@ -102,14 +116,7 @@ func (c *toolCollector) extractReady() []schema.ToolCall {
 
 // RunnableCalls 返回所有有效调用
 func (c *toolCollector) RunnableCalls() []schema.ToolCall {
-	var calls []schema.ToolCall
-	for _, state := range c.states {
-		tc := state.tc
-		if tc.ID != "" && tc.Function.Name != "" && isValidJSON(tc.Function.Arguments) {
-			calls = append(calls, tc)
-		}
-	}
-	return calls
+	return c.runnableCalls(true, true)
 }
 
 // execResult 工具执行结果

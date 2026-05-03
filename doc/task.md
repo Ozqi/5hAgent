@@ -132,7 +132,7 @@ Agent 通过 `task.task` 工具调用任务管理：
 
 ## 持久化格式
 
-Task 存储在 `./5hagent/tasks.json`（项目启动目录），使用 Markdown 区块标记：
+Task 存储在 `./.5hagent/task.md`（项目启动目录），使用 Markdown 区块标记：
 
 ```markdown
 # Shared Task List

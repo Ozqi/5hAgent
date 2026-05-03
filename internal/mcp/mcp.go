@@ -6,6 +6,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"time"
@@ -22,9 +23,10 @@ type ServerConfig struct {
 }
 
 type ToolSpec struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	ReadOnly    bool   `json:"read_only,omitempty"`
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	ReadOnly    bool            `json:"read_only,omitempty"`
+	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
 }
 
 type Client interface {
