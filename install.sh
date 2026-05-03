@@ -56,25 +56,20 @@ ok "已安装到 $INSTALL_DIR/$BINARY_NAME"
 
 # ── 6. 初始化配置目录 ──
 mkdir -p "$CONFIG_DIR"
-if [ ! -f "$CONFIG_DIR/config.yaml" ]; then
-    cat > "$CONFIG_DIR/config.yaml" << 'YAML'
-# 5hAgent Configuration
-llm:
-    api_key: your_api_key_here
-    base_url: https://api.anthropic.com
-    model: claude-sonnet-4-6
-    max_tokens: 4096
-agent:
-    name: 5hAgent
-    max_total_tokens: 200000
-    repeat_tool_limit: 5
-    debug: false
-mcp:
-    servers: []
-YAML
-    ok "已创建默认配置: $CONFIG_DIR/config.yaml"
+if [ ! -f "$CONFIG_DIR/.env" ]; then
+    cat > "$CONFIG_DIR/.env" << 'ENV'
+# 5hAgent LLM 配置
+LLM_API_KEY=your_api_key_here
+LLM_BASE_URL=https://api.anthropic.com
+LLM_MODEL=claude-sonnet-4-6
+LLM_MAX_TOKENS=4096
+AGENT_NAME=5hAgent
+AGENT_MAX_TOTAL_TOKENS=200000
+AGENT_REPEAT_TOOL_LIMIT=5
+ENV
+    ok "已创建默认配置: $CONFIG_DIR/.env"
 else
-    warn "配置文件已存在，跳过: $CONFIG_DIR/config.yaml"
+    warn "配置文件已存在，跳过: $CONFIG_DIR/.env"
 fi
 
 if [ ! -f "$CONFIG_DIR/mcp.json" ]; then
@@ -102,4 +97,4 @@ ok "安装完成！运行方式:"
 echo "  $INSTALL_DIR/$BINARY_NAME"
 echo ""
 echo "首次使用前请编辑配置文件，填入你的 LLM API Key:"
-echo "  $CONFIG_DIR/config.yaml"
+echo "  $CONFIG_DIR/.env"
