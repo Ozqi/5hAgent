@@ -44,7 +44,7 @@
 
 > `AstCodeSplitter` 内部维护了一组 `SPLITTABLE_NODE_TYPES`。不同语言有不同的可切节点。
 
-> 典型映射如下：
+> 典型映射如下 ：
 > - JavaScript / TypeScript: `function_declaration`、`class_declaration`、`method_definition`、`export_statement`
 > - Python: `function_definition`、`class_definition`、`decorated_definition`、`async_function_definition`
 > - Go: `function_declaration`、`method_declaration`、`type_declaration`、`var_declaration`、`const_declaration`

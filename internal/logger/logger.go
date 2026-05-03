@@ -1,13 +1,21 @@
 // logger.go - 日志输出
 // 功能：带标签的 DEBUG/INFO/WARN/ERROR 日志，支持颜色输出
+//
+//	debug 模式下自动写入独立日志文件 ~/.5hAgent/logs/
+//
 // 主要类型：Logger, Level
-// 导出函数：SetLevel, SetOutput, Debug, Info, Warn, Error, DebugTag, InfoTag, WarnTag, ErrorTag, TruncateString
+// 导出函数：SetLevel, InitDebugLog, CloseDebugLog, Debug, Info, Warn, Error,
+//
+//	DebugTag, InfoTag, WarnTag, ErrorTag, TruncateString
 package logger
 
 import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,18 +30,35 @@ const (
 	ERROR
 )
 
-var levelNames = map[Level]string{
-	DEBUG: "DEBUG",
-	INFO:  "INFO",
-	WARN:  "WARN",
-	ERROR: "ERROR",
-}
+const (
+	maxLogFiles   = 30
+	logDirName    = "logs"
+	logFilePrefix = "5hagent-debug-"
+)
 
 // Logger 日志记录器
 type Logger struct {
 	level  Level
-	output io.Writer
+	output io.Writer // 实际写入器，已封装 color
 	mu     sync.Mutex
+}
+
+// teeWriter 同时写两个 writer，第二个写无颜色版本
+type teeWriter struct {
+	w1, w2 io.Writer
+}
+
+func (t *teeWriter) Write(p []byte) (int, error) {
+	n1, err1 := t.w1.Write(p)
+	if t.w2 != nil {
+		// 第二个 writer 写无颜色纯文本
+		clean := stripANSIColors(string(p))
+		_, err2 := t.w2.Write([]byte(clean))
+		if err2 != nil {
+			return n1, err2
+		}
+	}
+	return n1, err1
 }
 
 var std = &Logger{
@@ -48,17 +73,67 @@ func SetLevel(level Level) {
 	std.level = level
 }
 
-// SetOutput 设置输出目标
-func SetOutput(w io.Writer) {
+// InitDebugLog 初始化 debug 日志文件，写入 ~/.5hAgent/logs/
+// 每次启动新建一个带时间戳的日志文件，并清理超过 maxLogFiles 个旧文件
+// 返回日志文件路径
+func InitDebugLog() (string, error) {
 	std.mu.Lock()
 	defer std.mu.Unlock()
-	std.output = w
+
+	configDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home dir: %w", err)
+	}
+	logDir := filepath.Join(configDir, ".5hAgent", logDirName)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create log dir: %w", err)
+	}
+
+	// 清理旧文件（只保留最近 maxLogFiles 个）
+	cleanOldLogs(logDir)
+
+	// 新建文件
+	timestamp := time.Now().Format("20060102-150405")
+	logFile := filepath.Join(logDir, logFilePrefix+timestamp+".log")
+	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return "", fmt.Errorf("failed to open debug log: %w", err)
+	}
+
+	// stdout 带颜色，文件无颜色
+	std.output = &teeWriter{w1: os.Stdout, w2: f}
+	return logFile, nil
 }
 
-func Output() io.Writer {
+// CloseDebugLog 关闭 debug 日志文件，恢复 stdout
+func CloseDebugLog() {
 	std.mu.Lock()
 	defer std.mu.Unlock()
-	return std.output
+	std.output = os.Stdout
+}
+
+// cleanOldLogs 删除多余的旧日志文件，只保留最近 maxLogFiles 个
+func cleanOldLogs(logDir string) {
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		return
+	}
+
+	var logFiles []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasPrefix(e.Name(), logFilePrefix) {
+			logFiles = append(logFiles, e.Name())
+		}
+	}
+	if len(logFiles) <= maxLogFiles {
+		return
+	}
+
+	sort.Strings(logFiles)
+	toDelete := logFiles[:len(logFiles)-maxLogFiles]
+	for _, name := range toDelete {
+		os.Remove(filepath.Join(logDir, name))
+	}
 }
 
 // log 内部日志输出函数
@@ -141,4 +216,29 @@ func TruncateString(s string, maxLen int) string {
 	// 显示前后各一半
 	half := (maxLen - 3) / 2
 	return string(runes[:half]) + "..." + string(runes[len(runes)-half:])
+}
+
+// stripANSIColors 移除 ANSI 颜色转义码
+func stripANSIColors(s string) string {
+	var b strings.Builder
+	inEscape := false
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\033' && i < len(s)-1 && s[i+1] == '[' {
+			inEscape = true
+			// 跳过 \033[ 到下一个字母
+			i++
+			for i < len(s)-1 {
+				c := s[i]
+				i++
+				if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+					break
+				}
+			}
+			continue
+		}
+		if !inEscape {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
 }

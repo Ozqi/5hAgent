@@ -7,7 +7,6 @@ package tools
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -92,32 +91,11 @@ func NewReadFileTool() (tool.EnhancedInvokableTool, error) {
 			}
 
 			// Build output
-			output := ReadFileOutput{
-				Content:    "",
-				TotalLines: totalLines,
-			}
-
-			// Format content with line numbers
+			output := ReadFileOutput{Content: "", TotalLines: totalLines}
 			for i, line := range lines {
-				lineNumber := input.Offset + i
-				output.Content += fmt.Sprintf("%d\t%s\n", lineNumber, line)
+				output.Content += fmt.Sprintf("%d\t%s\n", input.Offset+i, line)
 			}
-
-			// Convert output to JSON string
-			outputJSON, err := json.Marshal(output)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal output: %w", err)
-			}
-
-			// Return as ToolResult with text part
-			return &schema.ToolResult{
-				Parts: []schema.ToolOutputPart{
-					{
-						Type: schema.ToolPartTypeText,
-						Text: string(outputJSON),
-					},
-				},
-			}, nil
+			return JSONResult(output)
 		},
 	)
 }

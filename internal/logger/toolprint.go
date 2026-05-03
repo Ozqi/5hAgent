@@ -1,7 +1,5 @@
 // toolprint.go - 工具调用格式化输出
 // 功能：ToolCall/ToolResult/ToolError 的终端展示（带颜色和缩进）
-// 主要类型：ToolPrinter, ToolEvent, toolCallSummary, toolResultSummary
-// 导出函数：PrintToolCall, PrintToolResult, PrintToolError, PrintToolStatus, PrintSummary, SetToolEventSink
 package logger
 
 import (
@@ -12,11 +10,6 @@ import (
 	"strings"
 	"sync"
 )
-
-// ToolPrinter 工具调用的格式化输出
-type ToolPrinter struct {
-	indent string
-}
 
 type toolCallSummary struct {
 	Title  string
@@ -51,25 +44,9 @@ func currentToolEventSink() func(ToolEvent) {
 	return toolEventSink
 }
 
-// NewToolPrinter 创建新的工具打印器
-func NewToolPrinter() *ToolPrinter {
-	return &ToolPrinter{
-		indent: "  ",
-	}
-}
+const toolIndent = "  "
 
-// PrintToolCall 打印工具调用
-// 格式: ● ToolName(args...)
-func (p *ToolPrinter) PrintToolCall(name string, args string, concurrent bool) {
-	text := formatToolCallText(p.indent, name, args, concurrent)
-	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "call", Name: name, Text: text})
-		return
-	}
-	fmt.Print(text)
-}
-
-func formatToolCallText(indent string, name string, args string, concurrent bool) string {
+func formatToolCallText(name string, args string, concurrent bool) string {
 	mode := ""
 	if concurrent {
 		mode = " [并发]"
@@ -82,28 +59,17 @@ func formatToolCallText(indent string, name string, args string, concurrent bool
 	b.WriteString(Gray(mode))
 	b.WriteString("\n")
 	for _, field := range summary.Fields {
-		b.WriteString(indent)
+		b.WriteString(toolIndent)
 		b.WriteString(Gray(field))
 		b.WriteString("\n")
 	}
 	return b.String()
 }
 
-// PrintToolResult 打印工具执行结果
-// 格式: ⎿ summary/content
-func (p *ToolPrinter) PrintToolResult(name string, args string, result string) {
-	text := formatToolResultText(p.indent, name, args, result)
-	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "result", Name: name, Text: text})
-		return
-	}
-	fmt.Print(text)
-}
-
-func formatToolResultText(indent string, name string, args string, result string) string {
+func formatToolResultText(name string, args string, result string) string {
 	var b strings.Builder
 	if strings.TrimSpace(result) == "" {
-		b.WriteString(indent)
+		b.WriteString(toolIndent)
 		b.WriteString("⎿ ")
 		b.WriteString(Gray("(无输出)"))
 		b.WriteString("\n")
@@ -112,12 +78,12 @@ func formatToolResultText(indent string, name string, args string, result string
 
 	summary := summarizeToolResult(name, args, result)
 	if len(summary.Fields) == 0 && len(summary.Lines) == 0 {
-		return formatIndentedLines(indent+"⎿ ", splitDisplayLines(result, 4, 150))
+		return formatIndentedLines(toolIndent+"⎿ ", splitDisplayLines(result, 4, 150))
 	}
 
 	if len(summary.Fields) > 0 {
 		for i, field := range summary.Fields {
-			prefix := indent
+			prefix := toolIndent
 			if i == 0 {
 				prefix += "⎿ "
 			} else {
@@ -131,9 +97,9 @@ func formatToolResultText(indent string, name string, args string, result string
 
 	if len(summary.Lines) > 0 {
 		for i, line := range summary.Lines {
-			prefix := indent + "  "
+			prefix := toolIndent + "  "
 			if len(summary.Fields) == 0 && i == 0 {
-				prefix = indent + "⎿ "
+				prefix = toolIndent + "⎿ "
 			}
 			b.WriteString(prefix)
 			b.WriteString(line)
@@ -143,11 +109,186 @@ func formatToolResultText(indent string, name string, args string, result string
 	return b.String()
 }
 
+func formatIndentedLines(prefix string, lines []string) string {
+	var b strings.Builder
+	for i, line := range lines {
+		linePrefix := "  "
+		if i == 0 {
+			linePrefix = prefix
+		}
+		b.WriteString(linePrefix)
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func splitDisplayLines(text string, limit int, maxWidth int) []string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return nil
+	}
+
+	parts := strings.Split(trimmed, "\n")
+	lines := make([]string, 0, min(limit, len(parts)))
+	for i, line := range parts {
+		if i >= limit {
+			break
+		}
+		lines = append(lines, TruncateString(line, maxWidth))
+	}
+	if len(parts) > limit {
+		lines = append(lines, Gray("..."))
+	}
+	return lines
+}
+
+func linesWithEllipsis(lines []string, total int, shown int) []string {
+	if total > shown {
+		return append(lines, Gray("..."))
+	}
+	return lines
+}
+
+func compactFields(fields []string) []string {
+	filtered := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if strings.TrimSpace(field) != "" {
+			filtered = append(filtered, field)
+		}
+	}
+	return filtered
+}
+
+func formatField(key string, value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s: %s", key, value)
+}
+
+func formatLineRange(offset int, limit int) string {
+	if offset <= 0 && limit <= 0 {
+		return ""
+	}
+	if offset <= 0 {
+		offset = 1
+	}
+	if limit <= 0 {
+		return fmt.Sprintf("from %d", offset)
+	}
+	return fmt.Sprintf("%d-%d", offset, offset+limit-1)
+}
+
+func shortenPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	clean := filepath.Clean(path)
+	parts := strings.Split(clean, string(filepath.Separator))
+	if len(parts) <= 4 {
+		return clean
+	}
+	return filepath.Join("...", parts[len(parts)-3], parts[len(parts)-2], parts[len(parts)-1])
+}
+
+func stringValue(v interface{}) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return valueString(v)
+}
+
+func boolValue(v interface{}) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return false
+}
+
+func intValue(v interface{}) int {
+	if n, ok := v.(float64); ok {
+		return int(n)
+	}
+	if n, ok := v.(int); ok {
+		return n
+	}
+	return 0
+}
+
+func valueString(v interface{}) string {
+	switch vv := v.(type) {
+	case string:
+		return vv
+	case float64:
+		return fmt.Sprintf("%d", int(vv))
+	case bool:
+		if vv {
+			return "true"
+		}
+		return "false"
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return string(b)
+}
+
+// asObjects 转换 interface{} 为 []map[string]interface{}
+func asObjects(v interface{}) []map[string]interface{} {
+	items, ok := v.([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		if obj, ok := item.(map[string]interface{}); ok {
+			result = append(result, obj)
+		}
+	}
+	return result
+}
+
+// stringSlice 转换 interface{} 为 []string
+func stringSlice(v interface{}) []string {
+	items, ok := v.([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if s, ok := item.(string); ok {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// PrintToolCall 打印工具调用
+func PrintToolCall(name string, args string, concurrent bool) {
+	text := formatToolCallText(name, args, concurrent)
+	if sink := currentToolEventSink(); sink != nil {
+		sink(ToolEvent{Kind: "call", Name: name, Text: text})
+		return
+	}
+	fmt.Print(text)
+}
+
+// PrintToolResult 打印工具执行结果
+func PrintToolResult(name string, args string, result string) {
+	text := formatToolResultText(name, args, result)
+	if sink := currentToolEventSink(); sink != nil {
+		sink(ToolEvent{Kind: "result", Name: name, Text: text})
+		return
+	}
+	fmt.Print(text)
+}
+
 // PrintToolError 打印工具执行错误
-// 格式: ⎿ ✗ error
-func (p *ToolPrinter) PrintToolError(name string, args string, err error) {
+func PrintToolError(name string, args string, err error) {
 	_ = summarizeToolCall(name, args)
-	text := fmt.Sprintf("%s⎿ %s %s\n", p.indent, Red("✗"), Red(err.Error()))
+	text := fmt.Sprintf("%s⎿ %s %s\n", toolIndent, Red("✗"), Red(err.Error()))
 	if sink := currentToolEventSink(); sink != nil {
 		sink(ToolEvent{Kind: "error", Name: name, Text: text})
 		return
@@ -156,9 +297,8 @@ func (p *ToolPrinter) PrintToolError(name string, args string, err error) {
 }
 
 // PrintToolStatus 打印工具状态信息
-// 格式: ⎿ status message
-func (p *ToolPrinter) PrintToolStatus(message string) {
-	text := fmt.Sprintf("%s⎿ %s\n", p.indent, Gray(message))
+func PrintToolStatus(message string) {
+	text := fmt.Sprintf("%s⎿ %s\n", toolIndent, Gray(message))
 	if sink := currentToolEventSink(); sink != nil {
 		sink(ToolEvent{Kind: "status", Text: text})
 		return
@@ -166,43 +306,14 @@ func (p *ToolPrinter) PrintToolStatus(message string) {
 	fmt.Print(text)
 }
 
-// PrintSummary 打印工具执行汇总
-// 格式: Searched for N patterns, read M files (ctrl+o to expand)
-func (p *ToolPrinter) PrintSummary(message string) {
-	text := fmt.Sprintf("\n%s%s\n", p.indent, Gray(message))
+// PrintToolSummary 打印工具执行汇总
+func PrintToolSummary(message string) {
+	text := fmt.Sprintf("\n%s%s\n", toolIndent, Gray(message))
 	if sink := currentToolEventSink(); sink != nil {
 		sink(ToolEvent{Kind: "summary", Text: text})
 		return
 	}
 	fmt.Print(text)
-}
-
-// Global instance
-var defaultToolPrinter = NewToolPrinter()
-
-// PrintToolCall 全局函数：打印工具调用
-func PrintToolCall(name string, args string, concurrent bool) {
-	defaultToolPrinter.PrintToolCall(name, args, concurrent)
-}
-
-// PrintToolResult 全局函数：打印工具结果
-func PrintToolResult(name string, args string, result string) {
-	defaultToolPrinter.PrintToolResult(name, args, result)
-}
-
-// PrintToolError 全局函数：打印工具错误
-func PrintToolError(name string, args string, err error) {
-	defaultToolPrinter.PrintToolError(name, args, err)
-}
-
-// PrintToolStatus 全局函数：打印工具状态
-func PrintToolStatus(message string) {
-	defaultToolPrinter.PrintToolStatus(message)
-}
-
-// PrintToolSummary 全局函数：打印工具汇总
-func PrintToolSummary(message string) {
-	defaultToolPrinter.PrintSummary(message)
 }
 
 func summarizeToolCall(name string, args string) toolCallSummary {
@@ -221,25 +332,21 @@ func summarizeToolCall(name string, args string) toolCallSummary {
 	case "read_file":
 		summary.Fields = append(summary.Fields,
 			formatField("path", shortenPath(stringValue(raw["path"]))),
-			formatField("lines", formatLineRange(intValue(raw["offset"]), intValue(raw["limit"]))),
-		)
+			formatField("lines", formatLineRange(intValue(raw["offset"]), intValue(raw["limit"]))))
 	case "grep":
 		summary.Fields = append(summary.Fields,
 			formatField("pattern", stringValue(raw["pattern"])),
-			formatField("path", shortenPath(stringValue(raw["path"]))),
-		)
+			formatField("path", shortenPath(stringValue(raw["path"]))))
 		if v := stringValue(raw["type"]); v != "" {
 			summary.Fields = append(summary.Fields, formatField("type", v))
 		}
 	case "glob":
 		summary.Fields = append(summary.Fields,
 			formatField("pattern", stringValue(raw["pattern"])),
-			formatField("path", shortenPath(stringValue(raw["path"]))),
-		)
+			formatField("path", shortenPath(stringValue(raw["path"]))))
 	case "list_dir":
 		summary.Fields = append(summary.Fields,
-			formatField("path", shortenPath(stringValue(raw["path"]))),
-		)
+			formatField("path", shortenPath(stringValue(raw["path"]))))
 		if boolValue(raw["recursive"]) {
 			summary.Fields = append(summary.Fields, formatField("recursive", "true"))
 		}
@@ -340,200 +447,6 @@ func summarizeToolResult(name string, args string, result string) toolResultSumm
 	default:
 		return toolResultSummary{Lines: splitDisplayLines(result, 4, 150)}
 	}
-}
-
-/*
-func printIndentedLines(prefix string, lines []string) {
-	fmt.Print(formatIndentedLines(prefix, lines))
-}
-*/
-
-func formatIndentedLines(prefix string, lines []string) string {
-	var b strings.Builder
-	for i, line := range lines {
-		linePrefix := "  "
-		if i == 0 {
-			linePrefix = prefix
-		}
-		b.WriteString(linePrefix)
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	return b.String()
-}
-
-func splitDisplayLines(text string, limit int, maxWidth int) []string {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return nil
-	}
-
-	parts := strings.Split(trimmed, "\n")
-	lines := make([]string, 0, min(limit, len(parts)))
-	for i, line := range parts {
-		if i >= limit {
-			break
-		}
-		lines = append(lines, TruncateString(line, maxWidth))
-	}
-	if len(parts) > limit {
-		lines = append(lines, Gray("..."))
-	}
-	return lines
-}
-
-func linesWithEllipsis(lines []string, total int, shown int) []string {
-	if total > shown {
-		return append(lines, Gray("..."))
-	}
-	return lines
-}
-
-func compactFields(fields []string) []string {
-	filtered := make([]string, 0, len(fields))
-	for _, field := range fields {
-		if strings.TrimSpace(field) != "" {
-			filtered = append(filtered, field)
-		}
-	}
-	return filtered
-}
-
-func formatField(key string, value string) string {
-	if strings.TrimSpace(value) == "" {
-		return ""
-	}
-	return fmt.Sprintf("%s: %s", key, value)
-}
-
-func formatLineRange(offset int, limit int) string {
-	if offset <= 0 && limit <= 0 {
-		return ""
-	}
-	if offset <= 0 {
-		offset = 1
-	}
-	if limit <= 0 {
-		return fmt.Sprintf("from %d", offset)
-	}
-	return fmt.Sprintf("%d-%d", offset, offset+limit-1)
-}
-
-func shortenPath(path string) string {
-	if path == "" {
-		return ""
-	}
-	clean := filepath.Clean(path)
-	parts := strings.Split(clean, string(filepath.Separator))
-	if len(parts) <= 4 {
-		return clean
-	}
-	return filepath.Join("...", parts[len(parts)-3], parts[len(parts)-2], parts[len(parts)-1])
-}
-
-func stringValue(v interface{}) string {
-	s, _ := v.(string)
-	return s
-}
-
-func boolValue(v interface{}) bool {
-	b, _ := v.(bool)
-	return b
-}
-
-func intValue(v interface{}) int {
-	switch n := v.(type) {
-	case float64:
-		return int(n)
-	case int:
-		return n
-	default:
-		return 0
-	}
-}
-
-func valueString(v interface{}) string {
-	switch vv := v.(type) {
-	case string:
-		return vv
-	case float64:
-		return fmt.Sprintf("%d", int(vv))
-	case bool:
-		if vv {
-			return "true"
-		}
-		return "false"
-	default:
-		b, err := json.Marshal(v)
-		if err != nil {
-			return fmt.Sprintf("%v", v)
-		}
-		return string(b)
-	}
-}
-
-func asObjects(v interface{}) []map[string]interface{} {
-	items, ok := v.([]interface{})
-	if !ok {
-		return nil
-	}
-	result := make([]map[string]interface{}, 0, len(items))
-	for _, item := range items {
-		obj, ok := item.(map[string]interface{})
-		if ok {
-			result = append(result, obj)
-		}
-	}
-	return result
-}
-
-func stringSlice(v interface{}) []string {
-	items, ok := v.([]interface{})
-	if !ok {
-		return nil
-	}
-	result := make([]string, 0, len(items))
-	for _, item := range items {
-		if s, ok := item.(string); ok {
-			result = append(result, s)
-		}
-	}
-	return result
-}
-
-/*
-func shortenedPaths(paths []string, limit int) []string {
-	shown := make([]string, 0, min(limit, len(paths)))
-	for i, path := range paths {
-		if i >= limit {
-			break
-		}
-		shown = append(shown, shortenPath(path))
-	}
-	return shown
-}
-
-func uniqueKeys(m map[string]struct{}) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	return keys
-}
-
-func firstLine(text string) string {
-	if idx := strings.Index(text, "\n"); idx >= 0 {
-		return text[:idx]
-	}
-	return text
-}
-*/
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func toolsDisplayName(name string) string {

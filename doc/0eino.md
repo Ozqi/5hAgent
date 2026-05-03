@@ -81,10 +81,10 @@ import "github.com/cloudwego/eino/compose"
 // 创建工具节点
 toolsNode, err := compose.NewToolsNode(ctx, &compose.ToolsNodeConfig{
     Tools: []tool.BaseTool{myTool1, myTool2},
-    
+
     // 串行执行（默认 false = 并发）
     ExecuteSequentially: false,
-    
+
     // 未知工具处理
     UnknownToolsHandler: func(ctx context.Context, name, input string) (string, error) {
         return "", fmt.Errorf("unknown tool: %s", name)
@@ -281,13 +281,13 @@ func NewReadFileTool() (tool.BaseTool, error) {
             "limit":  {Type: "integer", Desc: "Maximum bytes to read"},
         }),
     }
-    
+
     return utils.NewEnhancedTool(info, func(ctx context.Context, input *ReadFileInput) (*schema.ToolResult, error) {
         data, err := os.ReadFile(input.Path)
         if err != nil {
             return nil, err
         }
-        
+
         offset, limit := 0, len(data)
         if input.Offset > 0 {
             offset = input.Offset
@@ -295,7 +295,7 @@ func NewReadFileTool() (tool.BaseTool, error) {
         if input.Limit > 0 && input.Limit < len(data)-offset {
             limit = input.Limit
         }
-        
+
         return &schema.ToolResult{
             Parts: []schema.ToolOutputPart{
                 {Type: schema.ToolPartTypeText, Text: string(data[offset:limit])},
@@ -383,14 +383,14 @@ tool.WithTimeout(30 * time.Second)
 
 ## 5. 快速对照表
 
-| 5hAgent 手写 | Eino 原生 |
-|--------------|-----------|
-| `streamToolCollector` | `schema.ToolCall.Index` + `ToolsNode` |
-| `exeTools` / `exeToolsPar` | `ToolsNode` |
-| `isReadOnly` 分类 | `ToolMiddleware` |
-| `toolRepeatGuard` | `ToolMiddleware` |
-| `mergeMeta` | `model.CallbackOutput.TokenUsage` |
-| `logger.DebugTag` | `callbacksHelper` |
+| 5hAgent 手写               | Eino 原生                             |
+| -------------------------- | ------------------------------------- |
+| `streamToolCollector`      | `schema.ToolCall.Index` + `ToolsNode` |
+| `exeTools` / `exeToolsPar` | `ToolsNode`                           |
+| `isReadOnly` 分类          | `ToolMiddleware`                      |
+| `toolRepeatGuard`          | `ToolMiddleware`                      |
+| `mergeMeta`                | `model.CallbackOutput.TokenUsage`     |
+| `logger.DebugTag`          | `callbacksHelper`                     |
 
 ## 6. 参考链接
 

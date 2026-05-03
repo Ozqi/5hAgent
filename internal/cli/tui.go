@@ -7,7 +7,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"io"
 	"regexp"
 	"sort"
 	"strings"
@@ -18,6 +17,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/cloudwego/eino/schema"
 	"github.com/lzq/5hAgent/internal/agent"
 	"github.com/lzq/5hAgent/internal/commands"
 	agentctx "github.com/lzq/5hAgent/internal/context"
@@ -202,19 +202,51 @@ func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, taskLis
 			}
 			return ag.Name()
 		}(), "Agent"),
-		sessionID:  sessionID,
-		taskList:   taskList,
-		skillMgr:   skillMgr,
-		ctxManager: ctxManager,
-		messageCtx: messageCtx,
-		ctx:        ctx,
-		viewport:   vp,
-		input:      input,
+		sessionID:        sessionID,
+		taskList:         taskList,
+		skillMgr:         skillMgr,
+		ctxManager:       ctxManager,
+		messageCtx:       messageCtx,
+		ctx:              ctx,
+		viewport:         vp,
+		input:            input,
 		currentAssistant: -1,
 		currentStatus:    "idle",
 		sidebarCursor:    0,
 		autoScroll:       true,
+		entries:          loadHistoryEntries(ctxManager, messageCtx),
 	}
+}
+
+// loadHistoryEntries 从 ctxManager 加载历史消息到 conversationEntry
+func loadHistoryEntries(ctxManager *agentctx.Manager, messageCtx *agentctx.Context) []conversationEntry {
+	if ctxManager == nil || messageCtx == nil {
+		return nil
+	}
+
+	messages, err := ctxManager.GetMessages(messageCtx)
+	if err != nil || len(messages) == 0 {
+		return nil
+	}
+
+	entries := make([]conversationEntry, 0, len(messages))
+	for _, msg := range messages {
+		var r string
+		switch msg.Role {
+		case schema.User:
+			r = roleUser
+		case schema.Assistant:
+			r = roleAssistant
+		case schema.System:
+			r = roleSystem
+		case schema.Tool:
+			r = roleTool
+		default:
+			continue
+		}
+		entries = append(entries, conversationEntry{Role: r, Content: msg.Content})
+	}
+	return entries
 }
 
 func (m *AppModel) Init() tea.Cmd {
@@ -1003,13 +1035,10 @@ func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, taskList 
 	model := NewAppModel(ctx, ag, modelName, taskList, skillMgr, ctxManager, messageCtx, sessionID)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	model.program = p
-	prevOutput := logger.Output()
 	logger.SetToolEventSink(func(event logger.ToolEvent) {
 		p.Send(toolEventMsg{event: event})
 	})
 	defer logger.SetToolEventSink(nil)
-	logger.SetOutput(io.Discard)
-	defer logger.SetOutput(prevOutput)
 	_, err := p.Run()
 	return err
 }

@@ -7,7 +7,12 @@ flowchart LR
     subgraph Logger["Logger"]
         level["Level"]
         mu["sync.Mutex"]
-        output["io.Writer"]
+        output["io.Writer (teeWriter)"]
+    end
+
+    subgraph teeWriter["teeWriter"]
+        w1["stdout (带颜色)"]
+        w2["debug 文件 (无颜色)"]
     end
 
     subgraph Functions["日志函数"]
@@ -17,18 +22,20 @@ flowchart LR
         error["Error()"]
         debugtag["DebugTag()"]
         infotag["InfoTag()"]
-    end
-
-    subgraph Format["格式"]
-        timestamp["15:04:05"]
-        lvl["DEBUG/INFO/WARN/ERROR"]
-        tag["SYS/LLM/TOOL/CTX..."]
-        msg["消息"]
+        initdebug["InitDebugLog()"]
+        closedebug["CloseDebugLog()"]
     end
 
     Functions --> Logger
-    Logger --> Format
+    Logger --> teeWriter
+    teeWriter --> w1
+    teeWriter --> w2
 ```
+
+三层关注点分离：
+- **stdout**：带颜色的可读输出，面向人类
+- **debug 文件**：无颜色的纯文本，Agent 可用 `grep` 提取
+- **TUI**：通过 `ToolEventSink` 通道获取工具事件，完全独立
 
 ## 位置
 
@@ -50,10 +57,23 @@ const (
 
 type Logger struct {
     level  Level
-    output io.Writer
+    output io.Writer // 已封装为 teeWriter
     mu     sync.Mutex
 }
+
+type teeWriter struct {
+    w1, w2 io.Writer
+}
 ```
+
+## Debug 日志文件
+
+debug 模式启动时自动创建独立日志文件：
+
+- 路径：`~/.5hAgent/logs/5hagent-debug-YYYYMMDD-HHMMSS.log`
+- 每次启动新建一个文件，不覆盖
+- 自动清理：只保留最近 30 个，超过即删除最旧的
+- 文件内容为无颜色纯文本，适合 Agent 读取
 
 ## 日志级别
 
@@ -69,7 +89,8 @@ type Logger struct {
 | 函数 | 说明 |
 |------|------|
 | `SetLevel(level)` | 设置全局日志级别 |
-| `SetOutput(w)` | 设置输出目标 |
+| `InitDebugLog()` | 初始化 debug 日志文件，返回路径 |
+| `CloseDebugLog()` | 关闭 debug 日志，恢复 stdout |
 | `Debug(format, args...)` | DEBUG 日志 |
 | `Info(format, args...)` | INFO 日志 |
 | `Warn(format, args...)` | WARN 日志 |
@@ -145,8 +166,12 @@ logger.SetToolEventSink(func(event ToolEvent) {
 ## 使用示例
 
 ```go
-// 设置调试模式
-logger.SetLevel(logger.DEBUG)
+// 启动 debug 模式（推荐方式：InitDebugLog 会自动 SetLevel(DEBUG)）
+logFile, err := logger.InitDebugLog()
+if err != nil {
+    panic(err)
+}
+logger.InfoTag("SYS", "Debug log: %s", logFile)
 
 // 输出日志
 logger.InfoTag("SYS", "Agent initialized")
@@ -166,13 +191,29 @@ export NO_COLOR=1
 TERM=dumb ./5hagent
 ```
 
+## Agent 读取日志
+
+```bash
+# 查看最新日志文件
+tail -f ~/.5hAgent/logs/5hagent-debug-*.log
+
+# 提取 LLM 调用记录
+grep '\[LLM' ~/.5hAgent/logs/5hagent-debug-*.log
+
+# 提取工具调用记录
+grep '\[TOOL' ~/.5hAgent/logs/5hagent-debug-*.log
+
+# 查看完整一次会话的日志
+ls -t ~/.5hAgent/logs/ | head -1 | xargs cat
+```
+
 ## 集成点
 
 | 文件 | 说明 |
 |------|------|
-| [main.go:55-56](../cmd/5hagent/main.go) | 设置调试级别 |
-| [agent.go:248](../internal/agent/agent.go) | ReAct 循环轮次 |
-| [agent.go:256-259](../internal/agent/agent.go) | 消息上下文详情 |
+| [main.go](../cmd/5hagent/main.go) | 启动时 InitDebugLog，输出日志路径 |
+| [agent.go](../internal/agent/agent.go) | ReAct 循环轮次 |
+| [callbacks.go](../internal/agent/callbacks.go) | LLM/工具回调，调用 DebugTag |
 | [tool_use.go](../internal/agent/tool_use.go) | 工具执行流程 |
 
 ## 相关代码

@@ -6,7 +6,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,33 +49,10 @@ func NewWriteFileTool() (tool.EnhancedInvokableTool, error) {
 			}
 
 			// Write file
-			err := os.WriteFile(input.Path, []byte(input.Content), 0644)
-			if err != nil {
-				return nil, fmt.Errorf("failed to write file '%s': %w", input.Path, err)
+			if err := os.WriteFile(input.Path, []byte(input.Content), 0644); err != nil {
+				return nil, fmt.Errorf("failed to write: %w", err)
 			}
-
-			// Build output
-			output := WriteFileOutput{
-				Success: true,
-				Message: fmt.Sprintf("Successfully wrote to %s", input.Path),
-				Bytes:   len(input.Content),
-			}
-
-			// Convert output to JSON string
-			outputJSON, err := json.Marshal(output)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal output: %w", err)
-			}
-
-			// Return as ToolResult with text part
-			return &schema.ToolResult{
-				Parts: []schema.ToolOutputPart{
-					{
-						Type: schema.ToolPartTypeText,
-						Text: string(outputJSON),
-					},
-				},
-			}, nil
+			return JSONResult(WriteFileOutput{Success: true, Message: fmt.Sprintf("Written to %s", input.Path), Bytes: len(input.Content)})
 		},
 	)
 }

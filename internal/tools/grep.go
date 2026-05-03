@@ -80,39 +80,15 @@ func NewGrepTool() (tool.EnhancedInvokableTool, error) {
 
 			// ripgrep returns exit code 1 when no matches found
 			if err != nil && len(output) == 0 {
-				return &schema.ToolResult{
-					Parts: []schema.ToolOutputPart{
-						{
-							Type: schema.ToolPartTypeText,
-							Text: `{"matches":[],"count":0}`,
-						},
-					},
-				}, nil
+				return JSONResult(GrepOutput{Matches: nil, Count: 0})
 			}
 
 			// Parse JSON output
 			matches := parseRipgrepJSON(string(output))
 
 			// Build output
-			result := GrepOutput{
-				Matches: matches,
-				Count:   len(matches),
-			}
-
-			// Convert to JSON
-			resultJSON, err := json.Marshal(result)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal output: %w", err)
-			}
-
-			return &schema.ToolResult{
-				Parts: []schema.ToolOutputPart{
-					{
-						Type: schema.ToolPartTypeText,
-						Text: string(resultJSON),
-					},
-				},
-			}, nil
+			result := GrepOutput{Matches: matches, Count: len(matches)}
+			return JSONResult(result)
 		},
 	)
 }
@@ -191,53 +167,22 @@ func grepFallback(ctx context.Context, input GrepInput) (*schema.ToolResult, err
 
 	// grep returns exit code 1 when no matches found
 	if err != nil && len(output) == 0 {
-		return &schema.ToolResult{
-			Parts: []schema.ToolOutputPart{
-				{
-					Type: schema.ToolPartTypeText,
-					Text: `{"matches":[],"count":0}`,
-				},
-			},
-		}, nil
+		return JSONResult(GrepOutput{Matches: nil, Count: 0})
 	}
 
 	// Parse grep output (format: file:line:text)
 	var matches []GrepMatch
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
 		if line == "" {
 			continue
 		}
-
 		parts := strings.SplitN(line, ":", 3)
 		if len(parts) < 3 {
 			continue
 		}
-
 		var lineNum int
 		fmt.Sscanf(parts[1], "%d", &lineNum)
-
-		matches = append(matches, GrepMatch{
-			File:   parts[0],
-			Line:   lineNum,
-			Column: 0,
-			Text:   parts[2],
-		})
+		matches = append(matches, GrepMatch{File: parts[0], Line: lineNum, Column: 0, Text: parts[2]})
 	}
-
-	result := GrepOutput{
-		Matches: matches,
-		Count:   len(matches),
-	}
-
-	resultJSON, _ := json.Marshal(result)
-
-	return &schema.ToolResult{
-		Parts: []schema.ToolOutputPart{
-			{
-				Type: schema.ToolPartTypeText,
-				Text: string(resultJSON),
-			},
-		},
-	}, nil
+	return JSONResult(GrepOutput{Matches: matches, Count: len(matches)})
 }

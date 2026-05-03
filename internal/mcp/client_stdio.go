@@ -414,32 +414,17 @@ func (c *StdioClient) ListTools() []ToolSpec {
 
 // Close 关闭连接
 func (c *StdioClient) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.cancel != nil {
-		c.cancel()
-	}
-
-	var errs []error
+	c.cancel()
 
 	if c.stdin != nil {
 		if w, ok := c.stdin.(io.Closer); ok {
-			if err := w.Close(); err != nil {
-				errs = append(errs, err)
-			}
+			w.Close()
 		}
 	}
 
 	if c.cmd != nil && c.cmd.Process != nil {
 		c.cmd.Process.Kill()
-		if err := c.cmd.Wait(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if len(errs) > 0 {
-		return errs[0]
+		c.cmd.Wait()
 	}
 	return nil
 }

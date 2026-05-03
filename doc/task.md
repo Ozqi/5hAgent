@@ -76,18 +76,18 @@ type TaskActionRequest struct {
 
 ## TaskList 接口
 
-| 方法 | 说明 |
-|------|------|
-| `NewTaskList(path)` | 创建任务列表，加载并持久化 |
-| `CreateTask(id, title, desc)` | 创建新任务 |
-| `UpdateTaskStatus(id, status)` | 更新任务状态 |
-| `GetTask(id)` | 获取单个任务 |
-| `ListTasks()` | 列出所有任务 |
-| `ListTasksByStatus(status)` | 按状态筛选任务 |
-| `DeleteTask(id)` | 删除任务 |
-| `ArchiveTask(id)` | 归档已完成任务 |
-| `ReopenTask(id, status)` | 重新打开归档任务 |
-| `GetProgress()` | 获取任务统计 |
+| 方法                           | 说明                       |
+| ------------------------------ | -------------------------- |
+| `NewTaskList(path)`            | 创建任务列表，加载并持久化 |
+| `CreateTask(id, title, desc)`  | 创建新任务                 |
+| `UpdateTaskStatus(id, status)` | 更新任务状态               |
+| `GetTask(id)`                  | 获取单个任务               |
+| `ListTasks()`                  | 列出所有任务               |
+| `ListTasksByStatus(status)`    | 按状态筛选任务             |
+| `DeleteTask(id)`               | 删除任务                   |
+| `ArchiveTask(id)`              | 归档已完成任务             |
+| `ReopenTask(id, status)`       | 重新打开归档任务           |
+| `GetProgress()`                | 获取任务统计               |
 
 ## 工具调用格式
 
@@ -120,27 +120,29 @@ Agent 通过 `task.task` 工具调用任务管理：
 
 ## CLI 命令
 
-| 命令 | 说明 |
-|------|------|
-| `/task list [status]` | 列出任务 |
-| `/task create <id> <title> <description>` | 创建任务 |
-| `/task update <id> <status>` | 更新状态 |
-| `/task get <id>` | 获取任务详情 |
-| `/task delete <id>` | 删除任务 |
-| `/task archive <id>` | 归档任务 |
-| `/task reopen <id> [status]` | 重新打开 |
+| 命令                                      | 说明         |
+| ----------------------------------------- | ------------ |
+| `/task list [status]`                     | 列出任务     |
+| `/task create <id> <title> <description>` | 创建任务     |
+| `/task update <id> <status>`              | 更新状态     |
+| `/task get <id>`                          | 获取任务详情 |
+| `/task delete <id>`                       | 删除任务     |
+| `/task archive <id>`                      | 归档任务     |
+| `/task reopen <id> [status]`              | 重新打开     |
 
 ## 持久化格式
 
-任务存储在 `~/.5hAgent/tasks.json`，使用 Markdown 区块标记：
+Task 存储在 `./5hagent/tasks.json`（项目启动目录），使用 Markdown 区块标记：
 
 ```markdown
 # Shared Task List
 
 <!-- 5hagent:tasks:start -->
+
 ## Shared Tasks
 
 ### task-1 | 实现功能
+
 - status: in_progress
 - description: 描述
 - created_at: 2026-04-30T00:00:00Z
@@ -149,21 +151,21 @@ Agent 通过 `task.task` 工具调用任务管理：
 <!-- 5hagent:tasks:end -->
 ```
 
-归档任务存储在 `~/.5hAgent/history/` 目录。
+归档任务存储在 `./5hagent/history/` 目录。
 
 ## 只读判断
 
 `task.task` 工具根据 action 参数判断是否只读：
 
-| Action | 只读 | 说明 |
-|--------|------|------|
-| `get` | ✓ | 并发执行 |
-| `list` | ✓ | 并发执行 |
-| `create` | ✗ | 串行执行 |
-| `update` | ✗ | 串行执行 |
-| `delete` | ✗ | 串行执行 |
-| `archive` | ✗ | 串行执行 |
-| `reopen` | ✗ | 串行执行 |
+| Action    | 只读 | 说明     |
+| --------- | ---- | -------- |
+| `get`     | ✓    | 并发执行 |
+| `list`    | ✓    | 并发执行 |
+| `create`  | ✗    | 串行执行 |
+| `update`  | ✗    | 串行执行 |
+| `delete`  | ✗    | 串行执行 |
+| `archive` | ✗    | 串行执行 |
+| `reopen`  | ✗    | 串行执行 |
 
 ## 相关代码
 

@@ -6,7 +6,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -109,30 +108,8 @@ func NewListDirTool() (tool.EnhancedInvokableTool, error) {
 			}
 
 			// Sort by path
-			sort.Slice(files, func(i, j int) bool {
-				return files[i].Path < files[j].Path
-			})
-
-			// Build output
-			output := ListDirOutput{
-				Files: files,
-				Count: len(files),
-			}
-
-			// Convert to JSON
-			outputJSON, err := json.Marshal(output)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal output: %w", err)
-			}
-
-			return &schema.ToolResult{
-				Parts: []schema.ToolOutputPart{
-					{
-						Type: schema.ToolPartTypeText,
-						Text: string(outputJSON),
-					},
-				},
-			}, nil
+			sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+			return JSONResult(ListDirOutput{Files: files, Count: len(files)})
 		},
 	)
 }

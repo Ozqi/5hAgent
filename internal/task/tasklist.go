@@ -333,27 +333,6 @@ func cloneTask(task *Task) *Task {
 	return &clone
 }
 
-/*
-func replaceManagedSection(content, section string) string {
-	trimmed := strings.TrimRight(content, "\n")
-	managed := section
-	start := strings.Index(trimmed, taskSectionStart)
-	end := strings.Index(trimmed, taskSectionEnd)
-	if start >= 0 && end >= start {
-		end += len(taskSectionEnd)
-		return strings.TrimRight(trimmed[:start], "\n") + "\n\n" + managed + "\n"
-	}
-	if trimmed == "" {
-		return managed + "\n"
-	}
-	return trimmed + "\n\n" + managed + "\n"
-}
-
-func defaultTaskMarkdownTemplate() string {
-	return "# Shared Task List\n\n> This file is the single source of truth for active 5hAgent tasks.\n> Edit task entries carefully and keep the managed markers intact.\n"
-}
-*/
-
 func renderTasksMarkdown(tasks []*Task) string {
 	var b strings.Builder
 	b.WriteString(taskSectionStart)
@@ -447,13 +426,6 @@ type historyTaskSnapshot struct {
 	Title       string
 	Description string
 }
-
-/*
-func historyFileName(id string) string {
-	replacer := strings.NewReplacer("/", "-", "\\", "-", " ", "-")
-	return replacer.Replace(id) + ".md"
-}
-*/
 
 func renderHistoryTaskMarkdown(task *Task, archivedAt time.Time, summary, source string) string {
 	var b strings.Builder

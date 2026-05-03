@@ -1,7 +1,5 @@
-// markdown_stream.go - Markdown 流式渲染
-// 功能：逐步输出 Markdown（代码块/标题/列表/引用），用于终端着色展示
-// 主要类型：MarkdownStreamRenderer
-// 导出函数：NewMarkdownStreamRenderer, renderMarkdownForTerminal
+// markdown_stream.go - Markdown 渲染
+// 功能：终端 Markdown 着色展示（代码块/标题/列表/引用）
 package cli
 
 import (
@@ -10,52 +8,6 @@ import (
 
 	"github.com/lzq/5hAgent/internal/logger"
 )
-
-/*
-type MarkdownStreamRenderer struct {
-	w       io.Writer
-	prefix  string
-	started bool
-	pending strings.Builder
-}
-
-func NewMarkdownStreamRenderer(w io.Writer, prefix string) *MarkdownStreamRenderer {
-	return &MarkdownStreamRenderer{w: w, prefix: prefix}
-}
-
-func (r *MarkdownStreamRenderer) WriteToken(token string) {
-	if token == "" {
-		return
-	}
-	r.pending.WriteString(token)
-	r.flushReady(false)
-}
-
-func (r *MarkdownStreamRenderer) Flush() {
-	r.flushReady(true)
-}
-
-func (r *MarkdownStreamRenderer) flushReady(force bool) {
-	ready, rest := splitReadyMarkdown(r.pending.String(), force)
-	if ready == "" {
-		return
-	}
-	r.pending.Reset()
-	r.pending.WriteString(rest)
-	r.write(renderMarkdownForTerminal(ready, true))
-}
-
-func (r *MarkdownStreamRenderer) write(text string) {
-	if text == "" {
-		return
-	}
-	if !r.started {
-		fmt.Fprint(r.w, r.prefix)
-		r.started = true
-	}
-	fmt.Fprint(r.w, text)
-}
-*/
 
 func splitReadyMarkdown(input string, force bool) (string, string) {
 	if force {

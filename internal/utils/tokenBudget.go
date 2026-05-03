@@ -3,13 +3,15 @@ package utils
 import (
 	"sync"
 
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
 
 type TokenBudget struct {
-	limit int
-	used  int
-	mu    sync.Mutex
+	limit        int
+	used         int
+	sessionTotal int
+	mu           sync.Mutex
 }
 
 func NewTokenBudget(limit int) *TokenBudget {
@@ -27,11 +29,21 @@ func (b *TokenBudget) Add(meta *schema.ResponseMeta) error {
 		used = meta.Usage.PromptTokens + meta.Usage.CompletionTokens
 	}
 	b.used += used
-	// Budget tracking only – limit not enforced.
-	// if b.used > b.limit {
-	// 	return fmt.Errorf("max total tokens exceeded: %d > %d", b.used, b.limit)
-	// }
+	b.sessionTotal += used
 	return nil
+}
+
+func (b *TokenBudget) AddUsage(usage *model.TokenUsage) {
+	if b == nil || usage == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if usage.TotalTokens > 0 {
+		b.sessionTotal += usage.TotalTokens
+	} else {
+		b.sessionTotal += usage.PromptTokens + usage.CompletionTokens
+	}
 }
 
 func (b *TokenBudget) Usage() (used int, limit int) {
@@ -41,4 +53,13 @@ func (b *TokenBudget) Usage() (used int, limit int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.used, b.limit
+}
+
+func (b *TokenBudget) SessionTotal() int {
+	if b == nil {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sessionTotal
 }

@@ -6,7 +6,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -62,27 +61,7 @@ func NewGlobTool() (tool.EnhancedInvokableTool, error) {
 
 			// Sort results
 			sort.Strings(matches)
-
-			// Build output
-			output := GlobOutput{
-				Files: matches,
-				Count: len(matches),
-			}
-
-			// Convert to JSON
-			outputJSON, err := json.Marshal(output)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal output: %w", err)
-			}
-
-			return &schema.ToolResult{
-				Parts: []schema.ToolOutputPart{
-					{
-						Type: schema.ToolPartTypeText,
-						Text: string(outputJSON),
-					},
-				},
-			}, nil
+			return JSONResult(GlobOutput{Files: matches, Count: len(matches)})
 		},
 	)
 }

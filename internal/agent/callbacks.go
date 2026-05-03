@@ -5,56 +5,33 @@ package agent
 
 import (
 	"context"
-	"strings"
 
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"github.com/lzq/5hAgent/internal/logger"
-	"github.com/lzq/5hAgent/internal/toolmeta"
+	"github.com/lzq/5hAgent/internal/utils"
 )
 
 // AgentCallbacks Eino Callback 处理器
 // 统一处理模型和工具的调用日志
 type AgentCallbacks struct {
-	debug       bool           // 是否启用调试
-	tokenBudget *tokenCounter  // 累计 token
-}
-
-// tokenCounter 累计 token 计数
-type tokenCounter struct {
-	total int
-}
-
-// newTokenCounter 创建 token 计数器
-func newTokenCounter() *tokenCounter {
-	return &tokenCounter{}
-}
-
-// add 添加 token
-func (c *tokenCounter) add(usage *model.TokenUsage) {
-	if usage == nil {
-		return
-	}
-	if usage.TotalTokens > 0 {
-		c.total += usage.TotalTokens
-	} else {
-		c.total += usage.PromptTokens + usage.CompletionTokens
-	}
+	debug       bool
+	tokenBudget *utils.TokenBudget
 }
 
 // NewAgentCallbacks 创建 Callback 处理器
 func NewAgentCallbacks(debug bool) *AgentCallbacks {
 	return &AgentCallbacks{
 		debug:       debug,
-		tokenBudget: newTokenCounter(),
+		tokenBudget: utils.NewTokenBudget(0),
 	}
 }
 
 // GetTokenUsage 获取累计 token
 func (c *AgentCallbacks) GetTokenUsage() int {
-	return c.tokenBudget.total
+	return c.tokenBudget.SessionTotal()
 }
 
 // region Model Callback
@@ -74,12 +51,12 @@ func (c *AgentCallbacks) OnModelEnd(ctx context.Context, info *callbacks.RunInfo
 		return ctx
 	}
 	if output.TokenUsage != nil {
-		c.tokenBudget.add(output.TokenUsage)
+		c.tokenBudget.AddUsage(output.TokenUsage)
 		logger.DebugTag("LLM", "End: prompt=%d completion=%d total=%d (session=%d)",
 			output.TokenUsage.PromptTokens,
 			output.TokenUsage.CompletionTokens,
 			output.TokenUsage.TotalTokens,
-			c.tokenBudget.total)
+			c.tokenBudget.SessionTotal())
 	} else {
 		logger.DebugTag("LLM", "End")
 	}
@@ -165,40 +142,3 @@ func (c *AgentCallbacks) LogChunk(chunk *schema.Message, idx int) {
 		}
 	}
 }
-
-// endregion
-
-// region 工具提示（保留 toolHint 逻辑）
-
-// ToolHint 返回工具操作的纠错建议
-func (c *AgentCallbacks) ToolHint(name, args string) string {
-	display := toolmeta.DisplayName(name)
-	if strings.HasPrefix(display, "base.") {
-		display = strings.TrimPrefix(display, "base.")
-	}
-	if strings.HasPrefix(display, "task.") {
-		display = strings.TrimPrefix(display, "task.")
-	}
-	if strings.HasPrefix(display, "skill.") {
-		display = strings.TrimPrefix(display, "skill.")
-	}
-
-	switch display {
-	case "read_file", "write_file", "edit", "glob", "grep", "list_dir":
-		return "check the tool arguments and retry with an absolute path under the workspace"
-	case "exec_shell":
-		return "check the shell command, quote paths with spaces, prefer commands inside workspace"
-	case "task":
-		return "use a valid task action: create, update, get, list, or delete"
-	case "skill":
-		return "use an existing skill name and set action to enable or disable"
-	}
-
-	if meta, ok := toolmeta.Lookup(name); ok && meta.Category == toolmeta.CategoryMCP {
-		return "check the remote tool arguments and server-specific requirements"
-	}
-
-	return "review the tool schema and retry with corrected arguments"
-}
-
-// endregion

@@ -154,6 +154,19 @@ func (s *Store) GetSessionDir() string {
 	return s.dir
 }
 
+// GetLatestID 返回最新会话的 ID（按更新时间倒序）
+// 返回: 最新会话 ID，如果不存在则返回空字符串
+func (s *Store) GetLatestID() (string, error) {
+	sessions, err := s.List()
+	if err != nil {
+		return "", err
+	}
+	if len(sessions) == 0 {
+		return "", nil
+	}
+	return sessions[0].ID, nil
+}
+
 // Append 追加消息到会话并持久化
 // 参数:
 //   - session: Session 实例

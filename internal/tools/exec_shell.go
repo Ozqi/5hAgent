@@ -6,7 +6,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -65,28 +64,8 @@ func NewExecShellTool() (tool.EnhancedInvokableTool, error) {
 				returnCode = 0
 			}
 
-			// Build output
-			output := ExecShellOutput{
-				Stdout:     string(stdout),
-				Stderr:     string(stderr),
-				ReturnCode: returnCode,
-			}
-
-			// Convert output to JSON string
-			outputJSON, err := json.Marshal(output)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal output: %w", err)
-			}
-
-			// Return as ToolResult with text part
-			return &schema.ToolResult{
-				Parts: []schema.ToolOutputPart{
-					{
-						Type: schema.ToolPartTypeText,
-						Text: string(outputJSON),
-					},
-				},
-			}, nil
+			output := ExecShellOutput{Stdout: string(stdout), Stderr: string(stderr), ReturnCode: returnCode}
+			return JSONResult(output)
 		},
 	)
 }
