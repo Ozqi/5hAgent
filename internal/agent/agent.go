@@ -15,11 +15,11 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	agentconfig "github.com/lzq/5hAgent/internal/config"
 	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/skill"
 	"github.com/lzq/5hAgent/internal/utils"
+	
 )
 
 // Agent AI Agent 核心结构体
@@ -79,7 +79,7 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 	}
 
 	// 初始化技能管理器，使用配置目录
-	configDir, err := agentconfig.GetConfigDir()
+	configDir, err := utils.GetConfigDir()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get config directory: %w", err)
 	}
@@ -113,6 +113,16 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 		},
 		callbacks: NewAgentCallbacks(config.Debug),
 	}, nil
+}
+
+// SetCtxManager 设置上下文管理器（用于 session 持久化）
+func (a *Agent) SetCtxManager(manager *agentctx.Manager) {
+	a.ctxManager = manager
+}
+
+// GetCtxManager 获取上下文管理器
+func (a *Agent) GetCtxManager() *agentctx.Manager {
+	return a.ctxManager
 }
 
 // TokenCallback 流式输出的回调函数类型
@@ -386,7 +396,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 				return "", fmt.Errorf("failed to add assistant message: %w", err)
 			}
 		} else {
-			logger.Warn("Skipping empty assistant message")
+			logger.Debug("Skipping empty assistant message")
 		}
 
 		return content, nil

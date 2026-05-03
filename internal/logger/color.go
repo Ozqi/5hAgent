@@ -20,6 +20,13 @@ const (
 	colorBold    = "\033[1m"
 )
 
+var levelNames = map[Level]string{
+	DEBUG: "DEBUG",
+	INFO:  "INFO",
+	WARN:  "WARN",
+	ERROR: "ERROR",
+}
+
 var colorEnabled = true
 
 func init() {

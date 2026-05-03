@@ -13,7 +13,6 @@ import (
 	"github.com/lzq/5hAgent/internal/agent"
 	"github.com/lzq/5hAgent/internal/cli"
 	"github.com/lzq/5hAgent/internal/commands"
-	"github.com/lzq/5hAgent/internal/config"
 	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/llm"
 	"github.com/lzq/5hAgent/internal/logger"
@@ -26,6 +25,7 @@ import (
 
 var debugMode bool
 var sessionID string
+var continueLast bool
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -36,6 +36,7 @@ func main() {
 	}
 	rootCmd.Flags().BoolVar(&debugMode, "debug", false, "Enable debug mode with verbose logging")
 	rootCmd.Flags().StringVar(&sessionID, "session", "", "Resume from existing session ID")
+	rootCmd.Flags().BoolVarP(&continueLast, "continue", "c", false, "Resume from the last session")
 	if err := rootCmd.Execute(); err != nil {
 		cli.PrintError(err)
 		os.Exit(1)
@@ -44,7 +45,7 @@ func main() {
 
 func runInteractive(cmd *cobra.Command, args []string) {
 	// 加载集中配置
-	appConfig, err := config.Load()
+	appConfig, err := utils.LoadConfig()
 	if err != nil {
 		cli.PrintError(fmt.Errorf("failed to load configuration: %w", err))
 		os.Exit(1)
@@ -54,13 +55,18 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	if debugMode {
 		appConfig.Agent.Debug = true
 		logger.SetLevel(logger.DEBUG)
-		logger.InfoTag("SYS", "Debug mode enabled")
+		logFile, err := logger.InitDebugLog()
+		if err != nil {
+			cli.PrintError(fmt.Errorf("failed to init debug log: %w", err))
+			os.Exit(1)
+		}
+		logger.InfoTag("SYS", "Debug mode enabled, log: %s", logFile)
 	}
 
 	ctx := context.Background()
 
 	// *Task 持久化到项目启动目录
-	projectDataDir, err := config.GetProjectDataDir()
+	projectDataDir, err := utils.GetProjectDataDir()
 	if err != nil {
 		cli.PrintError(fmt.Errorf("failed to get project data directory: %w", err))
 		os.Exit(1)
@@ -75,7 +81,7 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	logger.DebugTag("SYS", "Task list initialized at %s", taskListPath)
 
 	// *Session 持久化到 ~/.5hAgent（全局无关）
-	sessionDir, err := config.GetConfigDir()
+	sessionDir, err := utils.GetConfigDir()
 	if err != nil {
 		cli.PrintError(fmt.Errorf("failed to get config directory: %w", err))
 		os.Exit(1)
@@ -83,16 +89,34 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	sessionDir = filepath.Join(sessionDir, "sessions")
 	ctxManager := agentctx.NewManager(sessionDir)
 
-	// 处理 --session 参数
+	// 处理 --session / -c 参数
 	var messageCtx *agentctx.Context
 	if sessionID != "" {
+		// 指定了 session ID
 		messageCtx, err = ctxManager.CreateContext(sessionID)
 		if err != nil {
 			cli.PrintError(fmt.Errorf("failed to load session %s: %w", sessionID, err))
 			os.Exit(1)
 		}
 		logger.InfoTag("SESSION", "Resumed session: %s", sessionID)
-	} else {
+	} else if continueLast {
+		// -c: 自动获取最新会话
+		sessionID, err = ctxManager.GetLatestSessionID()
+		if err != nil || sessionID == "" {
+			logger.InfoTag("SESSION", "No previous session found, creating new one")
+			sessionID = ""
+		} else {
+			messageCtx, err = ctxManager.CreateContext(sessionID)
+			if err != nil {
+				cli.PrintError(fmt.Errorf("failed to load session %s: %w", sessionID, err))
+				os.Exit(1)
+			}
+			logger.InfoTag("SESSION", "Resumed last session: %s", sessionID)
+		}
+	}
+
+	// 创建新会话（如果没有指定 session 或获取失败）
+	if messageCtx == nil {
 		messageCtx, err = ctxManager.CreateContext("")
 		if err != nil {
 			cli.PrintError(fmt.Errorf("failed to create context: %w", err))
@@ -137,6 +161,8 @@ func runInteractive(cmd *cobra.Command, args []string) {
 		cli.PrintError(fmt.Errorf("failed to create agent: %w", err))
 		os.Exit(1)
 	}
+	// 设置带 session 持久化的 ctxManager
+	ag.SetCtxManager(ctxManager)
 
 	if err := tools.InitRegistry(taskList, ag.GetSkillManager()); err != nil {
 		cli.PrintError(fmt.Errorf("failed to init tools: %w", err))
