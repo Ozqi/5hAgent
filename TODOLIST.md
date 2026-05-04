@@ -292,15 +292,20 @@
 ## NewIdeaTODO
 
 - [] MCP模块
-  1. MCP问题，notionMCP调用没返回。
-  2. 未接入 `claude-context`，不先原生重写其 core
+  - [x] MCP问题，notionMCP调用没返回。因为空参数调用被过滤掉了，导致ReAct退出了。
+  - [ ] 未接入 `claude-context`，不先原生重写其 core。
 - [ ] 压缩模块测试和debug：压缩先依赖 `/compress` 手动触发，如果Task完成，自动触发压缩。
   1.  /compress测试就有问题
   2.  HistoryTask 待测试。
 
-- [ ] TUI 没有claudecode那种thinking内容的打印,应该用浅色小字打印出来.
-- [ ] 增加对md表格的渲染
-- [ ] TUI 右侧状态栏打印当前模型的token开销和输出速度，xx tokens/s，更新频率为每1秒一次。
+- [ ] TUI 换行有问题，可以换行但是好像有一部分被右侧的面板盖住了。
+- [ ] toolinfo应该用更小的字体。
+- [ ] 用-c参数重新进入会话时,TUI渲染有问题，没格式。
+- [ ] feat：增加对md表格的渲染
+- [ ] feat：TUI 没有claudecode那种thinking内容的打印, think内容在哪个字段? 怎么配置模型的思考深度? claudecode是怎么做的，我希望应该用浅色小字打印出来.
+- [ ] feat：TUI 右侧状态栏打印当前模型的token开销和输出速度，xx tokens/s，更新频率为每1秒一次。
+
+- [ ]增加ReAct结束判断：没有工具调用了也不能退出。而是检查task区里，有没有未完成的任务。
 - [ ] tool_use模块
       TOOLS的权限控制。主要是读写工具,读当前目录以外的东西需要批准,只读模式下,写命令需要批准.
       exeshell工具里,rm命令git命令,需要用正则的方式过滤并申请批准。
