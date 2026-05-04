@@ -102,6 +102,19 @@ func splitMarkdownBlocks(input string) []string {
 			continue
 		}
 
+		// 表格行连续收集
+		if isTableLine(trimmedLine) {
+			if len(current) > 0 && !isTableLine(strings.TrimSpace(current[len(current)-1])) {
+				flush()
+			}
+			current = append(current, line)
+			continue
+		}
+		// 非表格行，如果当前累积的是表格行，先 flush
+		if len(current) > 0 && isTableLine(strings.TrimSpace(current[len(current)-1])) {
+			flush()
+		}
+
 		if isStandaloneMarkdownLine(trimmedLine) {
 			flush()
 			blocks = append(blocks, line)
@@ -117,6 +130,35 @@ func splitMarkdownBlocks(input string) []string {
 
 func isStandaloneMarkdownLine(line string) bool {
 	return strings.HasPrefix(line, "#") || strings.HasPrefix(line, ">") || isListLine(line)
+}
+
+func isTableLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|")
+}
+
+func isTableSeparator(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !isTableLine(trimmed) {
+		return false
+	}
+	// 表格分隔行: |---|---| 或 |:---:|---:| 等
+	cells := strings.Split(trimmed, "|")
+	for _, cell := range cells {
+		trimmed := strings.TrimSpace(cell)
+		if trimmed == "" {
+			continue
+		}
+		for _, ch := range trimmed {
+			if ch != '-' && ch != ':' && ch != ' ' {
+				return false
+			}
+		}
+		if len(trimmed) < 1 {
+			return false
+		}
+	}
+	return true
 }
 
 func isListLine(line string) bool {
@@ -142,6 +184,8 @@ func renderMarkdownBlock(block string, color bool) string {
 		return colorQuote(trimmed, color)
 	case isListLine(trimmed):
 		return colorListLine(trimmed, color)
+	case isTableLine(trimmed):
+		return renderTable(block, color)
 	default:
 		return applyInlineMarkdown(compactParagraph(trimmed), color)
 	}
@@ -165,6 +209,108 @@ func renderCodeBlock(block string, color bool) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// renderTable 渲染 markdown 表格为终端友好格式
+// 使用 box-drawing 字符: │ ─ ┬ ┴ ┤ ├ ┼
+func renderTable(block string, color bool) string {
+	lines := strings.Split(strings.TrimSpace(block), "\n")
+	if len(lines) < 1 {
+		return block
+	}
+
+	// 解析所有行
+	var rawRows [][]string
+	sepIdx := -1
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !isTableLine(trimmed) {
+			continue
+		}
+		cells := parseTableRow(trimmed)
+		if isTableSeparator(trimmed) {
+			sepIdx = len(rawRows)
+			continue
+		}
+		rawRows = append(rawRows, cells)
+	}
+
+	if len(rawRows) == 0 {
+		return block
+	}
+
+	// 计算列数
+	numCols := 0
+	for _, row := range rawRows {
+		if len(row) > numCols {
+			numCols = len(row)
+		}
+	}
+
+	// 计算每列最大宽度
+	colWidths := make([]int, numCols)
+	for _, row := range rawRows {
+		for c, cell := range row {
+			if c < numCols && len(cell) > colWidths[c] {
+				colWidths[c] = len(cell)
+			}
+		}
+	}
+
+	// 构建渲染结果
+	var result []string
+	for r, row := range rawRows {
+		// 分隔行（在 header 之后）
+		if r == 1 && sepIdx >= 0 {
+			parts := make([]string, numCols)
+			for c := 0; c < numCols; c++ {
+				parts[c] = strings.Repeat("─", colWidths[c]+2)
+			}
+			sep := "├" + strings.Join(parts, "┼") + "┤"
+			if color {
+				sep = logger.Gray(sep)
+			}
+			result = append(result, sep)
+		}
+
+		// 数据行
+		parts := make([]string, numCols)
+		for c := 0; c < numCols; c++ {
+			cell := ""
+			if c < len(row) {
+				cell = row[c]
+			}
+			padding := colWidths[c] - len(cell)
+			parts[c] = " " + cell + strings.Repeat(" ", padding) + " "
+		}
+		line := "│" + strings.Join(parts, "│") + "│"
+		if color {
+			if r == 0 {
+				line = logger.Bold(line)
+			} else {
+				line = logger.Cyan(line)
+			}
+		}
+		result = append(result, line)
+	}
+
+	return strings.Join(result, "\n")
+}
+
+// parseTableRow 解析表格行的单元格
+func parseTableRow(line string) []string {
+	line = strings.TrimSpace(line)
+	if strings.HasPrefix(line, "|") {
+		line = line[1:]
+	}
+	if strings.HasSuffix(line, "|") {
+		line = line[:len(line)-1]
+	}
+	cells := strings.Split(line, "|")
+	for i, cell := range cells {
+		cells[i] = strings.TrimSpace(cell)
+	}
+	return cells
 }
 
 func colorHeading(line string) string {

@@ -536,7 +536,8 @@ func (m *AppModel) resize() {
 	headerHeight := 3
 	footerHeight := 1
 	inputHeight := 4
-	m.viewport.Width = max(8, mainWidth-4)
+	// 预留 2 字符给滚动条 + 2 字符内边距，防止内容被右侧面板遮挡
+	m.viewport.Width = max(8, mainWidth-6)
 	m.viewport.Height = max(1, m.height-headerHeight-footerHeight-inputHeight)
 	m.input.SetWidth(max(8, m.viewport.Width-4))
 	m.input.SetHeight(1)
@@ -762,7 +763,7 @@ func colorizeToolHintLine(line string) string {
 		toolName = rest[:idx]
 		suffix = rest[idx:]
 	}
-	return logger.Bold(logger.Blue("[tool]")) + " " + logger.Yellow(toolName) + logger.Gray(suffix)
+	return logger.Gray("[tool]") + " " + logger.Gray(toolName) + logger.Gray(suffix)
 }
 
 func renderPrefixedPlainText(prefix string, content string, color lipgloss.Color, width int) string {
@@ -988,7 +989,7 @@ func renderToolEntry(content string, width int) string {
 
 func renderToolCompactEntry(entry toolEntry, width int) string {
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Foreground(colorYellow).Bold(true).Render("TOOL_EXEC " + strings.ToUpper(fallback(entry.Name, "event"))))
+	b.WriteString(lipgloss.NewStyle().Foreground(colorGray).Render("TOOL " + strings.ToUpper(fallback(entry.Name, "event"))))
 
 	if len(entry.Args) > 0 {
 		joined := strings.Join(entry.Args, "   ·   ")
