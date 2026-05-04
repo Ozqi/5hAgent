@@ -292,6 +292,12 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		go func() {
 			for req := range toolQueue {
 				result, execErr := a.exeToolCall(ctx, req.tc, req.idx, req.idx+1, false)
+				// 只对成功的调用计数重复，失败的不计入
+				if execErr == nil {
+					if err := repeatGuard.Check([]schema.ToolCall{req.tc}); err != nil {
+						logger.WarnTag("TOOL", "%v", err)
+					}
+				}
 				toolResultCh <- execResult{idx: req.idx, tc: req.tc, result: result, err: execErr}
 			}
 			close(toolResultCh)
@@ -317,13 +323,6 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 				cb.LogChunk(chunk, chunkCount)
 
 				for _, tc := range collector.Add(chunk.ToolCalls) {
-					if err := repeatGuard.Check([]schema.ToolCall{tc}); err != nil {
-						reader.Close()
-						close(toolQueue)
-						for range toolResultCh {
-						}
-						return "", err
-					}
 					idx := len(queuedCalls)
 					queuedCalls = append(queuedCalls, tc)
 					toolQueue <- toolRequest{idx: idx, tc: tc}
@@ -341,12 +340,6 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		reader.Close()
 
 		for _, tc := range collector.PendingRunnableCalls() {
-			if err := repeatGuard.Check([]schema.ToolCall{tc}); err != nil {
-				close(toolQueue)
-				for range toolResultCh {
-				}
-				return "", err
-			}
 			idx := len(queuedCalls)
 			queuedCalls = append(queuedCalls, tc)
 			toolQueue <- toolRequest{idx: idx, tc: tc}
