@@ -320,6 +320,10 @@ func (c *StdioClient) CallTool(ctx context.Context, toolName string, arguments s
 		return "", fmt.Errorf("MCP client not initialized")
 	}
 
+	// 给工具调用加 30 秒超时，防止 MCP 服务器无响应导致永久阻塞
+	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	params := map[string]interface{}{
 		"name": toolName,
 	}
@@ -337,8 +341,13 @@ func (c *StdioClient) CallTool(ctx context.Context, toolName string, arguments s
 
 	paramsJSON, _ := json.Marshal(params)
 
+	logger.DebugTag("MCP", "Calling %s.%s (timeout 30s)", c.serverName, toolName)
+
 	var resp jsonrpcResponse
-	if err := c.sendRequest(ctx, "tools/call", paramsJSON, &resp); err != nil {
+	if err := c.sendRequest(callCtx, "tools/call", paramsJSON, &resp); err != nil {
+		if callCtx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("MCP tool call %s timed out after 30s", toolName)
+		}
 		return "", err
 	}
 

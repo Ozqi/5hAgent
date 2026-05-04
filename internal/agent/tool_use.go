@@ -81,6 +81,12 @@ func (c *toolCollector) merge(tc schema.ToolCall) {
 		state.tc.Function.Arguments += tc.Function.Arguments
 	}
 
+	// 当 ID、Name、Arguments 都已齐全但 Arguments 为空时，
+	// 标准化为 "{}"，让流式阶段也能识别为完整调用
+	if state.tc.ID != "" && state.tc.Function.Name != "" && state.tc.Function.Arguments == "" {
+		state.tc.Function.Arguments = "{}"
+	}
+
 	// 记录 ID 映射
 	if tc.ID != "" {
 		c.byID[tc.ID] = idx

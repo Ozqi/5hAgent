@@ -44,6 +44,7 @@ func TestToolCollectorPendingRunnableCallsNormalizesEmptyArguments(t *testing.T)
 	idx := 0
 	collector := newToolCollector()
 
+	// 流式阶段：空参数应在 merge 时标准化为 "{}"，立即可调度
 	ready := collector.Add([]schema.ToolCall{{
 		Index: &idx,
 		ID:    "call_1",
@@ -51,20 +52,16 @@ func TestToolCollectorPendingRunnableCallsNormalizesEmptyArguments(t *testing.T)
 			Name: "mcp.notion.API-get-self",
 		},
 	}})
-	if len(ready) != 0 {
-		t.Fatalf("Add() ready calls = %d, want 0 before stream ends", len(ready))
+	if len(ready) != 1 {
+		t.Fatalf("Add() ready calls = %d, want 1 (empty args normalized to {} during streaming)", len(ready))
+	}
+	if ready[0].Function.Arguments != "{}" {
+		t.Fatalf("arguments = %q, want {}", ready[0].Function.Arguments)
 	}
 
+	// 流结束后：已调度的调用不应重复出现
 	pending := collector.PendingRunnableCalls()
-	if len(pending) != 1 {
-		t.Fatalf("PendingRunnableCalls() = %d, want 1", len(pending))
-	}
-	if pending[0].Function.Arguments != "{}" {
-		t.Fatalf("arguments = %q, want {}", pending[0].Function.Arguments)
-	}
-
-	again := collector.PendingRunnableCalls()
-	if len(again) != 0 {
-		t.Fatalf("second PendingRunnableCalls() = %d, want 0", len(again))
+	if len(pending) != 0 {
+		t.Fatalf("PendingRunnableCalls() = %d, want 0 (already dispatched)", len(pending))
 	}
 }
