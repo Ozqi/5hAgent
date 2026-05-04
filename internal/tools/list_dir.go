@@ -2,6 +2,30 @@
 // 功能：列出目录内容，支持递归；返回文件/目录名、路径、大小
 // 主要类型：ListDirInput, ListDirOutput, FileInfo
 // 导出函数：NewListDirTool
+//
+// ============================================================
+// 工具描述（供人类审阅）
+// ============================================================
+// Tool: list_dir
+// Desc: 列出目录内容，返回文件/目录的名称、路径、类型、大小。
+//
+//	支持递归模式。read_only 工具。
+//
+// Input Parameters:
+//   - path       (string, optional) : 目录路径，默认当前目录
+//   - recursive  (bool,   optional) : 是否递归列出子目录，默认 false
+//
+// Error Scenarios (LLM Hints):
+//   - path not found              → 目录不存在；确认路径是否正确
+//   - path is not a directory      → 指定路径是文件而非目录；用 read_file 读取
+//   - permission denied           → 无读取权限
+//   - empty directory              → 目录为空（正常情况，非错误）
+//
+// Tips:
+//   - 非递归模式适合快速浏览当前目录结构
+//   - recursive=true 会列出所有子目录内容，适合了解项目全貌
+//
+// ============================================================
 package tools
 
 import (
@@ -14,6 +38,20 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"
+)
+
+// --- LLM 描述常量（供 InferEnhancedTool 使用）---
+const (
+	listDirToolName = "base.list_dir"
+	listDirToolDesc = `列出目录内容，返回文件/目录的名称、路径、类型、大小。支持递归模式。
+- path: 目录路径，默认当前目录（可选）
+- recursive: 是否递归列出子目录，默认 false（可选）`
+	listDirToolErrors = `path not found: 目录不存在；确认路径是否正确
+path is not a directory: 指定路径是文件而非目录；用 read_file 读取
+permission denied: 无读取权限
+empty directory: 目录为空（正常情况，非错误）`
+	listDirToolTips = `非递归模式适合快速浏览当前目录结构
+recursive=true 会列出所有子目录内容，适合了解项目全貌`
 )
 
 // ListDirInput defines the input parameters for list_dir tool
@@ -39,34 +77,30 @@ type ListDirOutput struct {
 // NewListDirTool creates a new list_dir tool for listing directory contents
 func NewListDirTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
-		"base.list_dir",
-		"List contents of a directory. Returns file names, paths, types (file/dir), and sizes. Supports recursive listing of subdirectories.",
+		listDirToolName,
+		listDirToolDesc,
 		func(ctx context.Context, input ListDirInput) (*schema.ToolResult, error) {
-			// Set default path
 			if input.Path == "" {
 				input.Path = "."
 			}
 
-			// Check if path exists
 			info, err := os.Stat(input.Path)
 			if err != nil {
-				return nil, fmt.Errorf("failed to access path: %w", err)
+				return nil, fmt.Errorf("failed to access path '%s': %w. Verify the path exists and is accessible.", input.Path, err)
 			}
 
 			if !info.IsDir() {
-				return nil, fmt.Errorf("path is not a directory: %s", input.Path)
+				return nil, fmt.Errorf("path '%s' is not a directory. Use read_file to read file content.", input.Path)
 			}
 
 			var files []FileInfo
 
 			if input.Recursive {
-				// Recursive listing
 				err = filepath.Walk(input.Path, func(path string, info os.FileInfo, err error) error {
 					if err != nil {
-						return nil // Skip errors
+						return nil
 					}
 
-					// Skip the root directory itself
 					if path == input.Path {
 						return nil
 					}
@@ -82,19 +116,18 @@ func NewListDirTool() (tool.EnhancedInvokableTool, error) {
 				})
 
 				if err != nil {
-					return nil, fmt.Errorf("failed to walk directory: %w", err)
+					return nil, fmt.Errorf("failed to walk directory: %w. Some subdirectories may be inaccessible.", err)
 				}
 			} else {
-				// Non-recursive listing
 				entries, err := os.ReadDir(input.Path)
 				if err != nil {
-					return nil, fmt.Errorf("failed to read directory: %w", err)
+					return nil, fmt.Errorf("failed to read directory: %w. Check directory permissions.", err)
 				}
 
 				for _, entry := range entries {
 					info, err := entry.Info()
 					if err != nil {
-						continue // Skip entries we can't stat
+						continue
 					}
 
 					fullPath := filepath.Join(input.Path, entry.Name())
@@ -107,7 +140,6 @@ func NewListDirTool() (tool.EnhancedInvokableTool, error) {
 				}
 			}
 
-			// Sort by path
 			sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 			return JSONResult(ListDirOutput{Files: files, Count: len(files)})
 		},

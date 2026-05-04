@@ -12,7 +12,6 @@ import (
 	"github.com/lzq/5hAgent/internal/mcp"
 	"github.com/lzq/5hAgent/internal/skill"
 	"github.com/lzq/5hAgent/internal/task"
-	"github.com/lzq/5hAgent/internal/toolmeta"
 )
 
 // registry holds all registered tools
@@ -25,41 +24,44 @@ func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
 	defer registryMu.Unlock()
 
 	registry = nil // 清空
-	toolmeta.Reset()
+	Reset()
+	mcpServers = make(map[string]mcp.Client)
+	mcpServerDescs = make(map[string]string)
 
 	// 基础文件工具
-	tools := []struct {
-		meta toolmeta.Meta
+	baseTools := []struct {
+		meta Meta
 		fn   func() (tool.BaseTool, error)
 	}{
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "read_file", FullName: "base.read_file", OriginalName: "read_file", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewReadFileTool() }},
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "exec_shell", FullName: "base.exec_shell", OriginalName: "exec_shell"}, fn: func() (tool.BaseTool, error) { return NewExecShellTool() }},
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "glob", FullName: "base.glob", OriginalName: "glob", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewGlobTool() }},
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "edit", FullName: "base.edit", OriginalName: "edit"}, fn: func() (tool.BaseTool, error) { return NewEditTool() }},
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "write_file", FullName: "base.write_file", OriginalName: "write_file"}, fn: func() (tool.BaseTool, error) { return NewWriteFileTool() }},
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "grep", FullName: "base.grep", OriginalName: "grep", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewGrepTool() }},
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "list_dir", FullName: "base.list_dir", OriginalName: "list_dir", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewListDirTool() }},
+		{meta: Meta{Category: CategoryBase, Source: "local", DisplayName: "read_file", FullName: "base.read_file", OriginalName: "read_file", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewReadFileTool() }},
+		{meta: Meta{Category: CategoryBase, Source: "local", DisplayName: "exec_shell", FullName: "base.exec_shell", OriginalName: "exec_shell"}, fn: func() (tool.BaseTool, error) { return NewExecShellTool() }},
+		{meta: Meta{Category: CategoryBase, Source: "local", DisplayName: "glob", FullName: "base.glob", OriginalName: "glob", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewGlobTool() }},
+		{meta: Meta{Category: CategoryBase, Source: "local", DisplayName: "edit", FullName: "base.edit", OriginalName: "edit"}, fn: func() (tool.BaseTool, error) { return NewEditTool() }},
+		{meta: Meta{Category: CategoryBase, Source: "local", DisplayName: "write_file", FullName: "base.write_file", OriginalName: "write_file"}, fn: func() (tool.BaseTool, error) { return NewWriteFileTool() }},
+		{meta: Meta{Category: CategoryBase, Source: "local", DisplayName: "grep", FullName: "base.grep", OriginalName: "grep", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewGrepTool() }},
+		{meta: Meta{Category: CategoryBase, Source: "local", DisplayName: "list_dir", FullName: "base.list_dir", OriginalName: "list_dir", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewListDirTool() }},
+		{meta: Meta{Category: CategoryMCP, Source: "local", DisplayName: "mcp_list_tools", FullName: "mcp.list_tools", OriginalName: "mcp_list_tools"}, fn: func() (tool.BaseTool, error) { return NewMCPListToolsTool() }},
 	}
 
-	for _, t := range tools {
+	for _, t := range baseTools {
 		tool, err := t.fn()
 		if err != nil {
 			return fmt.Errorf("failed to create %s tool: %w", t.meta.FullName, err)
 		}
 		registry = append(registry, tool)
-		toolmeta.Register(t.meta)
+		Register(t.meta)
 	}
 
 	// Task 工具（统一入口）
 	if taskList != nil {
-		registry = append(registry, NewTaskTool(taskList))
-		toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategoryTask, Source: "local", DisplayName: "task", FullName: "task.task", OriginalName: "task"})
+		registry = append(registry, &TaskTool{taskList: taskList})
+		Register(Meta{Category: CategoryTask, Source: "local", DisplayName: "task", FullName: "task.task", OriginalName: "task"})
 	}
 
 	// Skill 工具
 	if skillMgr != nil {
-		registry = append(registry, NewSkillTool(skillMgr))
-		toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategorySkill, Source: "local", DisplayName: "skill", FullName: "skill.skill", OriginalName: "skill"})
+		registry = append(registry, &SkillTool{mgr: skillMgr})
+		Register(Meta{Category: CategorySkill, Source: "local", DisplayName: "skill", FullName: "skill.skill", OriginalName: "skill"})
 	}
 
 	return nil
@@ -99,7 +101,7 @@ func GetToolByName(name string) tool.BaseTool {
 		if info.Name == name {
 			return t
 		}
-		if meta, ok := toolmeta.Lookup(info.Name); ok {
+		if meta, ok := Lookup(info.Name); ok {
 			if meta.DisplayName == name || meta.OriginalName == name {
 				return t
 			}
@@ -115,13 +117,17 @@ func RegisterMCPTools(serverName string, client mcp.Client, specs []mcp.ToolSpec
 	if client == nil {
 		return fmt.Errorf("mcp client is required")
 	}
+
+	// 注册服务器到全局 map（供 mcp_list_tools 使用）
+	RegisterMCPServer(serverName, client)
+
 	for _, spec := range specs {
 		if spec.Name == "" {
 			return fmt.Errorf("mcp tool name is required")
 		}
 		registry = append(registry, NewMCPTool(serverName, client, spec))
-		toolmeta.Register(toolmeta.Meta{
-			Category:     toolmeta.CategoryMCP,
+		Register(Meta{
+			Category:     CategoryMCP,
 			Source:       serverName,
 			DisplayName:  spec.Name,
 			FullName:     mcp.FullToolName(serverName, spec.Name),

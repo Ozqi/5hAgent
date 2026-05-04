@@ -14,7 +14,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/logger"
-	"github.com/lzq/5hAgent/internal/toolmeta"
+	"github.com/lzq/5hAgent/internal/tools"
 )
 
 // toolCallState 工具调用收集状态
@@ -218,7 +218,7 @@ func formatToolErr(tc schema.ToolCall, execErr error) string {
 // toolHint 根据工具名称返回操作提示
 func toolHint(tc schema.ToolCall) string {
 	name := tc.Function.Name
-	display := toolmeta.DisplayName(name)
+	display := tools.DisplayName(name)
 	if strings.HasPrefix(display, "base.") {
 		display = strings.TrimPrefix(display, "base.")
 	}
@@ -240,8 +240,9 @@ func toolHint(tc schema.ToolCall) string {
 		return "use an existing skill name and set action to enable or disable"
 	}
 
-	if meta, ok := toolmeta.Lookup(name); ok && meta.Category == toolmeta.CategoryMCP {
-		return "check the remote tool arguments and server-specific requirements"
+	if meta, ok := tools.Lookup(name); ok && meta.Category == tools.CategoryMCP {
+		// MCP 错误已在 mcp_tool.go 返回具体信息，不添加通用提示干扰
+		return ""
 	}
 
 	return "review the tool schema and retry with corrected arguments"
