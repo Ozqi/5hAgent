@@ -763,7 +763,7 @@ func colorizeToolHintLine(line string) string {
 		toolName = rest[:idx]
 		suffix = rest[idx:]
 	}
-	return logger.Gray("[tool]") + " " + logger.Gray(toolName) + logger.Gray(suffix)
+	return logger.Bold(logger.Blue("[tool]")) + " " + logger.Yellow(toolName) + logger.Gray(suffix)
 }
 
 func renderPrefixedPlainText(prefix string, content string, color lipgloss.Color, width int) string {

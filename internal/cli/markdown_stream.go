@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/lzq/5hAgent/internal/logger"
 )
 
@@ -247,12 +248,13 @@ func renderTable(block string, color bool) string {
 		}
 	}
 
-	// 计算每列最大宽度
+	// 计算每列最大显示宽度。不能用 len()，中文和宽字符会导致表格错位。
 	colWidths := make([]int, numCols)
 	for _, row := range rawRows {
 		for c, cell := range row {
-			if c < numCols && len(cell) > colWidths[c] {
-				colWidths[c] = len(cell)
+			cellWidth := lipgloss.Width(cell)
+			if c < numCols && cellWidth > colWidths[c] {
+				colWidths[c] = cellWidth
 			}
 		}
 	}
@@ -280,7 +282,10 @@ func renderTable(block string, color bool) string {
 			if c < len(row) {
 				cell = row[c]
 			}
-			padding := colWidths[c] - len(cell)
+			padding := colWidths[c] - lipgloss.Width(cell)
+			if padding < 0 {
+				padding = 0
+			}
 			parts[c] = " " + cell + strings.Repeat(" ", padding) + " "
 		}
 		line := "│" + strings.Join(parts, "│") + "│"
