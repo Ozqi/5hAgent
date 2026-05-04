@@ -66,6 +66,7 @@ type AppModel struct {
 	modelName  string
 	agentName  string
 	sessionID  string
+	promptDir  string
 	taskList   *task.TaskList
 	skillMgr   *skill.Manager
 	ctxManager *agentctx.Manager
@@ -177,7 +178,7 @@ var (
 
 var menuItems = []string{"CHATS", "HISTORY", "LOGS", "AGENTS"}
 
-func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string) *AppModel {
+func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string) *AppModel {
 	vp := viewport.New(0, 0)
 	vp.MouseWheelEnabled = true
 	vp.MouseWheelDelta = 2
@@ -205,6 +206,7 @@ func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, taskLis
 			return ag.Name()
 		}(), "Agent"),
 		sessionID:        sessionID,
+		promptDir:        promptDir,
 		taskList:         taskList,
 		skillMgr:         skillMgr,
 		ctxManager:       ctxManager,
@@ -404,7 +406,7 @@ func (m *AppModel) submit() tea.Cmd {
 	}
 
 	if strings.HasPrefix(text, "/compress") {
-		result, err := commands.HandleCompress(m.ctx, text, m.ctxManager, m.messageCtx, m.ag.GetModel(), "prompt", "compact")
+		result, err := commands.HandleCompress(m.ctx, text, m.ctxManager, m.messageCtx, m.ag.GetModel(), m.promptDir, "compact")
 		if err != nil {
 			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: err.Error()})
 		} else {
@@ -1085,10 +1087,10 @@ func tickSpinner() tea.Cmd {
 	})
 }
 
-func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string) error {
+func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string) error {
 	launchMu.Lock()
 	defer launchMu.Unlock()
-	model := NewAppModel(ctx, ag, modelName, taskList, skillMgr, ctxManager, messageCtx, sessionID)
+	model := NewAppModel(ctx, ag, modelName, promptDir, taskList, skillMgr, ctxManager, messageCtx, sessionID)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	model.program = p
 	logger.SetToolEventSink(func(event logger.ToolEvent) {

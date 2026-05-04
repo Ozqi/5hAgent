@@ -83,6 +83,11 @@ else
     warn "MCP 配置已存在，跳过: $CONFIG_DIR/mcp.json"
 fi
 
+# ── 6.5. 安装 prompt 模板 ──
+mkdir -p "$CONFIG_DIR/prompt"
+cp -r "$TMP_DIR/5hAgent/prompt/"*.md "$CONFIG_DIR/prompt/" 2>/dev/null || true
+ok "已安装 prompt 模板到 $CONFIG_DIR/prompt/"
+
 # ── 7. PATH 提示 ──
 if echo "$PATH" | grep -q "$INSTALL_DIR"; then
     ok "$INSTALL_DIR 已在 PATH 中"
@@ -96,5 +101,5 @@ echo ""
 ok "安装完成！运行方式:"
 echo "  $INSTALL_DIR/$BINARY_NAME"
 echo ""
-echo "首次使用前请编辑配置文件，填入你的 LLM API Key:"
+echo "首次使用前请编辑配置文件，填入你的 LLM API Key到:"
 echo "  $CONFIG_DIR/.env"
