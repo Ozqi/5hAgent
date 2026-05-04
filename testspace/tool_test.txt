@@ -1,3 +1,0 @@
-hello world
-test line 2
-new string here

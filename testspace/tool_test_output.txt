@@ -1,3 +1,0 @@
-Hello from base.write_file!
-Timestamp: tool test - edited!
-Line 2 content
