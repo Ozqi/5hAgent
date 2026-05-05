@@ -146,8 +146,23 @@ func formatToolResultText(indent string, name string, args string, result string
 // PrintToolError 打印工具执行错误
 // 格式: ⎿ ✗ error
 func (p *ToolPrinter) PrintToolError(name string, args string, err error) {
-	_ = summarizeToolCall(name, args)
-	text := fmt.Sprintf("%s⎿ %s %s\n", p.indent, Red("✗"), Red(summarizeToolError(name, err)))
+	summary := summarizeToolCall(name, args)
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%s⎿ %s %s\n", p.indent, Red("✗"), Red(summarizeToolError(name, err))))
+	if len(summary.Fields) > 0 {
+		for _, field := range summary.Fields {
+			b.WriteString(p.indent)
+			b.WriteString("  ")
+			b.WriteString(Gray(field))
+			b.WriteString("\n")
+		}
+	} else if strings.TrimSpace(args) != "" {
+		b.WriteString(p.indent)
+		b.WriteString("  ")
+		b.WriteString(Gray("args: " + TruncateString(args, 180)))
+		b.WriteString("\n")
+	}
+	text := b.String()
 	if sink := currentToolEventSink(); sink != nil {
 		sink(ToolEvent{Kind: "error", Name: name, Text: text})
 		return

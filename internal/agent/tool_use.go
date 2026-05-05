@@ -214,6 +214,10 @@ func (a *Agent) addToolResult(messageCtx *agentctx.Context, tc schema.ToolCall, 
 func formatToolErr(tc schema.ToolCall, execErr error) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("tool execution failed: %v", execErr))
+	if strings.TrimSpace(tc.Function.Arguments) != "" {
+		b.WriteString("\nTool arguments sent by model: ")
+		b.WriteString(tc.Function.Arguments)
+	}
 	if hint := toolHint(tc); hint != "" {
 		b.WriteString("\nSuggestion: ")
 		b.WriteString(hint)

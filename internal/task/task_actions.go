@@ -144,6 +144,9 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 		result.Message = fmt.Sprintf("task %q reopened", task.ID)
 		return result, nil
 	default:
-		return nil, fmt.Errorf("unknown action: %s", req.Action)
+		if req.Action == "" {
+			return nil, fmt.Errorf("missing action: expected one of create/update/get/list/delete/archive/reopen")
+		}
+		return nil, fmt.Errorf("unknown action %q: expected one of create/update/get/list/delete/archive/reopen", req.Action)
 	}
 }

@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/components/tool"
@@ -12,6 +14,23 @@ type callbackPanicTool struct{}
 
 func (callbackPanicTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{Name: "callback_panic_tool", Desc: "test tool"}, nil
+}
+
+func TestFormatToolErrIncludesArguments(t *testing.T) {
+	errText := formatToolErr(schema.ToolCall{
+		ID: "call_1",
+		Function: schema.FunctionCall{
+			Name:      "task.task",
+			Arguments: `{"action":"finish","id":"test-tools-001"}`,
+		},
+	}, errors.New(`unknown action "finish": expected one of create/update/get/list/delete/archive/reopen`))
+
+	if !strings.Contains(errText, `unknown action "finish"`) {
+		t.Fatalf("formatted error missing root cause: %s", errText)
+	}
+	if !strings.Contains(errText, `Tool arguments sent by model: {"action":"finish","id":"test-tools-001"}`) {
+		t.Fatalf("formatted error missing tool args: %s", errText)
+	}
 }
 
 func (callbackPanicTool) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
