@@ -11,6 +11,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -274,8 +275,10 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		cb := a.callbacks
 		cb.OnModelStart(ctx, nil, &model.CallbackInput{Messages: messages})
 
-		reader, err := a.model.Stream(ctx, messages)
+		streamCtx, streamCancel := context.WithCancel(ctx)
+		reader, err := a.model.Stream(streamCtx, messages)
 		if err != nil {
+			streamCancel()
 			cb.OnModelError(ctx, nil, err)
 			return "", fmt.Errorf("LLM stream failed: %w", err)
 		}
@@ -305,12 +308,33 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 		// 读取流式响应
 		for {
-			chunk, err := reader.Recv()
+			type recvResult struct {
+				chunk *schema.Message
+				err   error
+			}
+			recvCh := make(chan recvResult, 1)
+			go func() {
+				chunk, err := reader.Recv()
+				recvCh <- recvResult{chunk: chunk, err: err}
+			}()
+
+			var chunk *schema.Message
+			var err error
+			select {
+			case res := <-recvCh:
+				chunk, err = res.chunk, res.err
+			case <-time.After(90 * time.Second):
+				streamCancel()
+				reader.Close()
+				cb.OnModelError(ctx, nil, context.DeadlineExceeded)
+				return "", fmt.Errorf("LLM stream idle timeout: no text or tool call chunk received for 90s")
+			}
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
 				reader.Close()
+				streamCancel()
 				cb.OnModelError(ctx, nil, err)
 				return "", fmt.Errorf("stream read failed: %w", err)
 			}
@@ -338,6 +362,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			}
 		}
 		reader.Close()
+		streamCancel()
 
 		for _, tc := range collector.PendingRunnableCalls() {
 			idx := len(queuedCalls)

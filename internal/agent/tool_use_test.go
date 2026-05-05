@@ -59,11 +59,11 @@ func TestExeToolCallDebugCallbackDoesNotPanic(t *testing.T) {
 	}
 }
 
-func TestToolCollectorPendingRunnableCallsNormalizesEmptyArguments(t *testing.T) {
+func TestToolCollectorWaitsForArgumentsDuringStreaming(t *testing.T) {
 	idx := 0
 	collector := newToolCollector()
 
-	// 流式阶段：空参数应在 merge 时标准化为 "{}"，立即可调度
+	// 流式阶段不能把空参数立即当成 {}，因为下一片可能才是真参数。
 	ready := collector.Add([]schema.ToolCall{{
 		Index: &idx,
 		ID:    "call_1",
@@ -71,16 +71,49 @@ func TestToolCollectorPendingRunnableCallsNormalizesEmptyArguments(t *testing.T)
 			Name: "mcp.notion.API-get-self",
 		},
 	}})
-	if len(ready) != 1 {
-		t.Fatalf("Add() ready calls = %d, want 1 (empty args normalized to {} during streaming)", len(ready))
-	}
-	if ready[0].Function.Arguments != "{}" {
-		t.Fatalf("arguments = %q, want {}", ready[0].Function.Arguments)
+	if len(ready) != 0 {
+		t.Fatalf("Add() ready calls = %d, want 0 before arguments or stream EOF", len(ready))
 	}
 
-	// 流结束后：已调度的调用不应重复出现
+	ready = collector.Add([]schema.ToolCall{{
+		Index: &idx,
+		Function: schema.FunctionCall{
+			Arguments: `{"user_id":"abc"}`,
+		},
+	}})
+	if len(ready) != 1 {
+		t.Fatalf("Add() ready calls = %d, want 1 after arguments arrive", len(ready))
+	}
+	if ready[0].Function.Arguments != `{"user_id":"abc"}` {
+		t.Fatalf("arguments = %q, want real args", ready[0].Function.Arguments)
+	}
+
 	pending := collector.PendingRunnableCalls()
 	if len(pending) != 0 {
 		t.Fatalf("PendingRunnableCalls() = %d, want 0 (already dispatched)", len(pending))
+	}
+}
+
+func TestToolCollectorNormalizesEmptyArgumentsAtStreamEnd(t *testing.T) {
+	idx := 0
+	collector := newToolCollector()
+
+	ready := collector.Add([]schema.ToolCall{{
+		Index: &idx,
+		ID:    "call_1",
+		Function: schema.FunctionCall{
+			Name: "mcp.notion.API-get-self",
+		},
+	}})
+	if len(ready) != 0 {
+		t.Fatalf("Add() ready calls = %d, want 0 before stream EOF", len(ready))
+	}
+
+	pending := collector.PendingRunnableCalls()
+	if len(pending) != 1 {
+		t.Fatalf("PendingRunnableCalls() = %d, want 1", len(pending))
+	}
+	if pending[0].Function.Arguments != "{}" {
+		t.Fatalf("arguments = %q, want {}", pending[0].Function.Arguments)
 	}
 }
