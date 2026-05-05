@@ -32,7 +32,7 @@ type WriteFileOutput struct {
 func NewWriteFileTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
 		"base.write_file",
-		"Write content to a file at the specified path. Creates the file if it doesn't exist, or overwrites it if it does. Automatically creates parent directories if needed.",
+		"Write non-empty content to a file. Always send JSON object arguments. Required: path (absolute file path), content (full file content). Creates parent directories if needed and overwrites existing file. Example: {\"path\":\"/home/user/project/file.txt\",\"content\":\"hello\\n\"}",
 		func(ctx context.Context, input WriteFileInput) (*schema.ToolResult, error) {
 			// Validate input
 			if input.Path == "" {

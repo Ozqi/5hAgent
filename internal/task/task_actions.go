@@ -7,6 +7,7 @@ package task
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 type TaskActionRequest struct {
@@ -45,6 +46,8 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 		Path:   list.Path(),
 	}
 
+	req.Action = strings.ToLower(strings.TrimSpace(req.Action))
+	req.Status = strings.ToLower(strings.TrimSpace(req.Status))
 	switch req.Action {
 	case "create":
 		if req.ID == "" || req.Title == "" || req.Description == "" {

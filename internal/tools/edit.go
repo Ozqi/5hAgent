@@ -47,10 +47,11 @@ import (
 // --- LLM 描述常量（供 InferEnhancedTool 使用）---
 const (
 	editToolName = "base.edit"
-	editToolDesc = `对文件做精确字符串替换。所有匹配的 old_string 都会被替换为 new_string。
-- path: 文件绝对路径（必填）
-- old_string: 待替换的确切字符串（必填，必须完全匹配）
-- new_string: 替换后的字符串（必填）`
+	editToolDesc = `Precise string replacement in an existing file. Always send JSON object arguments.
+- path: required absolute file path.
+- old_string: required exact text to replace. Must match file content exactly, including whitespace and indentation. Use read_file first.
+- new_string: required replacement text. All occurrences of old_string are replaced.
+Example: {"path":"/home/user/project/main.go","old_string":"old exact text","new_string":"new exact text"}`
 	editToolErrors = `MISSING 'path': 必须提供文件绝对路径
 MISSING 'old_string': 必须提供待替换的确切字符串（用 read_file 确认原文）
 MISSING 'new_string': new_string 不能为空
@@ -64,9 +65,9 @@ permission denied: 无写入权限；检查文件权限`
 
 // EditInput defines the input parameters for edit tool
 type EditInput struct {
-	Path      string `json:"path" jsonschema:"required,description=Absolute path to the file to edit"`
-	OldString string `json:"old_string" jsonschema:"required,description=Exact string to replace (must match exactly)"`
-	NewString string `json:"new_string" jsonschema:"required,description=New string to replace with"`
+	Path      string `json:"path" jsonschema:"required,description=Required absolute path to the file to edit"`
+	OldString string `json:"old_string" jsonschema:"required,description=Required exact string to replace. Must match exactly, including whitespace and indentation. Use read_file first."`
+	NewString string `json:"new_string" jsonschema:"required,description=Required replacement string"`
 }
 
 // EditOutput defines the output structure for edit tool

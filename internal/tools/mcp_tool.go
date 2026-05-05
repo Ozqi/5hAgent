@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -46,7 +47,7 @@ var _ tool.InvokableTool = (*MCPTool)(nil)
 
 // jsonSchemaObject 表示 JSON Schema 的 object 形式
 type jsonSchemaObject struct {
-	Type       string                     `json:"type"`
+	Type       json.RawMessage            `json:"type"`
 	Properties map[string]json.RawMessage `json:"properties"`
 	Required   []string                   `json:"required"`
 	Items      json.RawMessage            `json:"items"`
@@ -63,8 +64,8 @@ func parseInputSchema(raw json.RawMessage) map[string]*schema.ParameterInfo {
 		return map[string]*schema.ParameterInfo{}
 	}
 
-	// 只处理 object 类型的顶层 schema（MCP 工具参数都是 object）
-	if schemaObj.Type != "object" || len(schemaObj.Properties) == 0 {
+	// MCP 工具参数通常是 object；部分 OpenAPI MCP schema 省略顶层 type。
+	if schemaType(schemaObj.Type, schemaObj.Properties, schemaObj.Items) != "object" || len(schemaObj.Properties) == 0 {
 		return map[string]*schema.ParameterInfo{}
 	}
 
@@ -84,19 +85,31 @@ func parseInputSchema(raw json.RawMessage) map[string]*schema.ParameterInfo {
 // convertProperty 将单个 JSON Schema property 转换为 ParameterInfo
 func convertProperty(raw json.RawMessage, required bool) *schema.ParameterInfo {
 	var prop struct {
-		Type        string          `json:"type"`
+		Type        json.RawMessage `json:"type"`
 		Description string          `json:"description"`
 		Enum        []string        `json:"enum"`
+		Const       interface{}     `json:"const"`
 		Items       json.RawMessage `json:"items"`
 		Properties  json.RawMessage `json:"properties"`
 	}
 	if err := json.Unmarshal(raw, &prop); err != nil {
 		return &schema.ParameterInfo{Type: schema.String, Desc: "", Required: required}
 	}
+	dataType := schemaType(prop.Type, nil, prop.Items)
+	if dataType == "" && len(prop.Properties) > 0 {
+		dataType = "object"
+	}
+	if dataType == "" {
+		dataType = "string"
+	}
+	desc := strings.TrimSpace(prop.Description)
+	if required && desc == "" {
+		desc = "Required parameter."
+	}
 
 	pi := &schema.ParameterInfo{
-		Type:     schema.DataType(prop.Type),
-		Desc:     prop.Description,
+		Type:     schema.DataType(dataType),
+		Desc:     desc,
 		Required: required,
 	}
 
@@ -104,14 +117,20 @@ func convertProperty(raw json.RawMessage, required bool) *schema.ParameterInfo {
 	if len(prop.Enum) > 0 {
 		pi.Enum = prop.Enum
 	}
+	if prop.Const != nil {
+		pi.Enum = []string{fmt.Sprint(prop.Const)}
+		if pi.Desc == "" || pi.Desc == "Required parameter." {
+			pi.Desc = "Must be " + fmt.Sprint(prop.Const)
+		}
+	}
 
 	// 处理 array 元素类型
-	if prop.Type == "array" && len(prop.Items) > 0 {
+	if dataType == "array" && len(prop.Items) > 0 {
 		pi.ElemInfo = convertProperty(prop.Items, false)
 	}
 
 	// 处理 object 嵌套子参数
-	if prop.Type == "object" && len(raw) > 0 {
+	if dataType == "object" && len(raw) > 0 {
 		var subSchema jsonSchemaObject
 		if err := json.Unmarshal(raw, &subSchema); err == nil && len(subSchema.Properties) > 0 {
 			subRequired := make(map[string]bool, len(subSchema.Required))
@@ -126,4 +145,41 @@ func convertProperty(raw json.RawMessage, required bool) *schema.ParameterInfo {
 	}
 
 	return pi
+}
+
+func schemaType(raw json.RawMessage, properties map[string]json.RawMessage, items json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		if len(properties) > 0 {
+			return "object"
+		}
+		if len(items) > 0 {
+			return "array"
+		}
+		return ""
+	}
+	var single string
+	if err := json.Unmarshal(raw, &single); err == nil {
+		return normalizeJSONSchemaType(single)
+	}
+	var many []string
+	if err := json.Unmarshal(raw, &many); err == nil {
+		for _, candidate := range many {
+			candidate = normalizeJSONSchemaType(candidate)
+			if candidate != "" && candidate != "null" {
+				return candidate
+			}
+		}
+	}
+	return "string"
+}
+
+func normalizeJSONSchemaType(t string) string {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "integer":
+		return "number"
+	case "null":
+		return ""
+	default:
+		return strings.ToLower(strings.TrimSpace(t))
+	}
 }

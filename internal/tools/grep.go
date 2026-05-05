@@ -44,11 +44,11 @@ import (
 // --- LLM 描述常量（供 InferEnhancedTool 使用）---
 const (
 	grepToolName = "base.grep"
-	grepToolDesc = `在文件或目录中搜索正则表达式模式，返回匹配行（带文件路径、行号、列号、内容）。
-优先使用 ripgrep (rg)，ripgrep 不可用时 fallback 到 grep。
-- pattern: 正则表达式搜索模式（必填）
-- path: 搜索目录或文件，默认当前目录（可选）
-- type: 按文件类型过滤，如 'go'、'py'、'js'（可选）`
+	grepToolDesc = `Search file contents with a regular expression and return matching file path, line, column, and text. Always send JSON object arguments.
+- pattern: required regex pattern. Escape regex metacharacters when searching literal text.
+- path: optional directory or file. Default current workspace.
+- type: optional ripgrep file type such as go, py, js, md.
+Examples: {"pattern":"func NewAgent","path":"internal","type":"go"}; {"pattern":"claude-context","path":"doc"}`
 	grepToolErrors = `pattern invalid: 正则表达式语法错误；简化模式或转义特殊字符
 path not found: 搜索路径不存在；确认目录/文件名
 no matches: 无匹配结果（正常情况，非错误）；尝试更宽松的模式
@@ -59,9 +59,9 @@ rg not found (fallback): 系统未安装 ripgrep，自动使用 grep（功能受
 
 // GrepInput defines the input parameters for grep tool
 type GrepInput struct {
-	Pattern string `json:"pattern" jsonschema:"required,description=Search pattern (supports regex)"`
-	Path    string `json:"path,omitempty" jsonschema:"description=Directory or file to search in (default: current directory)"`
-	Type    string `json:"type,omitempty" jsonschema:"description=File type filter (e.g. 'go', 'py', 'js')"`
+	Pattern string `json:"pattern" jsonschema:"required,description=Required regex pattern to search for. Escape metacharacters for literal text."`
+	Path    string `json:"path,omitempty" jsonschema:"description=Optional directory or file to search in. Default: current workspace."`
+	Type    string `json:"type,omitempty" jsonschema:"description=Optional ripgrep file type filter, e.g. go, py, js, md."`
 }
 
 // GrepMatch represents a single match result

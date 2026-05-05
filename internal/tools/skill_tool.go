@@ -36,9 +36,10 @@ import (
 // --- LLM 描述常量 ---
 const (
 	skillToolName = "skill.skill"
-	skillToolDesc = `启用或禁用已注册的 skill（技能模块）。
-- skill: 技能名称（必填）
-- action: 操作类型，enable（默认）或 disable（可选）`
+	skillToolDesc = `Enable or disable an existing skill by exact skill name. Always send JSON object arguments.
+- skill: required, exact skill name
+- action: optional, one of enable or disable; defaults to enable
+Example: {"skill":"systematic-debugging","action":"enable"}`
 	skillToolErrors = `MISSING 'skill': 必须提供技能名称
 skill not found: 技能名称不存在；检查技能列表
 unknown action: action 必须是 enable 或 disable`
@@ -52,8 +53,8 @@ func (t *SkillTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 		Name: skillToolName,
 		Desc: skillToolDesc,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"skill":  {Type: schema.String, Desc: "Skill name", Required: true},
-			"action": {Type: schema.String, Desc: "Action: enable (default) or disable"},
+			"skill":  {Type: schema.String, Desc: "Required exact skill name", Required: true},
+			"action": {Type: schema.String, Desc: "One of: enable, disable. Defaults to enable.", Enum: []string{"enable", "disable"}},
 		}),
 	}, nil
 }

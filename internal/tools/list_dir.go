@@ -43,9 +43,10 @@ import (
 // --- LLM 描述常量（供 InferEnhancedTool 使用）---
 const (
 	listDirToolName = "base.list_dir"
-	listDirToolDesc = `列出目录内容，返回文件/目录的名称、路径、类型、大小。支持递归模式。
-- path: 目录路径，默认当前目录（可选）
-- recursive: 是否递归列出子目录，默认 false（可选）`
+	listDirToolDesc = `List directory entries and return name, path, directory flag, and size. Always send JSON object arguments.
+- path: optional directory path. Default current workspace. Must be a directory, not a file.
+- recursive: optional boolean. Default false. Use true only when you need a full tree.
+Example: {"path":"internal/tools","recursive":false}`
 	listDirToolErrors = `path not found: 目录不存在；确认路径是否正确
 path is not a directory: 指定路径是文件而非目录；用 read_file 读取
 permission denied: 无读取权限
@@ -56,8 +57,8 @@ recursive=true 会列出所有子目录内容，适合了解项目全貌`
 
 // ListDirInput defines the input parameters for list_dir tool
 type ListDirInput struct {
-	Path      string `json:"path,omitempty" jsonschema:"description=Directory path to list (default: current directory)"`
-	Recursive bool   `json:"recursive,omitempty" jsonschema:"description=List subdirectories recursively (default: false)"`
+	Path      string `json:"path,omitempty" jsonschema:"description=Optional directory path to list. Default: current workspace. Must be a directory."`
+	Recursive bool   `json:"recursive,omitempty" jsonschema:"description=Optional. List subdirectories recursively. Default: false."`
 }
 
 // FileInfo represents information about a file or directory

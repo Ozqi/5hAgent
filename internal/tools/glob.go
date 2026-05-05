@@ -45,10 +45,10 @@ import (
 // --- LLM 描述常量（供 InferEnhancedTool 使用）---
 const (
 	globToolName = "base.glob"
-	globToolDesc = `按 glob 模式匹配文件路径，返回排序后的匹配文件列表。
-支持通配符：* 任意字符、** 递归目录、? 单字符。
-- pattern: glob 模式，如 '*.go'、'**/*.md'（必填）
-- path: 搜索起始目录，默认当前目录（可选）`
+	globToolDesc = `Find files by glob pattern and return sorted paths. Always send JSON object arguments.
+- pattern: required glob pattern, e.g. "*.go", "**/*.md", "internal/**/*.go".
+- path: optional base directory. Default current workspace. Pattern is evaluated under this path.
+Use glob to discover file paths before read_file/edit when exact paths are unknown.`
 	globToolErrors = `pattern invalid: glob 模式语法错误；常见错误：多余的 **、不匹配的引号
 path not found: 起始目录不存在；确认目录路径
 permission denied: 无目录读取权限
@@ -60,8 +60,8 @@ no matches: 无匹配结果（正常情况，非错误）`
 
 // GlobInput defines the input parameters for glob tool
 type GlobInput struct {
-	Pattern string `json:"pattern" jsonschema:"required,description=Glob pattern to match files (e.g. '*.go' or 'internal/**/*.go')"`
-	Path    string `json:"path,omitempty" jsonschema:"description=Base directory to search in (default: current directory)"`
+	Pattern string `json:"pattern" jsonschema:"required,description=Required glob pattern, e.g. '*.go', '**/*.md', 'internal/**/*.go'."`
+	Path    string `json:"path,omitempty" jsonschema:"description=Optional base directory to search in. Default: current workspace."`
 }
 
 // GlobOutput defines the output structure for glob tool

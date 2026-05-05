@@ -245,7 +245,7 @@ func toolHint(tc schema.ToolCall) string {
 	case "exec_shell":
 		return "check the shell command, quote paths with spaces, prefer commands inside workspace"
 	case "task":
-		return "use a valid task action: create, update, get, list, or delete"
+		return "use exact task action values only: create/update/get/list/delete/archive/reopen. To finish a task use {\"action\":\"update\",\"id\":\"...\",\"status\":\"completed\"}; create requires id/title/description"
 	case "skill":
 		return "use an existing skill name and set action to enable or disable"
 	}

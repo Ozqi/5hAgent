@@ -44,10 +44,11 @@ import (
 // --- LLM 描述常量（供 InferEnhancedTool 使用）---
 const (
 	readFileToolName = "base.read_file"
-	readFileToolDesc = `按行读取文件，返回带行号的内容和总行数，支持 offset/limit 分段读取。
-- path: 文件绝对路径（必填）
-- offset: 从第几行开始读，默认1
-- limit: 最多读多少行，默认100`
+	readFileToolDesc = `Read a file by line range and return numbered lines plus total line count. Always send JSON object arguments.
+- path: required absolute file path. Use glob/list_dir first if unsure.
+- offset: optional 1-based start line. Default 1.
+- limit: optional max lines. Default 100. Use smaller chunks for large files.
+Example: {"path":"/home/user/project/main.go","offset":1,"limit":120}`
 	readFileToolErrors = `MISSING 'path': 必须提供文件绝对路径，不能为空
 offset < 1: offset 必须 >= 1
 file not found / permission denied: 路径可能错误，确认文件存在；或换用 list_dir/glob 确认路径
@@ -58,9 +59,9 @@ read error: 文件可能被占用或损坏；检查 limit 是否过大`
 
 // ReadFileInput defines the input parameters for read_file tool
 type ReadFileInput struct {
-	Path   string `json:"path" jsonschema:"required,description=Absolute path to the file to read"`
-	Offset int    `json:"offset,omitempty" jsonschema:"description=Line number to start reading from (default: 1)"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"description=Number of lines to read (default: 100)"`
+	Path   string `json:"path" jsonschema:"required,description=Required absolute path to the file to read. Use glob/list_dir first if unsure."`
+	Offset int    `json:"offset,omitempty" jsonschema:"description=Optional 1-based line number to start reading from. Default: 1."`
+	Limit  int    `json:"limit,omitempty" jsonschema:"description=Optional number of lines to read. Default: 100. Use 100-200 for large files."`
 }
 
 // ReadFileOutput defines the output structure for read_file tool

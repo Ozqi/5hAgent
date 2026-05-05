@@ -43,8 +43,10 @@ import (
 // --- LLM 描述常量（供 InferEnhancedTool 使用）---
 const (
 	execShellToolName = "base.exec_shell"
-	execShellToolDesc = `执行 shell 命令，返回 stdout、stderr 和返回码。可执行系统命令、脚本、CLI 工具。
-- command: 要执行的 shell 命令（必填）`
+	execShellToolDesc = `Execute a shell command and return stdout, stderr, and return code. Always send JSON object arguments.
+- command: required shell command string.
+Prefer dedicated tools for files/search: read_file, edit, write_file, grep, glob, list_dir.
+Quote paths with spaces. Avoid destructive commands unless explicitly requested.`
 	execShellToolErrors = `empty command: command 不能为空
 command not found: 命令不存在或不在 PATH 中；检查命令是否正确安装
 context cancelled: 命令执行超时或被取消；简化命令或分步执行
@@ -57,7 +59,7 @@ permission denied: 无执行权限；检查命令文件权限`
 
 // ExecShellInput defines the input parameters for exec_shell tool
 type ExecShellInput struct {
-	Command string `json:"command" jsonschema:"required,description=Shell command to execute"`
+	Command string `json:"command" jsonschema:"required,description=Required shell command to execute. Quote paths with spaces. Prefer dedicated file/search tools when possible."`
 }
 
 // ExecShellOutput defines the output structure for exec_shell tool
