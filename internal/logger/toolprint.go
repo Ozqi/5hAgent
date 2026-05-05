@@ -29,9 +29,13 @@ type toolResultSummary struct {
 }
 
 type ToolEvent struct {
-	Kind string
-	Name string
-	Text string
+	Kind       string
+	Name       string
+	Text       string
+	Args       string
+	Result     string
+	Error      string
+	Concurrent bool
 }
 
 var (
@@ -63,7 +67,7 @@ func NewToolPrinter() *ToolPrinter {
 func (p *ToolPrinter) PrintToolCall(name string, args string, concurrent bool) {
 	text := formatToolCall(p.indent, name, args, concurrent)
 	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "call", Name: name, Text: text})
+		sink(ToolEvent{Kind: "call", Name: name, Text: text, Args: args, Concurrent: concurrent})
 		return
 	}
 	fmt.Print(text)
@@ -94,7 +98,7 @@ func formatToolCall(indent string, name string, args string, concurrent bool) st
 func (p *ToolPrinter) PrintToolResult(name string, args string, result string) {
 	text := formatToolResultText(p.indent, name, args, result)
 	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "result", Name: name, Text: text})
+		sink(ToolEvent{Kind: "result", Name: name, Text: text, Args: args, Result: result})
 		return
 	}
 	fmt.Print(text)
@@ -164,7 +168,11 @@ func (p *ToolPrinter) PrintToolError(name string, args string, err error) {
 	}
 	text := b.String()
 	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "error", Name: name, Text: text})
+		errText := ""
+		if err != nil {
+			errText = err.Error()
+		}
+		sink(ToolEvent{Kind: "error", Name: name, Text: text, Args: args, Error: errText})
 		return
 	}
 	fmt.Print(text)

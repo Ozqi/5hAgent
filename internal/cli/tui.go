@@ -6,6 +6,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -39,10 +40,14 @@ const (
 )
 
 type conversationEntry struct {
-	Role     string
-	Content  string
-	ToolName string
-	ToolOpen bool
+	Role       string
+	Content    string
+	ToolName   string
+	ToolArgs   string
+	ToolKey    string
+	ToolState  string
+	ToolOutput string
+	ToolOpen   bool
 }
 
 type statusSnapshot struct {
@@ -296,14 +301,16 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case toolEventMsg:
-		text := compactToolEventText(msg.event)
 		if msg.event.Kind == "call" {
 			m.toolCalls++
 			m.lastTool = fallback(tools.DisplayName(msg.event.Name), msg.event.Name)
 		}
-		m.entries = append(m.entries, conversationEntry{Role: roleHint, Content: text})
+		m.applyToolEvent(msg.event)
 		m.currentAssistant = -1
 		m.refreshView()
+		if msg.event.Kind == "call" {
+			return m, tickSpinner()
+		}
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -549,7 +556,7 @@ func (m *AppModel) refreshView() {
 	stickToBottom := m.autoScroll || m.viewport.AtBottom() || m.viewport.TotalLineCount() <= m.viewport.Height
 	parts := make([]string, 0, len(m.entries))
 	for _, entry := range m.entries {
-		parts = append(parts, renderConversationEntry(entry, contentWidth))
+		parts = append(parts, m.renderConversationEntry(entry, contentWidth))
 	}
 	m.viewport.SetContent(strings.Join(parts, "\n"))
 	if stickToBottom {
@@ -676,38 +683,143 @@ func (m *AppModel) findToolEntry(name string) int {
 	return -1
 }
 
-func compactToolEventText(event logger.ToolEvent) string {
-	clean := strings.TrimSpace(stripANSI(event.Text))
-	if clean == "" {
-		return fmt.Sprintf("[tool] %s", fallback(tools.DisplayName(event.Name), event.Name))
-	}
-
-	entry := parseToolBlock(clean)
-	displayName := fallback(entry.Name, tools.DisplayName(event.Name))
-	displayName = fallback(displayName, event.Name)
-	if displayName == "" {
-		displayName = "tool"
-	}
+func (m *AppModel) applyToolEvent(event logger.ToolEvent) {
+	displayName := fallback(tools.DisplayName(event.Name), event.Name)
+	key := toolEventKey(event.Name, event.Args)
+	summary := formatToolArgsSummary(event.Args)
 
 	switch event.Kind {
 	case "call":
-		parts := []string{fmt.Sprintf("[tool] %s", displayName)}
-		if len(entry.Args) > 0 {
-			parts = append(parts, strings.Join(entry.Args, " · "))
-		}
-		return truncateInline(strings.Join(parts, " "), 180)
+		m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "running", ToolOutput: "running..."})
 	case "result":
-		result := strings.Join(entry.Result, " · ")
-		if result == "" {
-			result = strings.TrimPrefix(clean, "⎿ ")
+		idx := m.findRunningToolEntry(key, event.Name)
+		output := summarizeToolEventOutput(event)
+		if idx < 0 {
+			m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "done", ToolOutput: output})
+			return
 		}
-		return truncateInline(fmt.Sprintf("[tool] %s done: %s", displayName, result), 180)
+		m.entries[idx].ToolState = "done"
+		m.entries[idx].ToolOutput = output
 	case "error":
-		message := fallback(entry.Error, clean)
-		return truncateInline(fmt.Sprintf("[tool] %s error: %s", displayName, message), 180)
+		idx := m.findRunningToolEntry(key, event.Name)
+		output := summarizeToolEventOutput(event)
+		if idx < 0 {
+			m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "error", ToolOutput: output})
+			return
+		}
+		m.entries[idx].ToolState = "error"
+		m.entries[idx].ToolOutput = output
 	default:
-		return truncateInline("[tool] "+strings.ReplaceAll(clean, "\n", " · "), 180)
+		m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "done", ToolOutput: strings.TrimSpace(stripANSI(event.Text))})
 	}
+}
+
+func (m *AppModel) findRunningToolEntry(key string, name string) int {
+	displayName := tools.DisplayName(name)
+	for i := len(m.entries) - 1; i >= 0; i-- {
+		entry := m.entries[i]
+		if entry.Role != roleHint || entry.ToolState != "running" {
+			continue
+		}
+		if key != "" && entry.ToolKey == key {
+			return i
+		}
+		if entry.ToolName == name || entry.ToolName == displayName {
+			return i
+		}
+	}
+	return -1
+}
+
+func toolEventKey(name string, args string) string {
+	return name + "\x00" + strings.TrimSpace(args)
+}
+
+func formatToolArgsSummary(args string) string {
+	args = strings.TrimSpace(args)
+	if args == "" || args == "{}" {
+		return ""
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(args), &raw); err != nil {
+		return "[args=" + truncateMiddle(args, 120) + "]"
+	}
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, key+"="+truncateMiddle(toolArgValue(raw[key]), 80))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func toolArgValue(v interface{}) string {
+	switch vv := v.(type) {
+	case string:
+		return vv
+	case float64:
+		return fmt.Sprintf("%g", vv)
+	case bool:
+		if vv {
+			return "true"
+		}
+		return "false"
+	case nil:
+		return "null"
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return string(data)
+	}
+}
+
+func summarizeToolEventOutput(event logger.ToolEvent) string {
+	clean := strings.TrimSpace(stripANSI(event.Text))
+	entry := parseToolBlock(clean)
+	switch event.Kind {
+	case "result":
+		fields := append([]string{}, entry.Result...)
+		if len(fields) == 0 {
+			fields = strings.Split(strings.TrimSpace(strings.TrimPrefix(clean, "⎿ ")), "\n")
+		}
+		return compactOutputLines(fields, 4)
+	case "error":
+		if entry.Error != "" {
+			return compactOutputLines([]string{entry.Error}, 2)
+		}
+		if event.Error != "" {
+			return "error: " + truncateMiddle(event.Error, 180)
+		}
+		return compactOutputLines(strings.Split(clean, "\n"), 2)
+	default:
+		return compactOutputLines(strings.Split(clean, "\n"), 3)
+	}
+}
+
+func compactOutputLines(lines []string, limit int) string {
+	result := make([]string, 0, limit)
+	for _, line := range lines {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "⎿ "))
+		if line == "" {
+			continue
+		}
+		result = append(result, truncateMiddle(line, 160))
+		if len(result) >= limit {
+			break
+		}
+	}
+	if len(result) == 0 {
+		return "(no output)"
+	}
+	if len(lines) > len(result) {
+		result = append(result, "...")
+	}
+	return strings.Join(result, "\n")
 }
 
 func truncateInline(text string, maxLen int) string {
@@ -715,7 +827,7 @@ func truncateInline(text string, maxLen int) string {
 	return truncateMiddle(text, maxLen)
 }
 
-func renderConversationEntry(entry conversationEntry, width int) string {
+func (m *AppModel) renderConversationEntry(entry conversationEntry, width int) string {
 	switch entry.Role {
 	case roleUser:
 		body := compactParagraph(strings.TrimSpace(entry.Content))
@@ -724,7 +836,7 @@ func renderConversationEntry(entry conversationEntry, width int) string {
 		content := strings.TrimRight(renderMarkdownForTerminal(normalizeAssistantContent(entry.Content), true), "\n")
 		return wrapVisibleText(content, max(8, width))
 	case roleHint:
-		return renderHintEntry(entry.Content, width)
+		return m.renderToolHintEntry(entry, width)
 	case roleTool:
 		return renderToolEntry(entry.Content, width)
 	case roleSystem:
@@ -734,36 +846,58 @@ func renderConversationEntry(entry conversationEntry, width int) string {
 	}
 }
 
-func renderHintEntry(content string, width int) string {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return renderPrefixedPlainText("  · ", "", colorGray, width)
+func (m *AppModel) renderToolHintEntry(entry conversationEntry, width int) string {
+	stateIcon := "●"
+	stateColor := colorGreen
+	switch entry.ToolState {
+	case "running":
+		stateIcon = spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
+		stateColor = colorBlue
+	case "error":
+		stateIcon = "●"
+		stateColor = colorYellow
 	}
-	lineWidth := max(8, width-lipgloss.Width("  · "))
-	lines := wrapVisibleLines(content, lineWidth)
+
+	name := fallback(entry.ToolName, "tool")
+	args := strings.TrimSpace(entry.ToolArgs)
+	header := lipgloss.NewStyle().Foreground(stateColor).Render(stateIcon) + " " + logger.Yellow(name)
+	if args != "" {
+		header += " " + logger.Gray(args)
+	}
+
+	output := strings.TrimSpace(entry.ToolOutput)
+	if output == "" {
+		return header
+	}
+	lineWidth := max(8, width-2)
+	lines := wrapVisibleText(output, lineWidth)
+	if entry.ToolState == "error" {
+		lines = loggerColorLines(lines, colorYellow)
+	} else {
+		lines = loggerColorLines(lines, colorGray)
+	}
+	return header + "\n" + indentLines(lines, "  └ ", "    ")
+}
+
+func loggerColorLines(text string, color lipgloss.Color) string {
+	style := lipgloss.NewStyle().Foreground(color)
+	lines := strings.Split(text, "\n")
 	for i, line := range lines {
-		prefix := strings.Repeat(" ", lipgloss.Width("  · "))
-		if i == 0 {
-			prefix = lipgloss.NewStyle().Foreground(colorGray).Render("  · ")
-		}
-		lines[i] = prefix + colorizeToolHintLine(line)
+		lines[i] = style.Render(line)
 	}
 	return strings.Join(lines, "\n")
 }
 
-func colorizeToolHintLine(line string) string {
-	plain := stripANSI(line)
-	if !strings.HasPrefix(plain, "[tool] ") {
-		return logger.Gray(line)
+func indentLines(text string, firstPrefix string, nextPrefix string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if i == 0 {
+			lines[i] = firstPrefix + line
+		} else {
+			lines[i] = nextPrefix + line
+		}
 	}
-	rest := strings.TrimPrefix(plain, "[tool] ")
-	toolName := rest
-	suffix := ""
-	if idx := strings.IndexAny(rest, " \t:"); idx >= 0 {
-		toolName = rest[:idx]
-		suffix = rest[idx:]
-	}
-	return logger.Bold(logger.Blue("[tool]")) + " " + logger.Yellow(toolName) + logger.Gray(suffix)
+	return strings.Join(lines, "\n")
 }
 
 func renderPrefixedPlainText(prefix string, content string, color lipgloss.Color, width int) string {
