@@ -96,6 +96,27 @@ func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
 
 ## 工具实现类型
 
+## LLM 工具描述规范
+
+所有发给 LLM 的工具描述应包含：
+
+- 明确说明“Always send JSON object arguments”
+- 列出必填字段和可选字段
+- 对枚举字段提供 `Enum`，例如 task action/status、skill action
+- 给出可直接模仿的 JSON 示例
+- 错误提示中写明实际收到的参数，便于 LLM 自我修正
+
+`task.task` 的关键约束：
+
+- `create` 必须带 `id/title/description`
+- “完成任务”不是 `finish/done/complete` action，而是 `{"action":"update","id":"...","status":"completed"}`
+- `action` 只允许 `create/update/get/list/delete/archive/reopen`
+
+`skill.skill` 的关键约束：
+
+- `skill` 必填，必须是精确 skill 名称
+- `action` 只能是 `enable/disable`，默认 `enable`
+
 ### EnhancedInvokableTool
 
 框架自动解码 JSON 到 Go struct（[read_file.go](internal/tools/read_file.go)）：
@@ -146,6 +167,20 @@ func (t *TaskTool) InvokableRun(ctx context.Context, args string) (string, error
     // 手动解析并执行
 }
 ```
+
+### MCP Tool Schema 转换
+
+MCP 工具来自外部 server，schema 由 `mcp.ToolSpec.InputSchema` 提供，再通过 `parseInputSchema()` 转换为 Eino `ParameterInfo`。
+
+当前转换兼容常见 OpenAPI JSON Schema 形态：
+
+- 顶层省略 `type` 但包含 `properties` 时按 `object` 处理
+- `type` 可以是字符串，也可以是数组，如 `["object", "null"]`
+- `integer` 映射为 Eino 的 `number`
+- `const` 映射为单值 `Enum`
+- 嵌套 object 会递归转换 `SubParams`
+
+这对 Notion 这类 OpenAPI MCP 很重要，否则 LLM 会看不到必填嵌套参数，首次调用容易漏参。
 
 ## 工具调用接口适配
 

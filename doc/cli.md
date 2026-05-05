@@ -99,6 +99,10 @@ type conversationEntry struct {
     Role     string // user/assistant/tool/system
     Content  string
     ToolName string
+    ToolArgs string
+    ToolKey  string
+    ToolState string // running/done/error
+    ToolOutput string
     ToolOpen bool
 }
 
@@ -165,6 +169,7 @@ type statusSnapshot struct {
 - 行内代码 (`` ` `` → 红色)
 - 粗体/斜体
 - 列表
+- 表格 (`| a | b |` + 分隔行，按终端显示宽度对齐)
 
 ## 工具事件集成
 
@@ -176,6 +181,29 @@ logger.SetToolEventSink(func(event logger.ToolEvent) {
 ```
 
 工具调用事件会通过 `toolEventMsg` 发送到 TUI，渲染为工具条目。
+
+当前实现中，`logger.ToolEvent` 只负责携带结构化事件：`Kind/Name/Args/Result/Error/Concurrent`。具体 UI 状态由 TUI 管理，避免 logger 决定前端布局。
+
+工具事件渲染规则：
+
+- `call`：插入 running entry，显示 spinner 和参数摘要
+- `result`：按 `tool name + args` 找到最近 running entry，原地更新为 `done`
+- `error`：原地更新为 `error`
+- 参数格式：`[key=value,key2=value2]`
+- 完成态使用实心点 `●`
+- 并发工具各自一条 running entry，各自转圈，完成后各自更新
+
+示例：
+
+```text
+⠋ read_file [path=/home/lzq/Proj/5hAgent/README.md,limit=100]
+  └ running...
+
+● read_file [path=/home/lzq/Proj/5hAgent/README.md,limit=100]
+  └ total lines: 138
+    content:
+    ...
+```
 
 ## 相关代码
 
