@@ -277,6 +277,25 @@ func formatToolResult(toolResult *schema.ToolResult) string {
 	return strings.Join(parts, "\n")
 }
 
+func mergeMessageExtra(current map[string]any, incoming map[string]any) map[string]any {
+	if len(incoming) == 0 {
+		return current
+	}
+	if current == nil {
+		current = make(map[string]any, len(incoming))
+	}
+	for key, value := range incoming {
+		if prev, ok := current[key].(string); ok {
+			if next, ok := value.(string); ok {
+				current[key] = prev + next
+				continue
+			}
+		}
+		current[key] = value
+	}
+	return current
+}
+
 // isValidJSON 检查字符串是否为合法 JSON
 func isValidJSON(s string) bool {
 	var js json.RawMessage

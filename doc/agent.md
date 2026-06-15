@@ -114,7 +114,7 @@ for _, t := range tools {
 核心流程（[agent.go:217-392](internal/agent/agent.go)）：
 
 ```go
-func (a *Agent) RunStream(ctx, messageCtx, input, onToken) (string, error) {
+func (a *Agent) RunStream(ctx, messageCtx, input, onToken, onReasoning...) (string, error) {
     // 1. 首次对话注入 system prompt 和 skills
     a.ensureConversationSetup(messageCtx)
 
@@ -137,10 +137,10 @@ func (a *Agent) RunStream(ctx, messageCtx, input, onToken) (string, error) {
         toolQueue := make(chan toolRequest, 8)
         toolResultCh := make(chan execResult, 8)
 
-        // 并发执行 goroutine
+        // 工具 worker goroutine；与 LLM stream 读取并发，但多个工具在该 worker 内串行执行
         go func() {
             for req := range toolQueue {
-                result, err := a.exeToolCall(ctx, req.tc, ...)
+                result, err := a.exeToolCall(ctx, req.tc, ..., false)
                 toolResultCh <- execResult{...}
             }
         }()
@@ -158,6 +158,9 @@ func (a *Agent) RunStream(ctx, messageCtx, input, onToken) (string, error) {
             }
 
             // 输出 token
+            if chunk.ReasoningContent != "" {
+                onReasoning(chunk.ReasoningContent)
+            }
             if chunk.Content != "" {
                 fullContent.WriteString(chunk.Content)
                 onToken(chunk.Content)
@@ -265,31 +268,36 @@ type toolCollector struct {
 
 ### 执行策略
 
-| 工具类型 | 策略 | 说明 |
-|----------|------|------|
-| 只读工具 | 并发 | read_file, glob, grep, list_dir |
-| 写工具 | 串行 | write_file, edit, exec_shell |
-| task.get/list | 并发 | 按 action 参数判断 |
-| task 其他 | 串行 | create/update/delete/archive |
+当前 `RunStream` 的执行模型是“流式收集 + 单 worker 执行”：
 
-### exeTools 并发调度
+| 层级 | 策略 | 说明 |
+|------|------|------|
+| LLM stream 读取 vs 工具执行 | 并发 | 主流程持续接收 chunk；工具 worker 同时处理已完整的 ToolCall |
+| 多个工具调用之间 | 串行 | 单个 worker 从 `toolQueue` 顺序执行请求 |
+| 只读工具 | 未单独并发 | `read_file`, `glob`, `grep`, `list_dir` 当前没有特殊并发分支 |
+| 写工具 | 串行 | `write_file`, `edit`, `exec_shell` 同样进入同一个 worker |
+| `task.task get/list` | 未单独并发 | 当前执行路径没有按 action 分类调度 |
+
+### 工具调度链路
 
 ```go
-func (a *Agent) exeTools(ctx, messageCtx, toolCalls) error {
-    readOnlyCalls, writeCalls := classify(toolCalls)
+toolQueue := make(chan toolRequest, 8)
+toolResultCh := make(chan execResult, 8)
 
-    // 只读并发
-    if len(readOnlyCalls) > 0 {
-        a.exeToolsPar(ctx, messageCtx, readOnlyCalls)
+go func() {
+    for req := range toolQueue {
+        result, execErr := a.exeToolCall(ctx, req.tc, req.idx, req.idx+1, false)
+        toolResultCh <- execResult{idx: req.idx, tc: req.tc, result: result, err: execErr}
     }
-
-    // 写操作串行
-    for _, tc := range writeCalls {
-        result, err := a.exeToolCall(ctx, tc, ...)
-        a.addToolResult(messageCtx, tc, result, err)
-    }
-}
+    close(toolResultCh)
+}()
 ```
+
+`toolCollector.Add()` 在流式阶段合并 ToolCall 分片。只要某个调用已经具备 `ID`、`Function.Name`、合法 JSON `Function.Arguments`，就会被送入 `toolQueue`。流结束后，`PendingRunnableCalls()` 会把仍为空参数的完整调用标准化为 `{}` 后再分发。
+
+工具结果通过 `execResult.idx` 回填到 `toolResults[res.idx]`，保证即使未来改成多 worker 或每个工具一个 goroutine，也可以按原始 `queuedCalls` 顺序写回上下文。
+
+TUI 中的 `[并发]` 文案不表示当前一定并发执行。它只由 `logger.PrintToolCall(name, args, concurrent)` 的 `concurrent` 参数控制；当前 `RunStream` 传入的是 `false`。
 
 ### 工具调用接口适配
 
@@ -369,7 +377,7 @@ func (a *Agent) injectSkills(messageCtx) error {
 | 函数 | 说明 |
 |------|------|
 | `NewAgent(model, tools, config)` | 创建 Agent |
-| `RunStream(ctx, messageCtx, input, onToken)` | 流式运行 |
+| `RunStream(ctx, messageCtx, input, onToken, onReasoning...)` | 流式运行，正文和 thinking/reasoning 分开回调 |
 | `GetSkillManager()` | 获取技能管理器 |
 | `SetModel(model)` | 设置模型 |
 | `GetModel()` | 获取模型 |
@@ -381,13 +389,13 @@ func (a *Agent) injectSkills(messageCtx) error {
 
 | 函数 | 说明 |
 |------|------|
-| `exeTools(ctx, messageCtx, toolCalls)` | 执行工具调度 |
-| `exeToolsPar(ctx, messageCtx, toolCalls)` | 并发执行只读工具 |
+| `newToolCollector()` | 创建流式 ToolCall 收集器 |
+| `(*toolCollector).Add(chunks)` | 合并流式 ToolCall 分片并返回可执行调用 |
+| `(*toolCollector).PendingRunnableCalls()` | 流结束后提取未分发调用，必要时补 `{}` |
 | `exeToolCall(ctx, tc, idx, total, concurrent)` | 执行单个工具 |
 | `invokeTool(ctx, t, tc)` | 调用工具实例 |
 | `addToolResult(messageCtx, tc, result, err)` | 写入工具结果 |
 | `formatToolErr(tc, err)` | 格式化错误 |
-| `isReadOnly(tc)` | 判断是否只读 |
 
 ## 相关代码
 

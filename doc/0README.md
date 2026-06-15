@@ -121,7 +121,7 @@ sequenceDiagram
 ├── internal/
 │   ├── agent/                  # Agent 核心
 │   │   ├── agent.go           # ReAct 循环、流式 LLM 调用、上下文初始化、skill 注入
-│   │   └── tool_use.go        # ToolCall 解析、并发/串行执行、错误归类
+│   │   └── tool_use.go        # ToolCall 分片收集、单工具执行、结果格式化
 │   │
 │   ├── cli/                    # 终端 UI（TUI）
 │   │   ├── tui.go             # Bubble Tea 主界面：对话面板 + 状态栏，/task /skill /compress 命令入口
@@ -214,8 +214,8 @@ flowchart LR
     subgraph Loop["ReAct 循环 (agent.RunStream)"]
         messages["ctx.GetMessages()"]
         stream["model.Stream()"]
-        collect["streamToolCollector"]
-        exec["exeTools()"]
+        collect["toolCollector"]
+        exec["toolQueue → exeToolCall()"]
         add["ctx.AddMessage()"]
         compress["ctx.ShouldCompress?"]
     end

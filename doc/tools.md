@@ -17,9 +17,9 @@ flowchart TB
     end
 
     subgraph Dispatch["调度层"]
-        exec["exeTools()"]
-        par["exeToolsPar()"]
-        serial["串行执行"]
+        collect["toolCollector"]
+        queue["toolQueue/toolResultCh"]
+        worker["单 worker 执行"]
     end
 
     init --> base
@@ -28,8 +28,8 @@ flowchart TB
     init --> mcp
     init --> tm
 
-    exec --> par
-    exec --> serial
+    collect --> queue
+    queue --> worker
 ```
 
 ## 位置
@@ -200,38 +200,24 @@ func (a *Agent) invokeTool(ctx, t, tc) (string, error) {
 }
 ```
 
-## 并发执行策略
+## 当前执行策略
 
-| 分类 | 工具 | 策略 |
-|------|------|------|
-| 只读 | `base.read_file`, `base.glob`, `base.grep`, `base.list_dir` | 并发 |
-| 写 | `base.write_file`, `base.edit`, `base.exec_shell` | 串行 |
-| 任务只读 | `task.task get/list` | 并发 |
-| 任务写 | `task.task create/update/delete/archive/reopen` | 串行 |
-| 技能 | `skill.skill` | 串行 |
-| MCP | 取决于远端定义 | 按 `ReadOnly` 标记 |
+当前源码没有按只读/写工具拆分并发执行队列。`RunStream` 会启动一个工具 worker goroutine，从 `toolQueue` 逐个取 `toolRequest` 调 `Agent.exeToolCall()`，因此多个工具调用在该 worker 内仍是串行执行。
 
-## 只读判断逻辑
+已经具备的并发是：LLM stream 读取与工具 worker 执行可以重叠。当流式响应中某个 ToolCall 的 `id/name/arguments` 已合并完整且参数是合法 JSON 时，会立即送入 `toolQueue`，无需等待 LLM 整个响应结束。
 
-```go
-func isReadOnly(tc schema.ToolCall) bool {
-    // 第一层：toolmeta 注册表
-    if toolmeta.IsReadOnly(tc.Function.Name) {
-        return true
-    }
-
-    // 第二层：task.task 根据 action 判断
-    if tc.Function.Name == "task.task" || tc.Function.Name == "task" {
-        var input struct{ Action string `json:"action"` }
-        if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err != nil {
-            return false
-        }
-        return input.Action == "get" || input.Action == "list"
-    }
-
-    return false
-}
+```text
+LLM stream reader
+  -> toolCollector 合并 ToolCall 分片
+  -> toolQueue
+  -> 单个 tool worker goroutine
+     -> Agent.exeToolCall
+     -> Agent.invokeTool
 ```
+
+`toolmeta.Meta.ReadOnly` 目前用于记录工具元数据和展示，不参与 `RunStream` 的并发调度。`task.task get/list` 也没有在当前执行路径中被单独判定为可并发。
+
+TUI 的 `[并发]` 标记只来自 `logger.PrintToolCall(name, args, concurrent)` 的 `concurrent` 参数。当前 `RunStream` 调用 `exeToolCall(..., false)`，所以按当前源码执行时不应显示 `[并发]`。
 
 ## 添加新工具
 

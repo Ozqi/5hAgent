@@ -385,9 +385,9 @@ tool.WithTimeout(30 * time.Second)
 
 | 5hAgent 手写               | Eino 原生                             |
 | -------------------------- | ------------------------------------- |
-| `streamToolCollector`      | `schema.ToolCall.Index` + `ToolsNode` |
-| `exeTools` / `exeToolsPar` | `ToolsNode`                           |
-| `isReadOnly` 分类          | `ToolMiddleware`                      |
+| `toolCollector`            | `schema.ToolCall.Index` + `ToolsNode` |
+| `toolQueue` + `exeToolCall` | `ToolsNode`                          |
+| `toolmeta.ReadOnly` 元数据 | `ToolMiddleware`                      |
 | `toolRepeatGuard`          | `ToolMiddleware`                      |
 | `mergeMeta`                | `model.CallbackOutput.TokenUsage`     |
 | `logger.DebugTag`          | `callbacksHelper`                     |

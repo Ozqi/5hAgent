@@ -224,10 +224,16 @@ func mergeMeta(current *schema.ResponseMeta, incoming *schema.ResponseMeta) *sch
 //   - ctx: Go 标准上下文
 //   - messageCtx: 消息上下文
 //   - input: 用户输入
-//   - onToken: token 回调函数（每个 token 会调用一次）
+//   - onToken: 正文 token 回调函数（每个 token 会调用一次）
+//   - onReasoning: 可选 thinking/reasoning token 回调函数
 //
 // 返回: 完整响应内容和可能的错误
-func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, input string, onToken TokenCallback) (string, error) {
+func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, input string, onToken TokenCallback, onReasoning ...TokenCallback) (string, error) {
+	var reasoningCallback TokenCallback
+	if len(onReasoning) > 0 {
+		reasoningCallback = onReasoning[0]
+	}
+
 	// 1. 注入SystemPrompt和Skills（首次对话时）
 	if err := a.ensureConversationSetup(messageCtx); err != nil {
 		return "", err
@@ -284,6 +290,8 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		}
 
 		var fullContent strings.Builder
+		var fullReasoning strings.Builder
+		var fullExtra map[string]any
 		chunkCount := 0
 		collector := newToolCollector()
 		var responseMeta *schema.ResponseMeta
@@ -341,6 +349,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 			chunkCount++
 			responseMeta = mergeMeta(responseMeta, chunk.ResponseMeta)
+			fullExtra = mergeMessageExtra(fullExtra, chunk.Extra)
 
 			// 处理 ToolCalls
 			if len(chunk.ToolCalls) > 0 {
@@ -354,6 +363,13 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			}
 
 			// 处理内容
+			if chunk.ReasoningContent != "" {
+				fullReasoning.WriteString(chunk.ReasoningContent)
+				if reasoningCallback != nil {
+					reasoningCallback(chunk.ReasoningContent)
+				}
+			}
+
 			if chunk.Content != "" {
 				fullContent.WriteString(chunk.Content)
 				if onToken != nil {
@@ -372,6 +388,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		close(toolQueue)
 
 		content := fullContent.String()
+		reasoningContent := fullReasoning.String()
 
 		// 转换 token usage 类型
 		var tokenUsage *model.TokenUsage
@@ -408,10 +425,12 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		}
 
 		finalMessage := &schema.Message{
-			Role:         schema.Assistant,
-			Content:      content,
-			ToolCalls:    toolCalls,
-			ResponseMeta: responseMeta,
+			Role:             schema.Assistant,
+			Content:          content,
+			ReasoningContent: reasoningContent,
+			ToolCalls:        toolCalls,
+			ResponseMeta:     responseMeta,
+			Extra:            fullExtra,
 		}
 
 		// c. 检查是否有工具调用

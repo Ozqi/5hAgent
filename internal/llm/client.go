@@ -16,10 +16,11 @@ import (
 
 // Config LLM 配置
 type Config struct {
-	APIKey    string // API Key
-	BaseURL   string // Base URL
-	Model     string // 模型名称
-	MaxTokens int    // 最大 token 数，默认为 4096
+	APIKey               string // API Key
+	BaseURL              string // Base URL
+	Model                string // 模型名称
+	MaxTokens            int    // 最大 token 数，默认为 4096
+	ThinkingBudgetTokens int    // Claude extended thinking 预算；0 表示关闭
 }
 
 // Client LLM 客户端封装
@@ -97,6 +98,7 @@ func NewClient(ctx context.Context, config *Config) (*LLMClient, error) {
 		BaseURL:   &config.BaseURL,
 		Model:     config.Model,
 		MaxTokens: config.MaxTokens,
+		Thinking:  thinkingConfig(config.ThinkingBudgetTokens),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create model: %w", err)
@@ -106,4 +108,11 @@ func NewClient(ctx context.Context, config *Config) (*LLMClient, error) {
 		config: config,
 		model:  chatModel,
 	}, nil
+}
+
+func thinkingConfig(budgetTokens int) *claude.Thinking {
+	if budgetTokens <= 0 {
+		return nil
+	}
+	return &claude.Thinking{Enable: true, BudgetTokens: budgetTokens}
 }

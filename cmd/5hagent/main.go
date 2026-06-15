@@ -132,10 +132,11 @@ func runInteractive(cmd *cobra.Command, args []string) {
 
 	// *从配置创建 LLM 客户端
 	llmConfig := &llm.Config{
-		APIKey:    appConfig.LLM.APIKey,
-		BaseURL:   appConfig.LLM.BaseURL,
-		Model:     appConfig.LLM.Model,
-		MaxTokens: appConfig.LLM.MaxTokens,
+		APIKey:               appConfig.LLM.APIKey,
+		BaseURL:              appConfig.LLM.BaseURL,
+		Model:                appConfig.LLM.Model,
+		MaxTokens:            appConfig.LLM.MaxTokens,
+		ThinkingBudgetTokens: appConfig.LLM.ThinkingBudgetTokens,
 	}
 	client, err := llm.NewClient(ctx, llmConfig)
 	if err != nil {

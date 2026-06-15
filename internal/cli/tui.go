@@ -35,6 +35,7 @@ const (
 	roleTool         = "tool"
 	roleSystem       = "system"
 	roleHint         = "hint"
+	roleThinking     = "thinking"
 	defaultTUIWidth  = 100
 	defaultTUIHeight = 30
 )
@@ -99,6 +100,10 @@ type AppModel struct {
 }
 
 type assistantTokenMsg struct {
+	token string
+}
+
+type assistantThinkingMsg struct {
 	token string
 }
 
@@ -245,6 +250,9 @@ func loadHistoryEntries(ctxManager *agentctx.Manager, messageCtx *agentctx.Conte
 		case schema.User:
 			r = roleUser
 		case schema.Assistant:
+			if msg.ReasoningContent != "" {
+				entries = append(entries, conversationEntry{Role: roleThinking, Content: msg.ReasoningContent})
+			}
 			r = roleAssistant
 		case schema.System:
 			r = roleSystem
@@ -278,6 +286,16 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.entries[m.currentAssistant].Content += msg.token
 		}
 		m.currentStatus = "streaming"
+		m.refreshView()
+		return m, tickSpinner()
+	case assistantThinkingMsg:
+		if len(m.entries) > 0 && m.entries[len(m.entries)-1].Role == roleThinking {
+			m.entries[len(m.entries)-1].Content += msg.token
+		} else {
+			m.entries = append(m.entries, conversationEntry{Role: roleThinking, Content: msg.token})
+		}
+		m.currentAssistant = -1
+		m.currentStatus = "thinking"
 		m.refreshView()
 		return m, tickSpinner()
 	case assistantDoneMsg:
@@ -460,6 +478,8 @@ func (m *AppModel) runAgent(input string) {
 	}
 	_, err := m.ag.RunStream(m.ctx, m.messageCtx, input, func(token string) {
 		m.program.Send(assistantTokenMsg{token: token})
+	}, func(token string) {
+		m.program.Send(assistantThinkingMsg{token: token})
 	})
 	if err != nil {
 		m.program.Send(assistantErrorMsg{err: err})
@@ -837,6 +857,8 @@ func (m *AppModel) renderConversationEntry(entry conversationEntry, width int) s
 		return wrapVisibleText(content, max(8, width))
 	case roleHint:
 		return m.renderToolHintEntry(entry, width)
+	case roleThinking:
+		return renderThinkingEntry(entry.Content, width)
 	case roleTool:
 		return renderToolEntry(entry.Content, width)
 	case roleSystem:
@@ -844,6 +866,24 @@ func (m *AppModel) renderConversationEntry(entry conversationEntry, width int) s
 	default:
 		return wrapVisibleText(strings.TrimSpace(entry.Content), width)
 	}
+}
+
+func renderThinkingEntry(content string, width int) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	label := logger.Gray("thinking")
+	body := colorLinesANSI(wrapVisibleText(content, max(8, width-2)), logger.Gray)
+	return label + "\n" + indentLines(body, "  ", "  ")
+}
+
+func colorLinesANSI(text string, color func(string) string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = color(line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *AppModel) renderToolHintEntry(entry conversationEntry, width int) string {

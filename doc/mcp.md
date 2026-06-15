@@ -142,7 +142,7 @@ mcp.{serverName}.{toolName}
 ## 执行路径
 
 ```
-Agent.exeToolsPar() → exeToolCall() → MCPTool.InvokableRun() → client.CallTool()
+Agent.RunStream() → toolQueue → exeToolCall() → MCPTool.InvokableRun() → client.CallTool()
 ```
 
 ## /mcp 命令

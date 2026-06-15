@@ -171,6 +171,10 @@ type statusSnapshot struct {
 - 列表
 - 表格 (`| a | b |` + 分隔行，按终端显示宽度对齐)
 
+## Thinking 渲染
+
+启用 `LLM_THINKING_BUDGET_TOKENS` 后，Claude extended thinking 会通过 `schema.Message.ReasoningContent` 流到 TUI。TUI 使用 `assistantThinkingMsg` 追加或创建独立的 `roleThinking` 条目，并以浅灰色 `thinking` 标签显示；普通 assistant 正文仍走 `assistantTokenMsg`，两者不会混在同一个 conversation entry 中。
+
 ## 工具事件集成
 
 ```go
@@ -191,7 +195,8 @@ logger.SetToolEventSink(func(event logger.ToolEvent) {
 - `error`：原地更新为 `error`
 - 参数格式：`[key=value,key2=value2]`
 - 完成态使用实心点 `●`
-- 并发工具各自一条 running entry，各自转圈，完成后各自更新
+- `Concurrent` 只影响工具调用文本中的 `[并发]` 标记；当前 `RunStream` 调 `exeToolCall(..., false)`，所以按当前源码不会为普通工具调用显示 `[并发]`
+- 如果未来恢复多工具并发，TUI 可以通过每个 `ToolEvent` 独立展示工具调用与结果
 
 示例：
 

@@ -33,6 +33,18 @@ func TestFormatToolErrIncludesArguments(t *testing.T) {
 	}
 }
 
+func TestMergeMessageExtraAppendsStringChunks(t *testing.T) {
+	merged := mergeMessageExtra(nil, map[string]any{"thinking": "step 1 ", "count": 1})
+	merged = mergeMessageExtra(merged, map[string]any{"thinking": "step 2", "count": 2})
+
+	if got := merged["thinking"]; got != "step 1 step 2" {
+		t.Fatalf("thinking extra = %v, want appended string", got)
+	}
+	if got := merged["count"]; got != 2 {
+		t.Fatalf("count extra = %v, want latest non-string value", got)
+	}
+}
+
 func (callbackPanicTool) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
 	return "ok", nil
 }
