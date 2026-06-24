@@ -21,9 +21,9 @@
   - `task.task`：任务管理工具，通过 `action` 区分 `create`、`update`、`get`、`list`、`delete`
   - `skill.skill`：技能工具，通过 `action` 区分 `enable`、`disable`
 - 调用工具前先确认完整工具名，不要省略分类前缀，不要再使用旧名字如 `read_file`、`task_create`、`task_update`。
-- 任务唯一真源是项目根 `task.md`。如果需要查看当前任务状态，优先使用 `task.task` 的 `get/list`，并假设人工可能已经修改了 `task.md`。
-- 不要改动 `task.md` 中 `<!-- 5hagent:tasks:start -->` 到 `<!-- 5hagent:tasks:end -->` 之外的模板结构，除非用户明确要求重写该文档。
-- 路径：你当前所在的项目路径目录是，.5hagent。
+- 任务唯一真源是当前工作目录下的 `.5hagent/task.md`。如果需要查看当前任务状态，优先使用 `task.task` 的 `get/list`，并假设人工可能已经修改了 `.5hagent/task.md`。
+- 不要改动 `.5hagent/task.md` 中 `<!-- 5hagent:tasks:start -->` 到 `<!-- 5hagent:tasks:end -->` 之外的模板结构，除非用户明确要求重写该文档。
+- 项目数据目录是当前工作目录下的 `.5hagent/`。
 - 编辑文件前必须先读取，确认 old_string 精确匹配（含缩进和换行）。
 - 工具失败时，读完整错误信息，修正参数后重试。同一个错误不要重复超过 2 次，换思路。
 

@@ -9,6 +9,7 @@ flowchart TB
         base["base.*<br/>7个内置工具"]
         task["task.task<br/>任务工具"]
         skill["skill.skill<br/>技能工具"]
+        context["context.context<br/>上下文工具"]
         mcp["mcp.*<br/>MCP工具"]
     end
 
@@ -25,6 +26,7 @@ flowchart TB
     init --> base
     init --> task
     init --> skill
+    init --> context
     init --> mcp
     init --> tm
 
@@ -51,12 +53,15 @@ flowchart TB
 | `base.exec_shell` | `exec_shell.go` | 写 | 执行 shell 命令 |
 | `task.task` | `task_tool.go` | 混合 | 统一任务管理入口 |
 | `skill.skill` | `skill_tool.go` | 写 | 启用或禁用技能 |
+| `context.context` | `context_tool.go` | 混合 | inspect/pin/audit/compress 当前上下文 |
 | `mcp.list_tools` | `mcp_list_tools.go` | 只读 | 列出 MCP 服务器及工具 |
 | `mcp.<server>.<tool>` | `mcp_tool.go` | 取决于远端 | MCP Server 提供的工具 |
 
-## InitRegistry
+## 注册顺序
 
-入口函数（[registry.go:23-66](internal/tools/registry.go)）：
+本地基础工具、task 工具和 skill 工具由 `InitRegistry(taskList, skillMgr)` 注册。`context.context` 需要 LLM model 和 prompt 目录，因此由 runtime 在 `InitRegistry` 之后单独调用 `RegisterContextTool(llm, promptDir)` 注册。MCP 工具最后由 `RegisterMCPTools(server, client, specs)` 追加。
+
+入口函数（[registry.go](../internal/tools/registry.go)）：
 
 ```go
 func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
@@ -83,6 +88,11 @@ func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
     registry = append(registry, &SkillTool{mgr: skillMgr})
     toolmeta.Register(toolmeta.Meta{..., FullName: "skill.skill"})
 }
+
+func RegisterContextTool(llm model.ToolCallingChatModel, promptDir string) {
+    registry = append(registry, NewContextTool(llm, promptDir))
+    toolmeta.Register(toolmeta.Meta{..., FullName: "context.context"})
+}
 ```
 
 ## 关键函数
@@ -90,6 +100,7 @@ func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
 | 函数 | 说明 |
 |------|------|
 | `InitRegistry(taskList, skillMgr)` | 初始化注册表 |
+| `RegisterContextTool(llm, promptDir)` | 注册 LLM 可调用的上下文工具 |
 | `GetAllTools()` | 获取所有工具 |
 | `GetToolByName(name)` | 按名称查找工具 |
 | `RegisterMCPTools(server, client, specs)` | 注册 MCP 工具 |
@@ -116,6 +127,29 @@ func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
 
 - `skill` 必填，必须是精确 skill 名称
 - `action` 只能是 `enable/disable`，默认 `enable`
+
+`context.context` 的关键约束：
+
+- `action` 只能是 `inspect/pin/audit/compress`
+- `inspect` 只返回索引、角色、preview 和 flags，不返回完整历史
+- `pin` 必须带 `start/end/reason`
+- `compress` 支持 `mode=lm` 或 `mode=truncate`
+- 工具执行依赖 `Agent.RunStream()` 注入的 `ToolRuntime`；脱离 Agent 当前上下文直接调用会返回 `context runtime not found`
+
+### context.context
+
+位置：[context_tool.go](../internal/tools/context_tool.go)
+
+`context.context` 是 `tool.InvokableTool`，自己解析 JSON 参数并按 action 分发：
+
+| action | 调用 | 输出 |
+| --- | --- | --- |
+| `inspect` | `rt.Manager.Inspect(rt.Context)` | `ContextInspect` JSON |
+| `pin` | `rt.Manager.PinRange(rt.Context, range)` | `{\"ok\":true,\"action\":\"pin\",\"range\":...}` |
+| `audit` | `rt.Manager.Audit(rt.Context)` | 最近最多 20 条 audit events |
+| `compress` | `LMCompress()` 或 `Compress()` | `before/after/mode/ok` |
+
+这个工具返回短 JSON，不返回完整消息正文。`inspect` 的 preview 会截断，目的是让 LLM 能定位 message index，而不是把原始上下文再复制一遍。
 
 ### EnhancedInvokableTool
 

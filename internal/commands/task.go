@@ -82,7 +82,7 @@ func runTaskAction(list *task.TaskList, req task.TaskActionRequest) (string, err
 			sb.WriteString(fmt.Sprintf("  [%s] %s - %s (%s)\n", t.ID, t.Title, t.Status, t.CreatedAt.Format("2006-01-02")))
 		}
 		p := result.Progress
-		sb.WriteString(fmt.Sprintf("\nProgress: %d total, %d pending, %d in_progress, %d blocked, %d completed, %d archived\n", p.Total, p.Pending, p.InProgress, p.Blocked, p.Completed, p.Archived))
+		sb.WriteString(fmt.Sprintf("\nProgress: %d total, %d pending, %d in_progress, %d blocked, %d completed, %d archived, %d failed\n", p.Total, p.Pending, p.InProgress, p.Blocked, p.Completed, p.Archived, p.Failed))
 		return sb.String(), nil
 	}
 

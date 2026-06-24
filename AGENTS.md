@@ -1,168 +1,228 @@
 # AGENTS.md
 
-## Overview
+本文件是本仓库给 agentic contributor 的工作契约。回答、注释和文档优先使用中文；代码标识符、命令、错误文本和外部 API 名称保持原文。
 
-`5hAgent` is a lightweight Go + Eino agent framework.
+## 项目定位
+
+`5hAgent` 是一个轻量级 Go + Eino Agent runtime。当前 baseline 不再把 TUI 当成唯一入口，而是用 `internal/runtime` 同时支撑 TUI 和无头任务执行。
 
 ```text
 cmd/5hagent/main.go
-  -> internal/llm
-  -> internal/utils
-  -> internal/agent
-     -> internal/agent/tool_use.go
+  -> internal/runtime
+     -> internal/llm
+     -> internal/utils
+     -> internal/task
      -> internal/context
-     -> internal/skill
-  -> internal/tools
-  -> internal/commands
+     -> internal/agent
+        -> internal/agent/tool_use.go
+        -> internal/skill
+     -> internal/tools
+     -> internal/commands
+  -> internal/cli
 ```
 
-Use this file as the working contract for agentic contributors in this repo.
+交互边界：
 
-## Repository Facts
+- TUI：`5hagent` 初始化 runtime 后启动 Bubble Tea。
+- Headless：`5hagent run [--task <id>]` 读取项目目录 `.5hagent/task.md`，执行一个 `in_progress` 或 `pending` 任务，并写 `.5hagent/reports/<task-id>.md`。
+- Session：对话消息默认持久化到 `~/.5hAgent/sessions/*.jsonl`。
 
-- Main entrypoint: `cmd/5hagent/main.go`
-- Main loop: `internal/agent/agent.go`
-- Tool execution: `internal/agent/tool_use.go`
-- Task persistence: `internal/agent/tasklist.go`
-- Tool implementations: `internal/tools/*.go`
-- Slash commands: `internal/commands/*.go`
-- Prompt loader: `internal/utils/utils.go`
-- Skill loader: `internal/skill/skill.go`
-- Docs live in `doc/`
+## 当前代码事实
 
-## Build And Run
+- 主入口：`cmd/5hagent/main.go`
+- 共享运行时：`internal/runtime/runtime.go`
+- ReAct 主循环：`internal/agent/agent.go`
+- ToolCall 收集和执行：`internal/agent/tool_use.go`
+- Context 和压缩：`internal/context/ctx.go`
+- Session 持久化：`internal/context/session.go`
+- 任务文件：`internal/task/tasklist.go`
+- 工具实现：`internal/tools/*.go`
+- 工具注册：`internal/tools/registry.go`
+- 工具元数据：`internal/toolmeta/toolmeta.go`
+- Slash commands：`internal/commands/*.go`
+- Prompt 和配置加载：`internal/utils/utils.go`
+- Skill 加载：`internal/skill/skill.go`
+- 文档目录：`doc/`
 
-- Run without building: `go run cmd/5hagent/main.go`
-- Build binary: `go build -o 5hagent cmd/5hagent/main.go`
-- Run built binary: `./5hagent`
-- Run debug mode: `./5hagent --debug`
+## 文档分工
 
-## Test Commands
+- `README.md`：面向用户，记录安装、快速开始、运行命令和常用测试入口。
+- `doc/0README.md`：文档总览，按模块导航到各子文档。
+- `doc/*.md`：模块实现说明，记录架构、关键文件、关键函数和当前边界。
+- `开发日志.md`：按时间线记录重要改动、取舍和验证结果。
+- `AGENTS.md`：给 agentic contributor 的全局项目契约，记录项目事实、分支状态、模块边界和协作规则；不要重复 README 里的完整命令教程。
 
-- Run all Go tests: `go test ./...`
-- Run one package: `go test ./internal/tools`
-- Run one test by name: `go test ./internal/tools -run TestReadFileTool`
-- Run one test with verbose output: `go test -v ./internal/utils -run TestLoad`
-- Run llm tests only: `go test ./internal/llm -run TestNewClient`
+如果某个运行或测试命令已经在 README 或模块文档中维护，本文件只保留必要指针，不再复制一份。
 
-## SWE-bench Scripts
+## 全局配置事实
 
-- Run one root SWE-bench task: `./test_swebench.sh 1`
-- Run all root SWE-bench tasks: `./test_swebench.sh all`
-- Run one testspace task: `./testspace/test_runner.sh 1`
-- Run all testspace tasks: `./testspace/test_runner.sh all`
+- LLM provider 由 `LLM_PROVIDER=claude|openai` 选择，语义是接口风格，不绑定具体模型品牌。
+- provider 配置分别放在 `LLM_CLAUDE_*` 和 `LLM_OPENAI_*`；本地 Ollama 通过 `LLM_PROVIDER=openai` + `LLM_OPENAI_BASE_URL=http://localhost:11434/v1` 接入。
+- Agent 配置包括 `AGENT_NAME`、`AGENT_MAX_TOTAL_TOKENS`、`AGENT_REPEAT_TOOL_LIMIT`、`AGENT_CONTEXT_AUTO_COMPRESS`。
+- Prompts 从 `~/.5hAgent/prompt/*.md` 加载；主 prompt 是 `main.md`，模型专用前缀是 `prefix.<provider>.<model-slug>.md`。
+- Skills 从 `~/.5hAgent/skills/*/SKILL.md` 加载。
+- 项目数据目录是当前工作目录下的 `.5hagent/`；用户级配置目录是 `~/.5hAgent/`。
+- 需要跑真实 headless/LLM/toolcall 测试时，统一使用 `/Users/bytedance/Proj/5hWorkSpace` 作为测试 workspace，不要再临时散落到 `/private/tmp`。
 
-These scripts expect a built `./5hagent` binary and a configured `.env`.
+当前没有 checked-in `Makefile`、`golangci-lint` 配置、Cursor rules 或 Copilot instruction。不要在文档里虚构不存在的 lint 命令。
 
-## Lint And Formatting
+## 模块设计
 
-- Format code: `gofmt -w <file-or-dir>`
-- If you touched multiple Go files, prefer: `gofmt -w ./cmd ./internal`
-- There is currently no checked-in `Makefile`, `golangci-lint` config, Cursor rule set, or Copilot instruction file.
-- Do not invent repo-local lint commands in docs or commits unless you add them intentionally.
+初始化链路：
 
-## Required Workflow
+1. `cmd/5hagent/main.go` 解析 CLI 参数，选择 TUI 或 headless。
+2. `internal/runtime.New` 统一初始化配置、logger、任务文件、session、LLM、Agent、工具和 MCP。
+3. `tools.InitRegistry` 注册 base/task/skill 工具。
+4. `tools.RegisterContextTool` 注册 `context.context`。
+5. MCP server 启动后追加注册 `mcp.*` 工具。
+6. Runtime 收集所有 `schema.ToolInfo`，调用 `WithTools` 生成绑定工具后的 model，再注入 Agent。
 
-- First inspect the relevant code before editing.
-- Prefer the smallest correct change.
-- Reuse existing functions and types whenever possible.
-- Do not create new helpers or abstractions unless the current code clearly needs them.
-- Do not revert unrelated worktree changes you did not make.
-- Keep docs in sync with code in the same change.
+运行链路：
 
-## Design-Phase Rule
+1. `Agent.RunStream` 确保 system prompt 和 enabled skills 已注入。
+2. 将当前 `Context` 通过 `WithToolRuntime` 放入 Go context，供 `context.context` 使用。
+3. 添加用户消息，按配置判断是否自动压缩。
+4. 调用绑定工具后的 LLM stream。
+5. `toolCollector` 合并流式 ToolCall 分片。
+6. 单 worker 执行工具，并把 assistant tool call 和 tool result 写回 context。
+7. 没有工具调用时写入最终 assistant 消息并返回。
 
-When the work is still in design stage:
+持久化边界：
 
-- Write only code comments and function signatures.
-- Do not write concrete implementation yet.
-- Function header comments should state:
-  - what the function does
-  - its parameters
-  - what it calls
-  - the main steps it performs
-- Function names should be short but clearly distinguishable.
+- `.5hagent/task.md` 是 headless task 的真源。
+- `.5hagent/reports/<task-id>.md` 是 headless 执行报告。
+- `~/.5hAgent/sessions/*.jsonl` 是 TUI/headless message session 存储。
+- `ContextMeta` 中的 pinned range 和 audit event 当前只在内存中维护。
 
-## Implementation-Phase Rule
+## 工具系统约定
 
-When the work is in implementation stage:
+工具注册集中在 `internal/tools/registry.go`：
 
-- Prefer reusing existing functions.
-- Do not casually introduce brand new functions.
-- Follow the current package structure.
-- Keep files focused; avoid opportunistic refactors.
+- `InitRegistry(taskList, skillMgr)` 注册 base/task/skill 工具，并重置 registry 和 toolmeta。
+- `RegisterContextTool(llm, promptDir)` 注册 `context.context`，必须在 `WithTools` 前调用。
+- `RegisterMCPTools(serverName, client, specs)` 注册 MCP 远端工具。
 
-## Go Style
+LLM 可见工具当前包括：
 
-- Use `gofmt` formatting. Do not hand-format against Go conventions.
-- Keep imports grouped by `gofmt`: stdlib, blank line, third-party/local.
-- Package names are short and lowercase.
-- Exported names use Go PascalCase.
-- Unexported names use camelCase.
-- Acronyms should follow existing local style; do not rename broadly just for style.
-- Keep structs and JSON tags explicit and stable.
-- Prefer typed structs for tool inputs and outputs.
+- `base.read_file`
+- `base.write_file`
+- `base.edit`
+- `base.glob`
+- `base.grep`
+- `base.list_dir`
+- `base.exec_shell`
+- `task.task`
+- `skill.skill`
+- `context.context`
+- `mcp.list_tools`
+- `mcp.<server>.<tool>`
 
-## Comments And Docstrings
+当前执行策略：`RunStream` 中 LLM stream 读取和工具 worker 可以重叠；多个工具调用在单个 worker 内仍是串行执行。不要把当前实现描述成“只读工具并行”。
 
-- Exported types and functions should have a leading Go comment.
-- Comments in this repo are often bilingual or Chinese-heavy; preserve the local style of the file.
-- Do not add noisy comments that restate obvious code.
-- For docs in `doc/`, keep them concise and architecture-first.
+`context.context` 支持 `inspect/pin/audit/compress`。它依赖 `Agent.RunStream()` 通过 `agentctx.WithToolRuntime(ctx, manager, messageCtx)` 注入当前上下文；脱离当前 Agent 上下文直接调用会失败。
 
-## Error Handling
+## 上下文和压缩
 
-- Return errors instead of panicking in normal flows.
-- Wrap errors with context using `fmt.Errorf("...: %w", err)`.
-- Validate inputs early and return specific errors.
-- Preserve actionable file path or parameter details in tool errors.
-- If an error is intentionally non-fatal, log it or continue explicitly.
+- 自动压缩由 `AGENT_CONTEXT_AUTO_COMPRESS` 控制，默认 `true`。
+- `LMCompress()` 使用 `prompt/compress.md` 做摘要压缩；失败时 fallback 到 `Compress()`。
+- `Compress()` 是简单截断，只保留最近消息，仍可能丢早期 system 消息。
+- 压缩后的消息通过 `Manager.ReplaceMessages()` 和 `Store.ReplaceMessages()` 同步内存 context 与 session JSONL。
+- pinned range 和 audit event 当前是内存 metadata，不随 session 恢复。
 
-## Tooling Conventions In Code
+## 分支逻辑
 
-- Tool registration is centralized in `internal/tools/registry.go` via `InitRegistry(...)`.
-- LLM-facing tools currently include:
-  - `read_file`
-  - `write_file`
-  - `edit`
-  - `glob`
-  - `grep`
-  - `list_dir`
-  - `exec_shell`
-  - `task`
-  - `skill`
-- Slash commands `/task` and `/skill` are separate CLI handlers in `internal/commands/`.
+当前分支用途如下：
 
-## Current Implementation Notes
+| 分支 | 用途 |
+| --- | --- |
+| `learn/stage-1-core-agent` | Stage 1 学习快照：最小 Go + Eino ReAct Agent。 |
+| `learn/stage-2-tools-task` | Stage 2 学习快照：工具调用、任务系统、边输出边执行工具。 |
+| `learn/stage-3-skill-prompt` | Stage 3 学习快照：Skill 系统、prompt 管理、Skill 注入机制。 |
+| `learn/stage-4-mcp-session-tui` | Stage 4 学习快照：MCP、session 持久化、TUI 和日志体验。 |
+| `learn/stage-5-current` | Stage 5 学习快照：当前公开 baseline，对齐 `master` / `origin/master`。 |
+| `master` | 公开稳定 baseline；当前指向 `learn/stage-5-current`。 |
+| `develop` | 当前开发主线；在 `master` 之后继续开发 headless runtime、Ollama baseline、context 工具和文档。 |
 
-- Skills are loaded from `~/.5hAgent/skills/*/SKILL.md`.
-- Prompts are loaded from `~/.5hAgent/prompt/*.md`.
-- The main system prompt comes from `~/.5hAgent/prompt/main.md` via `internal/utils/utils.go`.
-- Context compression is simple truncation, not summary-based compression.
-- `internal/agent/tool_use.go` still classifies old task tool names in its read-only map; keep that mismatch in mind when changing task-tool concurrency behavior.
+这些 `learn/stage-*` 分支是递进快照，不要把它们当作长期功能分支随意改写。日常新改动优先落在 `develop`；需要发布稳定 baseline 时再由维护者决定是否合入 `master` 或新增 stage 快照。
 
-## Documentation Rules
+## Git 提交规范
 
-- Documentation must match code.
-- Keep docs under `doc/` aligned with the module they describe.
-- Prefer short architecture diagrams at the top when useful.
-- Mention key functions by name.
-- Add file links when they make navigation easier.
-- For agent-facing progress docs like `task.md`, dense high-signal writing is acceptable.
-- Avoid redundant historical narrative unless it changes how contributors should work.
+提交信息遵循 Conventional Commits 1.0.0：
 
-## Verification Before Finishing
+```text
+<type>[optional scope][!]: <description>
 
-- If you changed Go code, run relevant `go test` commands.
-- If you changed startup wiring, also run `go build -o 5hagent cmd/5hagent/main.go`.
-- If you changed only docs, at minimum verify commands, paths, and filenames against the current tree.
-- Do not claim support for tools, skills, prompts, or scripts that are not present.
+[optional body]
 
-## Rules File Status
+[optional footer(s)]
+```
 
-- No `AGENTS.md` existed before this file.
-- No `.cursor/rules/` directory was found.
-- No `.cursorrules` file was found.
-- No `.github/copilot-instructions.md` file was found.
+关键规则：
 
-If any of those files are added later, update this document and fold their instructions in.
+- `feat` 表示新增功能，对应 SemVer minor。
+- `fix` 表示修复 bug，对应 SemVer patch。
+- 其他类型可按实际意图使用，例如 `docs`、`test`、`refactor`、`chore`、`build`、`ci`。
+- scope 可选，放在类型后括号内，例如 `feat(runtime): ...`。
+- 破坏性变更必须用 `!` 标记，或在 footer 中写 `BREAKING CHANGE: ...`。
+- description 使用祈使、简短描述，不以句号结尾。
+- 一次提交只表达一个清晰意图；不要把无关代码、文档和格式化混在一起。
+
+## 工作流要求
+
+- 编辑前先读相关代码和文档。
+- 优先做最小正确改动，复用现有函数、类型和包结构。
+- 不要随意新增 helper 或抽象；只有明显降低复杂度时再加。
+- 不要回滚不属于当前任务的工作树改动。
+- 改代码时同步更新相关 `doc/`、`README.md`、`开发日志.md` 或本文件。
+- 改文档时也要核对路径、命令、工具名和实际文件是否存在。
+
+## 设计阶段规则
+
+如果用户明确说还在设计阶段：
+
+- 只写函数签名、类型草图和代码注释。
+- 不写具体实现。
+- 函数头注释要说明用途、参数、会调用什么、主要步骤。
+- 函数名短而清楚，能和现有函数区分。
+
+## 实现阶段规则
+
+如果用户要求实现：
+
+- 按当前包结构落代码。
+- 优先复用现有函数。
+- 保持文件职责聚焦，避免顺手重构。
+- Go 代码必须 `gofmt`。
+
+## Go 风格
+
+- 包名短小写。
+- 导出名使用 PascalCase，未导出名使用 camelCase。
+- Acronym 风格跟随本文件附近代码，不为了风格大面积改名。
+- struct 和 JSON tags 保持显式、稳定。
+- 工具输入输出优先使用 typed struct。
+- 正常流程返回 error，不 panic。
+- 用 `fmt.Errorf("...: %w", err)` 包装错误。
+- 工具错误要保留文件路径、参数名或实际收到的值，方便 LLM 自我修正。
+
+## 注释和文档
+
+- 导出类型和函数需要 Go leading comment。
+- 保留文件内已有中英文混合风格；不要把注释机械翻译一遍。
+- 不写复述代码的噪声注释。
+- `doc/` 文档保持架构优先、短而准。
+- 模块文档优先放结构图、关键文件、关键函数、当前边界。
+- 不写和代码不匹配的历史叙述，除非它解释当前维护方式。
+
+## 完成前验证
+
+- 改 Go 代码：运行相关 `go test`。
+- 改启动 wiring：额外运行 `go build -o 5hagent cmd/5hagent/main.go`。
+- 只改文档：至少验证命令、路径、文件名和工具名。
+- 不要声称支持不存在的工具、skill、prompt 或脚本。
+
+## 规则文件状态
+
+- 本文件是当前仓库唯一 agent 工作契约。
+- 当前未发现 `.cursor/rules/`、`.cursorrules`、`.github/copilot-instructions.md`。
+- 如果后续新增这些规则文件，需要把新增规则同步折叠回本文件，避免多处规则互相漂移。

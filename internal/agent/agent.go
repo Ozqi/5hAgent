@@ -46,11 +46,12 @@ type Agent struct {
 
 // Config Agent 配置
 type Config struct {
-	Name            string // Agent 名称
-	MaxTotalTokens  int    // 整场会话累计 token 上限
-	RepeatToolLimit int    // 相同工具调用重复上限
-	Debug           bool   // 是否启用调试
-	SystemPrompt    string // 系统提示词
+	Name                string // Agent 名称
+	MaxTotalTokens      int    // 整场会话累计 token 上限
+	RepeatToolLimit     int    // 相同工具调用重复上限
+	Debug               bool   // 是否启用调试
+	ContextAutoCompress bool   // 是否自动触发上下文压缩
+	SystemPrompt        string // 系统提示词
 }
 
 // State Agent 运行状态
@@ -240,6 +241,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 	}
 
 	// 2. 添加用户消息
+	ctx = agentctx.WithToolRuntime(ctx, a.ctxManager, messageCtx)
 	userMsg := &schema.Message{
 		Role:    schema.User,
 		Content: input,
@@ -249,7 +251,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 	}
 
 	// 2.5 检查是否需要压缩上下文
-	if a.ctxManager.ShouldCompress(messageCtx) {
+	if a.config.ContextAutoCompress && a.ctxManager.ShouldCompress(messageCtx) {
 		before, after, err := a.ctxManager.LMCompress(ctx, messageCtx, a.model, "prompt")
 		if err != nil {
 			return "", fmt.Errorf("failed to compress context: %w", err)
@@ -407,10 +409,10 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		toolCalls := make([]schema.ToolCall, len(queuedCalls))
 		copy(toolCalls, queuedCalls)
 
-		// 过滤掉空 ID 的调用（流式输出中不完整的调用），避免发给 LLM 造成格式错误
+		// 过滤掉没有工具名的调用（流式输出中不完整的调用），避免发给 LLM 造成格式错误
 		var validCalls []schema.ToolCall
 		for _, tc := range toolCalls {
-			if tc.ID == "" || tc.Function.Name == "" {
+			if tc.Function.Name == "" {
 				logger.WarnTag("TOOL", "Skipping incomplete tool call: id=%s name=%s", tc.ID, tc.Function.Name)
 				continue
 			}

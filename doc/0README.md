@@ -1,6 +1,14 @@
 # 5hAgent 文档
 
-轻量级 Go + Eino AI Agent 框架，支持 ReAct 循环、流式输出、工具执行、上下文压缩和 Skill 注入。
+轻量级 Go + Eino AI Agent 框架，支持 ReAct 循环、流式输出、工具执行、上下文压缩、LLM 自主管理上下文、Skill 注入和 MCP 扩展。
+
+> 本页是文档总览；具体实现细节按模块拆到同目录各子文档。
+
+## 文档规则
+
+- 文档必须和代码匹配，优先写当前实现
+- 先给结构图，再给关键文件和关键函数
+- 如果引用代码，优先使用相对路径链接
 
 ## 架构总览
 
@@ -11,13 +19,16 @@ flowchart TB
     end
 
     subgraph Core["核心层 internal/"]
+        runtime["runtime/<br/>共享运行时"]
         agent["agent/<br/>Agent 主循环"]
         tooluse["agent/<br/>tool_use.go<br/>工具调度"]
     end
 
     subgraph Context["上下文层 internal/context"]
         ctx["ctx.go<br/>消息管理"]
+        session["session.go<br/>JSONL session"]
         compress["LLM 压缩"]
+        ctxtool["context.context<br/>上下文工具"]
     end
 
     subgraph Tools["工具层 internal/tools"]
@@ -25,6 +36,7 @@ flowchart TB
         base["base.*<br/>文件工具"]
         task["task.task<br/>任务工具"]
         skill["skill.skill<br/>技能工具"]
+        context_tool["context.context<br/>上下文工具"]
         mcp["mcp.*<br/>MCP 工具"]
     end
 
@@ -45,13 +57,14 @@ flowchart TB
         logger["logger/<br/>日志系统"]
     end
 
-    main --> agent
-    main --> registry
-    main --> llm
-    main --> task_mgr
-    main --> skill_mgr
-    main --> mcp_client
-    main --> tui
+    main --> runtime
+    runtime --> agent
+    runtime --> registry
+    runtime --> llm
+    runtime --> task_mgr
+    runtime --> skill_mgr
+    runtime --> mcp_client
+    runtime --> tui
 
     agent --> ctx
     agent --> tooluse
@@ -61,11 +74,14 @@ flowchart TB
     tooluse --> base
     tooluse --> task
     tooluse --> skill
+    tooluse --> context_tool
     tooluse --> mcp
 
     registry --> tm
 
     ctx --> compress
+    ctx --> session
+    context_tool --> ctx
     task_mgr --> task
     skill_mgr --> skill
     mcp_client --> mcp
@@ -88,8 +104,9 @@ sequenceDiagram
     participant Context as Context.Manager
 
     User->>Agent: 用户输入
+    Agent->>Context: 注入 ToolRuntime
     Agent->>Context: 添加用户消息
-    Agent->>Context: ShouldCompress?
+    Agent->>Context: ContextAutoCompress && ShouldCompress?
     Context-->>Agent: 需要压缩
     Agent->>Context: LMCompress
 
@@ -100,7 +117,7 @@ sequenceDiagram
         LLM-->>Agent: 流式 chunks
 
         alt 包含 ToolCalls
-            Agent->>Tool: 收集并发执行
+            Agent->>Tool: 收集并顺序执行工具调用
             Tool-->>Agent: 工具结果
             Agent->>Context: 添加 assistant + tool 消息
         else 仅文本
@@ -119,6 +136,9 @@ sequenceDiagram
 │   └── main.go                 # 程序入口：初始化 Agent、TUI、工具注册，启动交互界面
 │
 ├── internal/
+│   ├── runtime/                # 共享运行时
+│   │   └── runtime.go         # 初始化配置、Agent、工具、MCP；无头任务执行和报告写入
+│   │
 │   ├── agent/                  # Agent 核心
 │   │   ├── agent.go           # ReAct 循环、流式 LLM 调用、上下文初始化、skill 注入
 │   │   └── tool_use.go        # ToolCall 分片收集、单工具执行、结果格式化
@@ -135,10 +155,11 @@ sequenceDiagram
 │   │   └── mcp.go             # /mcp list/add/remove/enable/disable
 │   │
 │   ├── context/                # 消息上下文管理
-│   │   └── ctx.go             # Context 创建/克隆、消息存储、LLM 压缩
+│   │   ├── ctx.go             # Context 创建/克隆、消息存储、LLM 压缩、inspect/pin/audit 元数据
+│   │   └── session.go         # Session JSONL 持久化、列表、恢复、替换消息
 │   │
 │   ├── llm/                    # LLM 客户端
-│   │   └── client.go          # Eino Claude ChatModel 封装
+│   │   └── client.go          # Eino Claude/OpenAI-compatible ChatModel 封装
 │   │
 │   ├── logger/                 # 日志与输出
 │   │   ├── logger.go          # DEBUG/INFO/WARN/ERROR 带标签日志
@@ -157,7 +178,7 @@ sequenceDiagram
 │   │   └── task_actions.go   # TaskActionRequest 分发
 │   │
 │   ├── toolmeta/               # 工具元数据注册
-│   │   └── toolmeta.go       # 工具分类（base/task/skill/mcp）、只读属性
+│   │   └── toolmeta.go       # 工具分类（base/task/skill/context/mcp）、只读属性
 │   │
 │   ├── tools/                  # 工具实现
 │   │   ├── registry.go       # 工具注册表 InitRegistry / GetAllTools / RegisterMCPTools
@@ -170,14 +191,16 @@ sequenceDiagram
 │   │   ├── list_dir.go       # 目录列表
 │   │   ├── task_tool.go      # TaskList 的 Eino Tool 封装
 │   │   ├── skill_tool.go     # SkillManager 的 Eino Tool 封装
+│   │   ├── context_tool.go   # LLM 可调用的上下文 inspect/pin/audit/compress 工具
 │   │   └── mcp_tool.go       # MCP 工具的 Eino Tool 封装
 │   │
 │   └── utils/                  # 公共工具函数
-│       ├── utils.go           # Load(dir, name) 加载 prompt/*.md
+│       ├── utils.go           # 配置读取、prompt 加载和模型前缀命名
 │       └── tokenBudget.go    # TokenBudget 累计 token 上限检查
 │
 ├── doc/                        # 文档
-│   ├── README.md              # 本文件
+│   ├── 0README.md             # 本文件，文档总览和导航
+│   ├── runtime.md             # 无头/TUI 共享运行时
 │   ├── agent.md               # Agent 主循环、ReAct、工具执行
 │   ├── tools.md               # 工具注册、并发策略
 │   ├── context.md             # 消息上下文、LLM 压缩
@@ -186,6 +209,7 @@ sequenceDiagram
 │   ├── mcp.md                 # MCP 模块
 │   ├── cli.md                 # TUI 界面
 │   ├── llm.md                 # LLM 客户端
+│   ├── llm-call-flow.md       # 一次 LLM 调用和 Tool Call 数据流
 │   ├── logger.md              # 日志模块
 │   ├── prompt.md              # prompt 文件加载
 │   └── task.md                # 任务管理
@@ -202,11 +226,12 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     subgraph Init["初始化 (main.go)"]
-        config["config.Load()"]
+        config["utils.LoadConfig()"]
         llm["llm.NewClient()"]
         prompt["utils.Load()"]
         agent["agent.NewAgent()"]
         tools["tools.InitRegistry()"]
+        contextTool["tools.RegisterContextTool()"]
         mcp["MCP Servers"]
         tui["cli.LaunchTUI()"]
     end
@@ -217,13 +242,14 @@ flowchart LR
         collect["toolCollector"]
         exec["toolQueue → exeToolCall()"]
         add["ctx.AddMessage()"]
-        compress["ctx.ShouldCompress?"]
+        compress["ContextAutoCompress && ctx.ShouldCompress?"]
     end
 
     config --> llm
     config --> agent
     prompt --> agent
     tools --> agent
+    contextTool --> tools
     mcp --> tools
     tui --> Loop
 
@@ -243,38 +269,26 @@ flowchart LR
 | `Agent` | `agent/agent.go` | ReAct 循环核心，协调 LLM/工具/上下文 |
 | `TaskList` | `task/tasklist.go` | 任务列表（Markdown 持久化） |
 | `Context` | `context/ctx.go` | 单次对话的消息历史 |
-| `Manager` | `context/ctx.go` | 管理多个 Context，支持压缩 |
+| `Manager` | `context/ctx.go` | 管理多个 Context，支持压缩、inspect、pin、audit |
 | `Skill.Manager` | `skill/skill.go` | 技能加载与启用状态 |
 | `toolmeta.Meta` | `toolmeta/toolmeta.go` | 工具元数据（分类/只读/显示名） |
 | `AppModel` | `cli/tui.go` | TUI 主界面状态管理 |
 | `LLMClient` | `llm/client.go` | LLM 模型客户端封装 |
 
-## 快速开始
+## 模块文档导航
 
-```bash
-# 构建
-go build -o 5hagent cmd/5hagent/main.go
-
-# 运行（需要配置 .env）
-./5hagent
-
-# Debug 模式
-./5hagent --debug
-```
-
-## 内置命令
-
-| 命令 | 说明 |
-|------|------|
-| `/skill list/enable/disable <name>` | 管理技能 |
-| `/task create/update/get/list/delete <id>` | 管理任务 |
-| `/compress` | 手动压缩上下文 |
-| `/mcp list/add/remove <name>` | 管理 MCP 服务器 |
-
-## 文档规则
-
-- 文档必须和代码匹配，优先写当前实现
-- 先给结构图，再给关键文件和关键函数
-- 如果引用代码，优先使用相对路径链接
-
-**最后更新**: 2026-04-30
+| 文档 | 模块 | 重点 |
+|------|------|------|
+| [runtime.md](runtime.md) | `internal/runtime` | 共享运行时初始化、TUI/无头入口、报告写入、工具绑定 |
+| [agent.md](agent.md) | `internal/agent` | ReAct 循环、stream 读取、tool call 收集、上下文写回 |
+| [tools.md](tools.md) | `internal/tools` / `internal/toolmeta` | 工具注册、工具 schema、执行策略、MCP 工具包装 |
+| [context.md](context.md) | `internal/context` | 消息上下文、session、压缩、`context.context` |
+| [task.md](task.md) | `internal/task` | `.5hagent/task.md` 格式、状态流转、task 工具 |
+| [skill.md](skill.md) | `internal/skill` | Skill 加载、启用状态、prompt 注入 |
+| [llm.md](llm.md) | `internal/llm` | Claude/OpenAI-compatible provider 配置和模型创建 |
+| [llm-call-flow.md](llm-call-flow.md) | LLM 调用链路 | 一次 stream 调用、ToolCall 合并、工具结果回灌 |
+| [prompt.md](prompt.md) | `prompt/` / `utils` | 主 prompt、模型 prefix、压缩 prompt |
+| [cli.md](cli.md) | `internal/cli` | TUI 渲染、状态栏、工具事件、thinking 展示 |
+| [commonds.md](commonds.md) | `internal/commands` | `/task`、`/skill`、`/compress`、`/mcp` |
+| [mcp.md](mcp.md) | `internal/mcp` / MCP tools | MCP stdio client、工具注册、schema 转换 |
+| [logger.md](logger.md) | `internal/logger` | 日志、工具调用展示、错误输出 |

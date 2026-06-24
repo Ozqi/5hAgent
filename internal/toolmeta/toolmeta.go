@@ -12,10 +12,11 @@ import (
 type Category string
 
 const (
-	CategoryBase  Category = "base"
-	CategoryTask  Category = "task"
-	CategorySkill Category = "skill"
-	CategoryMCP   Category = "mcp"
+	CategoryBase    Category = "base"
+	CategoryTask    Category = "task"
+	CategorySkill   Category = "skill"
+	CategoryContext Category = "context"
+	CategoryMCP     Category = "mcp"
 )
 
 type Meta struct {

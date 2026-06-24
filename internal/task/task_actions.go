@@ -25,6 +25,7 @@ type TaskProgress struct {
 	Blocked    int `json:"blocked"`
 	Completed  int `json:"completed"`
 	Archived   int `json:"archived"`
+	Failed     int `json:"failed"`
 }
 
 type TaskActionResult struct {
@@ -98,8 +99,8 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 		} else {
 			result.Tasks = list.ListTasks()
 		}
-		total, pending, inProgress, blocked, completed, archived := list.GetProgress()
-		result.Progress = TaskProgress{Total: total, Pending: pending, InProgress: inProgress, Blocked: blocked, Completed: completed, Archived: archived}
+		total, pending, inProgress, blocked, completed, archived, failed := list.GetProgress()
+		result.Progress = TaskProgress{Total: total, Pending: pending, InProgress: inProgress, Blocked: blocked, Completed: completed, Archived: archived, Failed: failed}
 		if len(result.Tasks) > 0 {
 			result.Task = result.Tasks[0]
 		}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/lzq/5hAgent/internal/mcp"
 	"github.com/lzq/5hAgent/internal/skill"
@@ -114,6 +115,13 @@ func GetToolByName(name string) tool.BaseTool {
 	return nil
 }
 
+func RegisterContextTool(llm model.ToolCallingChatModel, promptDir string) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	registry = append(registry, NewContextTool(llm, promptDir))
+	toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategoryContext, Source: "local", DisplayName: "context", FullName: "context.context", OriginalName: "context"})
+}
+
 func RegisterMCPTools(serverName string, client mcp.Client, specs []mcp.ToolSpec) error {
 	if serverName == "" {
 		return fmt.Errorf("mcp server name is required")
@@ -144,6 +152,9 @@ func RegisterMCPTools(serverName string, client mcp.Client, specs []mcp.ToolSpec
 
 // RegisterMCPServer 注册 MCP 服务器
 func RegisterMCPServer(name string, client mcp.Client) {
+	if mcpServers == nil {
+		mcpServers = make(map[string]mcp.Client)
+	}
 	mcpServers[name] = client
 }
 
@@ -170,8 +181,9 @@ func Lookup(name string) (toolmeta.Meta, bool) {
 
 // Re-export Category constants
 const (
-	CategoryBase  = toolmeta.CategoryBase
-	CategoryTask  = toolmeta.CategoryTask
-	CategorySkill = toolmeta.CategorySkill
-	CategoryMCP   = toolmeta.CategoryMCP
+	CategoryBase    = toolmeta.CategoryBase
+	CategoryTask    = toolmeta.CategoryTask
+	CategorySkill   = toolmeta.CategorySkill
+	CategoryContext = toolmeta.CategoryContext
+	CategoryMCP     = toolmeta.CategoryMCP
 )

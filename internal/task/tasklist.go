@@ -220,7 +220,7 @@ func (l *TaskList) ReopenTask(id string, status TaskStatus) (*Task, error) {
 	return cloneTask(task), nil
 }
 
-func (l *TaskList) GetProgress() (total, pending, inProgress, blocked, completed, archived int) {
+func (l *TaskList) GetProgress() (total, pending, inProgress, blocked, completed, archived, failed int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	_ = l.loadLocked()
@@ -237,9 +237,11 @@ func (l *TaskList) GetProgress() (total, pending, inProgress, blocked, completed
 			completed++
 		case StatusArchived:
 			archived++
+		case StatusFailed:
+			failed++
 		}
 	}
-	return total, pending, inProgress, blocked, completed, archived
+	return total, pending, inProgress, blocked, completed, archived, failed
 }
 
 func (l *TaskList) load() error {
@@ -306,7 +308,7 @@ func (l *TaskList) saveLocked() error {
 func ParseTaskStatus(raw string) (TaskStatus, error) {
 	status := TaskStatus(strings.TrimSpace(raw))
 	switch status {
-	case StatusPending, StatusInProgress, StatusBlocked, StatusCompleted, StatusArchived:
+	case StatusPending, StatusInProgress, StatusBlocked, StatusCompleted, StatusArchived, StatusFailed:
 		return status, nil
 	default:
 		return "", fmt.Errorf("invalid task status: %s", raw)

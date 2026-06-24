@@ -12,11 +12,16 @@ flowchart TB
 
     tui["internal/cli/tui.go"] --> run["Agent.RunStream()"]
     run --> setup["ensureConversationSetup()"]
+    run --> runtime["WithToolRuntime()"]
     run --> addUser["AddMessage(user)"]
-    run --> compress["ShouldCompress() / LMCompress()"]
+    run --> compress["ContextAutoCompress<br/>ShouldCompress() / LMCompress()"]
     run --> model["model.Stream(messages)"]
     run --> addAssistant["AddMessage(assistant)"]
     run --> addTool["addToolResult()"]
+
+    ctxtool["tools/context_tool.go<br/>context.context"] --> runtime
+    ctxtool --> inspect["Inspect / PinRange / Audit / Compress"]
+    inspect --> manager
 
     compress --> split["splitMessages()"]
     split --> summary["[对话历史摘要]"]
@@ -29,6 +34,7 @@ flowchart TB
 |------|------|
 | `internal/context/ctx.go` | Context 内存消息管理、自动压缩、手动压缩 |
 | `internal/context/session.go` | Session 持久化、JSONL 读写、会话列表 |
+| `internal/tools/context_tool.go` | LLM 可调用的上下文 inspect/pin/audit/compress 工具 |
 | `internal/agent/agent.go` | ReAct 主循环中读写上下文、触发自动压缩 |
 | `internal/commands/compress.go` | `/compress` 命令，手动触发压缩并输出压缩后上下文 |
 | `internal/cli/tui.go` | TUI 中处理 `/compress` 和 `/session` 命令 |
@@ -129,6 +135,7 @@ type ContextEvent struct {
 - `ContextRange` 使用包含首尾下标的消息范围。
 - `Pinned` 用于标记不应被压缩或替换的消息范围。
 - `Audit` 记录 context 管理操作，目前 `PinRange()` 会写入 `pin` 事件。
+- 当前 `Compress()` / `LMCompress()` 仍主要保护 system 消息和最近消息；pinned range 已有校验函数，但压缩路径还没有按 pinned range 做细粒度 range 压缩。
 
 `ContextInspect` 是给工具层使用的结构化视图：
 
@@ -206,6 +213,7 @@ JSONL 第一行是 session 元信息，后续每行是一条消息：
 - `Store.Append()` 先追加到 `session.messages`。
 - 更新 `UpdatedAt` 和 `dirty`。
 - `saveToFile()` 使用 `O_TRUNC` 重写整个 session 文件。
+- `Store.ReplaceMessages()` 用于压缩后整体替换 session messages，并重写 JSONL 文件。
 
 ## 生命周期
 
@@ -238,7 +246,7 @@ JSONL 第一行是 session 元信息，后续每行是一条消息：
 `Agent.RunStream()` 的上下文读写顺序：
 
 1. `AddMessage(user)` 追加用户输入。
-2. `ShouldCompress()` 判断消息数是否超过阈值。
+2. 如果 `AGENT_CONTEXT_AUTO_COMPRESS=true`，`ShouldCompress()` 判断消息数是否超过阈值。
 3. 需要时调用 `LMCompress()`。
 4. `GetMessages()` 取出完整消息列表。
 5. `model.Stream(messages)` 把完整上下文发给 LLM。
@@ -257,6 +265,7 @@ JSONL 第一行是 session 元信息，后续每行是一条消息：
 | `CloneContext(parent)` | 克隆消息列表，用于 sub-agent |
 | `GetMessages(ctx)` | 返回当前 context 的全部消息 |
 | `AddMessage(ctx, msg)` | 追加消息，存在 session 时同步持久化 |
+| `ReplaceMessages(ctx, messages)` | 替换当前 context 消息，存在 session 时同步重写 JSONL |
 | `Clear(ctx)` | 清空内存消息，不同步清空 session 文件 |
 | `ListSessions()` | 列出持久化 session |
 | `SwitchSession(ctx, id)` | 切换到指定 session，返回新 context |
@@ -273,6 +282,41 @@ JSONL 第一行是 session 元信息，后续每行是一条消息：
 | `LMCompress(goCtx, ctx, llm, promptDir)` | LLM 摘要压缩，失败时 fallback 到 `Compress()` |
 | `ManualCompress(goCtx, ctx, llm, promptDir, archiveDir)` | 手动压缩并写归档 |
 
+## LLM 自主管理上下文工具
+
+`context.context` 将部分上下文管理能力暴露给 LLM：
+
+| action | 作用 | 后端函数 |
+| --- | --- | --- |
+| `inspect` | 查看消息索引、角色、preview、protected/pinned flags | `Manager.Inspect` |
+| `pin` | 保护消息范围，避免后续压缩丢失关键约束 | `Manager.PinRange` |
+| `audit` | 查看最近上下文管理事件 | `Manager.Audit` |
+| `compress` | 主动触发压缩，`mode=lm` 或 `mode=truncate` | `LMCompress` / `Compress` |
+
+工具不会返回完整历史正文，`inspect` 只给结构化摘要。`compress` 会通过 `ReplaceMessages` 同步内存消息和 session 文件。
+
+### 工具运行时桥接
+
+`context.context` 不持有某个固定 session。每次 `Agent.RunStream()` 处理用户输入时，会先把本轮上下文注入 Go context：
+
+```go
+ctx = agentctx.WithToolRuntime(ctx, a.ctxManager, messageCtx)
+```
+
+工具执行时读取：
+
+```go
+rt, ok := agentctx.ToolRuntimeFrom(ctx)
+```
+
+这样同一个工具实例可以服务 TUI session、headless task session 和未来的其他 context，而不会把 context 绑定在全局变量上。
+
+可通过配置关闭自动压缩，测试模型是否会主动调用上下文工具：
+
+```env
+AGENT_CONTEXT_AUTO_COMPRESS=false
+```
+
 ## 压缩策略
 
 当前常量在 `internal/context/ctx.go`：
@@ -287,7 +331,7 @@ JSONL 第一行是 session 元信息，后续每行是一条消息：
 自动压缩发生在 `RunStream()` 已经加入用户消息之后、调用 LLM 之前。
 
 ```go
-if a.ctxManager.ShouldCompress(messageCtx) {
+if a.config.ContextAutoCompress && a.ctxManager.ShouldCompress(messageCtx) {
     before, after, err := a.ctxManager.LMCompress(ctx, messageCtx, a.model, "prompt")
     if err != nil {
         return "", fmt.Errorf("failed to compress context: %w", err)
@@ -303,7 +347,7 @@ if a.ctxManager.ShouldCompress(messageCtx) {
 3. 加载失败时 fallback 到 `Compress()`。
 4. 调用 `compressWithPrompt()` 生成摘要。
 5. LLM 压缩失败时 fallback 到 `Compress()`。
-6. 用压缩后的消息列表替换 `ctx.messages`。
+6. 通过 `ReplaceMessages()` 用压缩后的消息列表替换 `ctx.messages`，并同步 session JSONL。
 
 ### LLM 摘要压缩
 
@@ -324,7 +368,8 @@ if a.ctxManager.ShouldCompress(messageCtx) {
 
 ```go
 keepStart := beforeCount - KeepRecentMessages
-ctx.messages = ctx.messages[keepStart:]
+compressed := ctx.messages[keepStart:]
+m.ReplaceMessages(ctx, compressed)
 ```
 
 注意：简单压缩不区分 role，因此 fallback 情况下可能丢弃早期 system 消息。
@@ -397,7 +442,7 @@ compact/messages/<YYYYMMDD-HHMMSS>.md
 
 - 自动压缩只按消息数量触发，不按 token 数触发。
 - `LMCompress()` 的 archive 只在手动 `/compress` 中写入；自动压缩不写归档。
-- 压缩只替换 `ctx.messages`，不会重写当前 session 文件中的旧历史。
+- 压缩会通过 `ReplaceMessages()` 重写当前 session 文件。
 - `Clear(ctx)` 只清空内存，不清空 session 文件。
 - `CloneContext()` 只复制消息 slice，不复制 session 关联。
 - `Compress()` fallback 不保护 system 消息。
@@ -406,7 +451,9 @@ compact/messages/<YYYYMMDD-HHMMSS>.md
 - 还没有重要事实、工具日志等更细分的上下文层级。
 - 没有 context token 预算统计，现有 token usage 来自模型响应 metadata 或 agent token budget。
 
-## context.* Tool-use 设计方案
+## context 工具后续设计
+
+当前已落地的 LLM 工具是单一入口 `context.context`，通过 `action` 区分 `inspect/pin/audit/compress`。下面记录的是后续把范围摘要、归档和更细保护规则做完整时的设计方向，不代表当前源码已经全部实现。
 
 ### 目标
 
@@ -423,9 +470,9 @@ compact/messages/<YYYYMMDD-HHMMSS>.md
 - context 管理工具的结果应尽量短，避免管理上下文本身继续污染上下文。
 - 第一版只做 inspect、pin、summarize，不做自由删除和任意改写。
 
-### 推荐工具
+### 推荐能力
 
-#### `context.inspect`
+#### `context.context action=inspect`
 
 返回上下文结构化视图，不返回完整内容。
 
@@ -453,19 +500,19 @@ compact/messages/<YYYYMMDD-HHMMSS>.md
 - 暴露哪些 range 可压缩、哪些受保护。
 - 显示字符数或 token 估算，帮助选择高收益压缩目标。
 
-#### `context.pin`
+#### `context.context action=pin`
 
 标记消息或 range 不允许自动压缩。
 
 输入示例：
 
 ```json
-{"range":"5..7","reason":"user requirements"}
+{"action":"pin","start":5,"end":7,"reason":"user requirements"}
 ```
 
 第一版可以只在内存维护 pin 信息，不必改变 session JSONL 格式。后续如果需要跨 session 恢复，再设计持久化格式。
 
-#### `context.summarize_range`
+#### 后续能力：范围摘要
 
 将指定 range 压缩为摘要消息，并归档原始消息。
 
@@ -495,7 +542,7 @@ archive: compact/messages/20260508-120000.md
 <摘要内容>
 ```
 
-#### `context.audit`
+#### `context.context action=audit`
 
 返回最近上下文管理操作。
 
@@ -515,23 +562,23 @@ archive: compact/messages/20260508-120000.md
 - 让 LLM 知道当前上下文已经被编辑过。
 - 方便用户 debug 为什么某些历史不在当前 prompt 里。
 
-### 暂不建议第一版实现的工具
+### 暂不建议近期实现的能力
 
-| 工具 | 暂缓原因 |
+| 能力 | 暂缓原因 |
 |------|----------|
-| `context.delete_range` | 容易误删关键约束；可先通过 summarize 实现降噪 |
-| `context.replace` | 任意改写历史会破坏可追溯性 |
-| `context.write` | 让 LLM 注入任意消息会混淆真实用户输入和模型记忆 |
-| `context.unpin` | 需要更明确的权限策略，否则可能绕过保护 |
+| `delete_range` | 容易误删关键约束；可先通过 summarize 实现降噪 |
+| `replace` | 任意改写历史会破坏可追溯性 |
+| `write` | 让 LLM 注入任意消息会混淆真实用户输入和模型记忆 |
+| `unpin` | 需要更明确的权限策略，否则可能绕过保护 |
 
 ### 和现有实现的集成点
 
 最小改动路径：
 
-1. 在 `internal/context/ctx.go` 增加 inspect 和 range 压缩能力。
+1. 在 `internal/context/ctx.go` 增加 range 压缩能力。
 2. 在 `Context` 上增加内存级 metadata，例如 pinned ranges 和 audit events。
-3. 在 `internal/tools` 增加 context 工具实现。
-4. 在 `tools.InitRegistry()` 中注册 `context.inspect`、`context.pin`、`context.summarize_range`、`context.audit`。
+3. 扩展 `internal/tools/context_tool.go` 的 action。
+4. 在 `tools.RegisterContextTool()` 中维持单一 `context.context` 工具入口。
 5. 在 `Agent.RunStream()` 的自动压缩前，优先使用 metadata 避免压缩 pinned/protected 消息。
 6. 保留现有 `LMCompress()` 作为 fallback。
 
@@ -591,11 +638,11 @@ type ContextEvent struct {
 
 ### 推荐迭代顺序
 
-1. 实现 `context.inspect`，只读，无行为风险。
-2. 实现 `context.pin` 和压缩保护规则。
-3. 实现 `context.summarize_range`，复用现有 `compressWithPrompt()` 的 prompt 和 archive 写入逻辑。
-4. 实现 `context.audit`。
-5. 再评估是否需要 `context.delete_range`。
+1. 已完成 `inspect`，只读，无行为风险。
+2. 已完成 `pin` 和 `audit` 的内存 metadata。
+3. 已完成整段 context `compress`，支持 `lm/truncate`。
+4. 下一步补压缩保护规则，让 pinned range 真正影响 `LMCompress()` / `Compress()` 的可编辑范围。
+5. 再实现 range 级摘要，复用现有 `compressWithPrompt()` 的 prompt 和 archive 写入逻辑。
 
 ## 相关代码
 

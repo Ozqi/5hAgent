@@ -38,6 +38,22 @@ type Manager struct {
 	store *Store // 会话存储
 }
 
+type toolRuntimeKey struct{}
+
+type ToolRuntime struct {
+	Manager *Manager
+	Context *Context
+}
+
+func WithToolRuntime(ctx context.Context, mgr *Manager, msgCtx *Context) context.Context {
+	return context.WithValue(ctx, toolRuntimeKey{}, ToolRuntime{Manager: mgr, Context: msgCtx})
+}
+
+func ToolRuntimeFrom(ctx context.Context) (ToolRuntime, bool) {
+	rt, ok := ctx.Value(toolRuntimeKey{}).(ToolRuntime)
+	return rt, ok && rt.Manager != nil && rt.Context != nil
+}
+
 type CompressResult struct {
 	Before      int
 	After       int
@@ -302,6 +318,17 @@ func (m *Manager) AddMessage(ctx *Context, msg *schema.Message) error {
 	return nil
 }
 
+// ReplaceMessages 替换上下文消息，并同步持久化 session。
+func (m *Manager) ReplaceMessages(ctx *Context, messages []*schema.Message) error {
+	ctx.messages = messages
+	if m.store != nil && ctx.Session != nil {
+		if err := m.store.ReplaceMessages(ctx.Session, messages); err != nil {
+			return fmt.Errorf("persist replaced messages: %w", err)
+		}
+	}
+	return nil
+}
+
 // Clear 清空 Context
 // 参数:
 //   - ctx: Context 实例
@@ -366,7 +393,10 @@ func (m *Manager) Compress(ctx *Context) (int, int, error) {
 
 	// 保留最近的消息
 	keepStart := beforeCount - KeepRecentMessages
-	ctx.messages = ctx.messages[keepStart:]
+	compressed := ctx.messages[keepStart:]
+	if err := m.ReplaceMessages(ctx, compressed); err != nil {
+		return beforeCount, beforeCount, err
+	}
 
 	afterCount := len(ctx.messages)
 	return beforeCount, afterCount, nil
@@ -395,7 +425,9 @@ func (m *Manager) LMCompress(goCtx context.Context, ctx *Context, llm model.Tool
 	if err != nil {
 		return m.Compress(ctx)
 	}
-	ctx.messages = compressed
+	if err := m.ReplaceMessages(ctx, compressed); err != nil {
+		return before, before, err
+	}
 
 	return before, len(ctx.messages), nil
 }
@@ -420,7 +452,9 @@ func (m *Manager) ManualCompress(goCtx context.Context, ctx *Context, llm model.
 		return nil, err
 	}
 
-	ctx.messages = compressed
+	if err := m.ReplaceMessages(ctx, compressed); err != nil {
+		return nil, err
+	}
 	return &CompressResult{Before: before, After: len(ctx.messages), ArchivePath: archivePath}, nil
 }
 

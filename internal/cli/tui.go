@@ -610,7 +610,7 @@ func (m *AppModel) snapshot() statusSnapshot {
 		sort.Strings(snapshot.EnabledSkills)
 	}
 	if m.taskList != nil {
-		total, _, inProgress, _, _, _ := m.taskList.GetProgress()
+		total, _, inProgress, _, _, _, _ := m.taskList.GetProgress()
 		snapshot.TaskTotal = total
 		snapshot.TaskInProgress = inProgress
 		tasks := m.taskList.ListTasksByStatus(task.StatusInProgress)

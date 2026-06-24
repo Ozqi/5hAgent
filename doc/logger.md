@@ -192,7 +192,7 @@ TERM=dumb ./5hagent
 
 ```
 日志文件 (纯文本)   → ~/.5hAgent/logs/，Agent 可 grep
-TUI/stdout/stderr     → Bubble Tea 界面，不承载 logger 输出
+TUI/stdout/stderr     → TUI 或 headless work log，不承载 logger 文件日志
 ```
 
 ### 文件结构
@@ -208,7 +208,11 @@ TUI/stdout/stderr     → Bubble Tea 界面，不承载 logger 输出
 | WARN | 日志文件 | 默认 |
 | ERROR | 日志文件 | 默认 |
 
-工具事件（call/result/error）不走 logger，走 `ToolEventSink` 通道，直接进入 TUI 显示。
+工具事件（call/result/error）不走 logger 文件日志，走 `ToolEventSink` 通道：
+
+- TUI 模式：进入 Bubble Tea 界面显示。
+- Headless 模式：进入 runtime work log，默认同时写 stdout 和项目 `.5hagent/agents/<agent-name>/logs/<timestamp>-<task-id>.md`。
+- Headless `--quiet`：压制 stdout，只保留 report 路径和错误；项目内 Agent 工作日志仍然写入。
 
 ### Agent Debug 流程
 

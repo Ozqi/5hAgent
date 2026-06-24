@@ -58,7 +58,7 @@ const (
     StatusBlocked    TaskStatus = "blocked"     // 阻塞
     StatusCompleted  TaskStatus = "completed"    // 已完成
     StatusArchived   TaskStatus = "archived"     // 已归档
-    StatusFailed     TaskStatus = "failed"       // 失败
+    StatusFailed     TaskStatus = "failed"       // 失败，供无头 runtime 记录执行失败
 )
 ```
 
@@ -151,21 +151,35 @@ Task 存储在 `./.5hagent/task.md`（项目启动目录），使用 Markdown �
 <!-- 5hagent:tasks:end -->
 ```
 
-归档任务存储在 `./5hagent/history/` 目录。
+归档任务存储在 `./.5hagent/history/` 目录。
+
+## 无头运行报告
+
+`5hagent run` 不启动 TUI，按 `in_progress -> pending` 顺序从 `./.5hagent/task.md` 选择一个任务执行。执行完成后：
+
+- 成功：任务状态写为 `completed`。
+- 失败：任务状态写为 `failed`。
+- 报告：写入 `./.5hagent/reports/<task-id>.md`，包含任务描述、Agent 输出、错误信息。
+
+```bash
+5hagent run
+5hagent run --task fix-runtime
+5hagent run --report-dir ./reports
+```
 
 ## 只读判断
 
-`task.task` 工具根据 action 参数判断是否只读：
+`task.task` 工具根据 action 参数暴露只读语义。这个标记用于工具元数据和展示；当前 `RunStream` 执行路径没有按 action 做并发调度。
 
-| Action    | 只读 | 说明     |
-| --------- | ---- | -------- |
-| `get`     | ✓    | 并发执行 |
-| `list`    | ✓    | 并发执行 |
-| `create`  | ✗    | 串行执行 |
-| `update`  | ✗    | 串行执行 |
-| `delete`  | ✗    | 串行执行 |
-| `archive` | ✗    | 串行执行 |
-| `reopen`  | ✗    | 串行执行 |
+| Action    | 只读 | 说明       |
+| --------- | ---- | ---------- |
+| `get`     | 是   | 查询单个任务 |
+| `list`    | 是   | 查询任务列表 |
+| `create`  | 否   | 写入任务文件 |
+| `update`  | 否   | 写入任务文件 |
+| `delete`  | 否   | 写入任务文件 |
+| `archive` | 否   | 移动任务记录 |
+| `reopen`  | 否   | 写入任务文件 |
 
 ## 相关代码
 

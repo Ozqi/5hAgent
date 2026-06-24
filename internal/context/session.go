@@ -16,13 +16,13 @@ import (
 
 // Session 代表一次完整的对话会话
 type Session struct {
-	ID        string             // 唯一标识符
-	Title     string             // 会话标题（从第一条用户消息生成）
-	CreatedAt time.Time          // 创建时间
-	UpdatedAt time.Time          // 最后更新时间
-	messages  []*schema.Message  // 消息历史（内存缓存）
-	filePath  string             // JSONL 文件路径
-	dirty     bool               // 是否有未保存的修改
+	ID        string            // 唯一标识符
+	Title     string            // 会话标题（从第一条用户消息生成）
+	CreatedAt time.Time         // 创建时间
+	UpdatedAt time.Time         // 最后更新时间
+	messages  []*schema.Message // 消息历史（内存缓存）
+	filePath  string            // JSONL 文件路径
+	dirty     bool              // 是否有未保存的修改
 }
 
 // Store 管理多个 Session 的持久化存储
@@ -33,13 +33,16 @@ type Store struct {
 
 // sessionFileEntry JSONL 文件中的单条记录
 type sessionFileEntry struct {
-	Type      string `json:"type,omitempty"`      // "session" 表示会话头
-	ID        string `json:"id,omitempty"`         // 会话 ID
-	Title     string `json:"title,omitempty"`      // 会话标题
-	CreatedAt string `json:"created_at,omitempty"` // 创建时间
-	UpdatedAt string `json:"updated_at,omitempty"` // 更新时间
-	Role      string `json:"role,omitempty"`      // 消息角色
-	Content   string `json:"content,omitempty"`    // 消息内容
+	Type       string            `json:"type,omitempty"`         // "session" 表示会话头
+	ID         string            `json:"id,omitempty"`           // 会话 ID
+	Title      string            `json:"title,omitempty"`        // 会话标题
+	CreatedAt  string            `json:"created_at,omitempty"`   // 创建时间
+	UpdatedAt  string            `json:"updated_at,omitempty"`   // 更新时间
+	Role       string            `json:"role,omitempty"`         // 消息角色
+	Content    string            `json:"content,omitempty"`      // 消息内容
+	ToolCalls  []schema.ToolCall `json:"tool_calls,omitempty"`   // assistant 发起的工具调用
+	ToolCallID string            `json:"tool_call_id,omitempty"` // tool result 对应的调用 ID
+	ToolName   string            `json:"tool_name,omitempty"`    // tool result 对应的工具名
 }
 
 // NewStore 创建或打开会话存储
@@ -187,6 +190,14 @@ func (s *Store) Append(session *Session, msg *schema.Message) error {
 	return s.saveToFile(session)
 }
 
+// ReplaceMessages replaces all session messages and persists the session.
+func (s *Store) ReplaceMessages(session *Session, messages []*schema.Message) error {
+	session.messages = messages
+	session.UpdatedAt = time.Now().UTC()
+	session.dirty = true
+	return s.saveToFile(session)
+}
+
 // GetMessages 返回会话的所有消息
 // 参数:
 //   - session: Session 实例
@@ -237,8 +248,11 @@ func (s *Store) saveToFile(session *Session) error {
 	// 添加消息
 	for _, msg := range session.messages {
 		entry := sessionFileEntry{
-			Role:    string(msg.Role),
-			Content: msg.Content,
+			Role:       string(msg.Role),
+			Content:    msg.Content,
+			ToolCalls:  msg.ToolCalls,
+			ToolCallID: msg.ToolCallID,
+			ToolName:   msg.ToolName,
 		}
 		entries = append(entries, entry)
 	}
@@ -280,7 +294,7 @@ func (s *Store) loadFromFile(filePath string, data []byte) (*Session, error) {
 				session.UpdatedAt = t
 			}
 		} else if entry.Role != "" {
-			session.messages = append(session.messages, &schema.Message{Role: parseRole(entry.Role), Content: entry.Content})
+			session.messages = append(session.messages, messageFromEntry(entry))
 		}
 	}
 	return session, nil
@@ -293,9 +307,19 @@ func (s *Store) parseMessages(data []byte) ([]*schema.Message, error) {
 		if err := json.Unmarshal(line, &entry); err != nil || entry.Role == "" || entry.Type == "session" {
 			continue
 		}
-		messages = append(messages, &schema.Message{Role: parseRole(entry.Role), Content: entry.Content})
+		messages = append(messages, messageFromEntry(entry))
 	}
 	return messages, nil
+}
+
+func messageFromEntry(entry sessionFileEntry) *schema.Message {
+	return &schema.Message{
+		Role:       parseRole(entry.Role),
+		Content:    entry.Content,
+		ToolCalls:  entry.ToolCalls,
+		ToolCallID: entry.ToolCallID,
+		ToolName:   entry.ToolName,
+	}
 }
 
 // parseRole 将字符串 role 映射为 schema.RoleType

@@ -85,6 +85,14 @@ func (c *toolCollector) merge(tc schema.ToolCall) {
 	if tc.ID != "" {
 		c.byID[tc.ID] = idx
 	}
+	state.tc = ensureToolCallID(state.tc, idx)
+}
+
+func ensureToolCallID(tc schema.ToolCall, idx int) schema.ToolCall {
+	if tc.ID == "" && tc.Function.Name != "" {
+		tc.ID = fmt.Sprintf("call_local_%d", idx)
+	}
+	return tc
 }
 
 // extractReady 提取已完成的调用
@@ -105,7 +113,10 @@ func (c *toolCollector) runnableCalls(includeDispatched bool, allowEmptyArgument
 			tc.Function.Arguments = "{}"
 			state.tc.Function.Arguments = tc.Function.Arguments
 		}
-		if tc.ID == "" || tc.Function.Name == "" || tc.Function.Arguments == "" || !isValidJSON(tc.Function.Arguments) {
+		if tc.Function.Name == "" {
+			continue
+		}
+		if tc.Function.Arguments == "" || !isValidJSON(tc.Function.Arguments) {
 			continue
 		}
 		state.dispatched = true

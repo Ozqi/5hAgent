@@ -19,10 +19,16 @@ __pycache__/
 # Claude Code
 .claude/
 
-# Workspace (SWE-bench test data)
+# Workspace / local experiments
 workspace/
 .worktrees/
 compact/
+testspace/*
+!testspace/.gitignore
+!testspace/md_mcp/
+!testspace/md_mcp/**
+!testspace/md_mcp_data/
+!testspace/md_mcp_data/**
 testspace/swebench_pro/repos/
 testspace/*.txt
 

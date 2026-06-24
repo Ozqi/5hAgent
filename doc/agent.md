@@ -16,8 +16,9 @@ flowchart TB
 
     subgraph Loop["ReAct 循环 RunStream"]
         ECS["ensureConversationSetup()"]
+        RT["WithToolRuntime()"]
         AM["AddMessage(user)"]
-        SC["ShouldCompress?"]
+        SC["ContextAutoCompress<br/>&& ShouldCompress?"]
         GM["GetMessages()"]
         STREAM["model.Stream()"]
         COLLECT["toolCollector"]
@@ -35,7 +36,7 @@ flowchart TB
 
     Init --> NA --> SM --> ST
     Loop --> ECS --> IS --> LS
-    ECS --> AM --> SC
+    ECS --> RT --> AM --> SC
     SC -->|需要压缩| GM
     GM --> STREAM --> COLLECT --> QUEUE --> EXEC --> CHECK --> ATR --> ADD_ASST
 ```
@@ -60,11 +61,12 @@ type Agent struct {
 }
 
 type Config struct {
-    Name            string  // Agent 名称
-    MaxTotalTokens  int     // 整场会话 token 上限
-    RepeatToolLimit int     // 相同工具重复调用上限
-    Debug           bool    // 调试模式
-    SystemPrompt    string  // 系统提示词
+    Name                string  // Agent 名称
+    MaxTotalTokens      int     // 整场会话 token 上限
+    RepeatToolLimit     int     // 相同工具重复调用上限
+    ContextAutoCompress bool    // 是否自动触发上下文压缩
+    Debug               bool    // 调试模式
+    SystemPrompt        string  // 系统提示词
 }
 
 type State struct {
@@ -118,11 +120,12 @@ func (a *Agent) RunStream(ctx, messageCtx, input, onToken, onReasoning...) (stri
     // 1. 首次对话注入 system prompt 和 skills
     a.ensureConversationSetup(messageCtx)
 
-    // 2. 添加用户消息
+    // 2. 注入 context tool runtime，并添加用户消息
+    ctx = agentctx.WithToolRuntime(ctx, a.ctxManager, messageCtx)
     a.ctxManager.AddMessage(messageCtx, userMsg)
 
     // 2.5 检查上下文压缩
-    if a.ctxManager.ShouldCompress(messageCtx) {
+    if a.config.ContextAutoCompress && a.ctxManager.ShouldCompress(messageCtx) {
         a.ctxManager.LMCompress(ctx, messageCtx, a.model, "prompt")
     }
 
@@ -182,6 +185,10 @@ func (a *Agent) RunStream(ctx, messageCtx, input, onToken, onReasoning...) (stri
     }
 }
 ```
+
+`WithToolRuntime()` 是 `context.context` 的运行时桥接。它把当前 `Manager` 和 `messageCtx` 放进 Go context，工具执行时通过 `agentctx.ToolRuntimeFrom(ctx)` 找到本轮真实上下文。没有这一步，LLM 虽然能看到 `context.context` 的 schema，但工具执行会返回 `context runtime not found`。
+
+`ContextAutoCompress=false` 只关闭 Agent 在 LLM 调用前的自动压缩，不影响 LLM 主动调用 `context.context {"action":"compress"}`。
 
 ## 工具重复调用防护
 
