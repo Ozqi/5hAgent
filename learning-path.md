@@ -1,6 +1,6 @@
 # Learning Path
 
-本仓库保留原始 `master` 历史，同时提供 5 个 `learn/stage-*` 分支作为循序渐进的阅读入口。`develop` 是后续 baseline 规整分支，不属于稳定学习阶段。
+本仓库保留原始 `master` 历史，同时提供 5 个 `learn/stage-*` 分支作为循序渐进的阅读入口。`develop` 是后续 baseline 规整分支，不属于稳定学习阶段。Stage 6 当前先以设计文档记录，不对应稳定学习分支。
 
 这些分支根据 README 和 TODOLIST 中的开发主线整理，只指向既有里程碑提交，不改写提交历史。
 
@@ -28,6 +28,7 @@ git log --oneline --reverse learn/stage-1-core-agent..learn/stage-2-tools-task
 | `learn/stage-3-skill-prompt` | Skill、Prompt、文档化：可复用工作流和提示词管理 | `internal/skill/`, `internal/tools/skill_tool.go`, `internal/utils/`, `prompt/`, `doc/` |
 | `learn/stage-4-mcp-session-tui` | 外部能力和产品化：MCP、配置、session、TUI、日志 | `internal/mcp/`, `internal/commands/`, `internal/context/`, `internal/cli/`, `internal/logger/` |
 | `learn/stage-5-current` | 当前完整实现：安装、MCP 文档、流式稳定性、当前 README | 全仓库 |
+| Stage 6 设计 | Agent Systemd：把 Agent 当作进程，由 AI 无关的调度器管理 | `doc/agent-systemd.md` |
 
 ## 推荐阅读顺序
 
@@ -36,6 +37,7 @@ git log --oneline --reverse learn/stage-1-core-agent..learn/stage-2-tools-task
 3. `stage-3-skill-prompt`：理解 Prompt 和 Skill 怎么把能力沉淀为可复用上下文。
 4. `stage-4-mcp-session-tui`：理解 MCP 外部工具、会话恢复、TUI 和日志如何接入。
 5. `stage-5-current`：回到当前实现，看稳定性修复和工程化收尾。
+6. `doc/agent-systemd.md`：阅读下一阶段的顶层调度设计；此阶段尚未落成稳定分支。
 
 ## 常用对比命令
 
