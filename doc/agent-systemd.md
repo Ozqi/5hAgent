@@ -368,7 +368,7 @@ StartProcess(spec)
 
 - `tools.Registry` 已经实例化工具列表和 MCP server map；包级默认 registry 仍保留兼容入口。
 - `toolmeta` 已收敛为类型和 fallback；工具元数据由 `tools.Registry` 实例持有。
-- `logger` sink 仍是包级全局变量，目前只有保存/恢复保护。
+- Agent 工具事件 sink 已挂到 Agent 实例；logger 包级 sink 只保留兼容旧直接调用路径。
 - MCP client 生命周期需要绑定到单个 runtime。
 - `runtime.Options.ProjectDir` 已固定 Project root；默认空值仍来自启动时 cwd。
 - `runtime.NewInMemory` 默认使用内存 context，但保留 session store 供 `sys.session` 显式持久化。
@@ -463,7 +463,7 @@ StartProcess(spec)
 ### H. 多进程前置改造
 
 - H1. 已完成：把 `tools` registry 从包级全局收敛到 runtime 实例；工具列表、工具元数据和 MCP server map 都由 `tools.Registry` 持有。
-- H2. 已完成基础保护：`logger.PushToolEventSink` 支持保存/恢复旧 sink，TUI/headless 不再无条件清空外层 sink；完全实例化仍需后续重构。
+- H2. 已完成：Agent 工具事件 sink 已实例化到 Agent；TUI/headless/runtime 不再占用包级 logger sink。
 - H3. 移除并发路径对 `os.Getwd()` 的依赖。
 - H4. 已完成当前可见边界：MCP 工具注册到 runtime 的实例 registry；MCP client 仍由 `Runtime.Close` 关闭。
 - H5. 已完成基础入口：`runtime.Options.ProjectDir` 可显式指定 Project，任务、worklog、report、项目 skill 加载都走该 Project 的 `.5hagent`；base 文件工具和 `exec_shell` 的相对路径都跟随 runtime workspace root，绝对路径仍优先。
@@ -503,4 +503,4 @@ Agent Systemd 的实现必须继续保持本项目的极简代码风格。第一
 
 ## 当前状态
 
-已完成 Agent Systemd 的最小调度链路：进程表、内存事件队列、timer 事件源、外部事件源接口、单文件轮询 watcher、task 文件事件源、`PromptSpec/ExitSpec`、`runtime.NewInMemory`、runtime runner、decision caller、`sys.session`、`sys.ipc`、runtime 级 tools registry、`ProjectDir`、base tools workspace root、进程 report/worklog artifact 和 logger sink 保存/恢复保护。下一步主要是增强项：logger 完全实例化和人工 review。
+已完成 Agent Systemd 的最小调度链路：进程表、内存事件队列、timer 事件源、外部事件源接口、单文件轮询 watcher、task 文件事件源、`PromptSpec/ExitSpec`、`runtime.NewInMemory`、runtime runner、decision caller、`sys.session`、`sys.ipc`、runtime 级 tools registry、`ProjectDir`、base tools workspace root、进程 report/worklog artifact 和 Agent 实例级工具事件 sink。下一步主要是人工 review。

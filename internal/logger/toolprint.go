@@ -162,32 +162,36 @@ func formatToolResultText(indent string, name string, args string, result string
 // PrintToolError 打印工具执行错误
 // 格式: ⎿ ✗ error
 func (p *ToolPrinter) PrintToolError(name string, args string, err error) {
+	text, errText := formatToolErrorText(p.indent, name, args, err)
+	if sink := currentToolEventSink(); sink != nil {
+		sink(ToolEvent{Kind: "error", Name: name, Text: text, Args: args, Error: errText})
+		return
+	}
+	fmt.Print(text)
+}
+
+func formatToolErrorText(indent string, name string, args string, err error) (string, string) {
 	summary := summarizeToolCall(name, args)
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("%s⎿ %s %s\n", p.indent, Red("✗"), Red(summarizeToolError(name, err))))
+	b.WriteString(fmt.Sprintf("%s⎿ %s %s\n", indent, Red("✗"), Red(summarizeToolError(name, err))))
 	if len(summary.Fields) > 0 {
 		for _, field := range summary.Fields {
-			b.WriteString(p.indent)
+			b.WriteString(indent)
 			b.WriteString("  ")
 			b.WriteString(Gray(field))
 			b.WriteString("\n")
 		}
 	} else if strings.TrimSpace(args) != "" {
-		b.WriteString(p.indent)
+		b.WriteString(indent)
 		b.WriteString("  ")
 		b.WriteString(Gray("args: " + TruncateString(args, 180)))
 		b.WriteString("\n")
 	}
-	text := b.String()
-	if sink := currentToolEventSink(); sink != nil {
-		errText := ""
-		if err != nil {
-			errText = err.Error()
-		}
-		sink(ToolEvent{Kind: "error", Name: name, Text: text, Args: args, Error: errText})
-		return
+	errText := ""
+	if err != nil {
+		errText = err.Error()
 	}
-	fmt.Print(text)
+	return b.String(), errText
 }
 
 func summarizeToolError(name string, err error) string {
@@ -256,14 +260,26 @@ func PrintToolCall(name string, args string, concurrent bool) {
 	defaultToolPrinter.PrintToolCall(name, args, concurrent)
 }
 
+func FormatToolCall(name string, args string, concurrent bool) string {
+	return formatToolCall(defaultToolPrinter.indent, name, args, concurrent)
+}
+
 // PrintToolResult 全局函数：打印工具结果
 func PrintToolResult(name string, args string, result string) {
 	defaultToolPrinter.PrintToolResult(name, args, result)
 }
 
+func FormatToolResult(name string, args string, result string) string {
+	return formatToolResultText(defaultToolPrinter.indent, name, args, result)
+}
+
 // PrintToolError 全局函数：打印工具错误
 func PrintToolError(name string, args string, err error) {
 	defaultToolPrinter.PrintToolError(name, args, err)
+}
+
+func FormatToolError(name string, args string, err error) (string, string) {
+	return formatToolErrorText(defaultToolPrinter.indent, name, args, err)
 }
 
 // PrintToolStatus 全局函数：打印工具状态

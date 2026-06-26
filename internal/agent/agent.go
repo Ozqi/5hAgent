@@ -1,7 +1,7 @@
 // agent.go - Agent 核心实现
 // 功能：ReAct 循环、LLM 调用、工具执行协调、上下文管理
 // 主要类型：Agent, Config, State, tokenBudget, toolRepeatGuard
-// 导出函数：NewAgent, RunStream, GetSkillManager, SetModel, SetTools, Name, TokenUsage
+// 导出函数：NewAgent, RunStream, GetSkillManager, SetModel, SetTools, SetToolEventSink, Name, TokenUsage
 package agent
 
 import (
@@ -42,6 +42,8 @@ type Agent struct {
 	tokenBudget *utils.TokenBudget
 	// 回调处理器
 	callbacks *AgentCallbacks
+	// 工具事件 sink
+	toolEventSink func(logger.ToolEvent)
 }
 
 // Config Agent 配置
@@ -128,6 +130,14 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 // SetCtxManager 设置上下文管理器（用于 session 持久化）
 func (a *Agent) SetCtxManager(manager *agentctx.Manager) {
 	a.ctxManager = manager
+}
+
+// SetToolEventSink 设置当前 Agent 的工具事件接收器。
+// 参数：sink 接收 tool call/result/error/status 事件；nil 表示回退到 logger 默认输出。
+// 调用层级：TUI/headless/runtime -> SetToolEventSink -> exeToolCall/addToolResult。
+// 步骤：只替换当前 Agent 实例字段，不改包级 logger sink。
+func (a *Agent) SetToolEventSink(sink func(logger.ToolEvent)) {
+	a.toolEventSink = sink
 }
 
 // GetCtxManager 获取上下文管理器

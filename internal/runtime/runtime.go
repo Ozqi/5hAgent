@@ -243,7 +243,12 @@ func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess) er
 	}
 	dataDir := projectDataDir(r.ProjectDir)
 	workLog := newHeadlessWorkLog(false, dataDir, proc.ID, started)
+	workLog.useGlobalSink = false
 	workLog.Start(processLogTask(proc))
+	r.Agent.SetToolEventSink(func(event logger.ToolEvent) {
+		workLog.printToolEvent(event)
+	})
+	defer r.Agent.SetToolEventSink(nil)
 	response, runErr := r.Agent.RunStream(ctx, messageCtx, processInput(proc), workLog.OnToken, workLog.OnReasoning)
 	workLog.End(runErr)
 	proc.WorkLogPath = workLog.path
@@ -309,7 +314,12 @@ func (r *Runtime) RunTaskOnce(ctx context.Context, opts RunOptions) (*RunReport,
 	input := taskPrompt(r.TaskList.Path(), selected)
 	projectDataDir := projectDataDir(r.ProjectDir)
 	workLog := newHeadlessWorkLog(opts.WorkLog, projectDataDir, r.Agent.Name(), started)
+	workLog.useGlobalSink = false
 	workLog.Start(selected)
+	r.Agent.SetToolEventSink(func(event logger.ToolEvent) {
+		workLog.printToolEvent(event)
+	})
+	defer r.Agent.SetToolEventSink(nil)
 	defer workLog.Stop()
 	response, runErr := r.Agent.RunStream(ctx, messageCtx, input, workLog.OnToken, workLog.OnReasoning)
 	workLog.End(runErr)

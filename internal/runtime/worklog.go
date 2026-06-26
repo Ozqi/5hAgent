@@ -24,6 +24,7 @@ type headlessWorkLog struct {
 	path            string
 	printedHeader   bool
 	fileInAssistant bool
+	useGlobalSink   bool
 	restoreSink     func()
 }
 
@@ -34,7 +35,7 @@ func newHeadlessWorkLog(console bool, dataDir string, agentName string, startedA
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
-	return &headlessWorkLog{console: console, dataDir: dataDir, agentName: agentName, startedAt: startedAt.UTC()}
+	return &headlessWorkLog{console: console, dataDir: dataDir, agentName: agentName, startedAt: startedAt.UTC(), useGlobalSink: true}
 }
 
 func (l *headlessWorkLog) Start(t *task.Task) {
@@ -63,9 +64,11 @@ func (l *headlessWorkLog) Start(t *task.Task) {
 			fmt.Fprintf(os.Stdout, "worklog: %s\n", l.path)
 		}
 	}
-	l.restoreSink = logger.PushToolEventSink(func(event logger.ToolEvent) {
-		l.printToolEvent(event)
-	})
+	if l.useGlobalSink {
+		l.restoreSink = logger.PushToolEventSink(func(event logger.ToolEvent) {
+			l.printToolEvent(event)
+		})
+	}
 }
 
 func (l *headlessWorkLog) Stop() {

@@ -159,7 +159,7 @@ func (a *Agent) exeToolCall(ctx context.Context, tc schema.ToolCall, idx, total 
 		})
 	}
 
-	logger.PrintToolCall(tc.Function.Name, tc.Function.Arguments, concurrent)
+	a.printToolCall(tc.Function.Name, tc.Function.Arguments, concurrent)
 
 	t := a.toolMap[tc.Function.Name]
 	if t == nil {
@@ -203,16 +203,43 @@ func (a *Agent) invokeTool(ctx context.Context, t tool.BaseTool, tc schema.ToolC
 func (a *Agent) addToolResult(messageCtx *agentctx.Context, tc schema.ToolCall, result string, execErr error) error {
 	if execErr != nil {
 		logger.ErrorTag("TOOL", "Failed: %s, err=%v", tc.Function.Name, execErr)
-		logger.PrintToolError(tc.Function.Name, tc.Function.Arguments, execErr)
+		a.printToolError(tc.Function.Name, tc.Function.Arguments, execErr)
 		errMsg := schema.ToolMessage(formatToolErr(tc, execErr), tc.ID)
 		return a.ctxManager.AddMessage(messageCtx, errMsg)
 	}
 
 	logger.DebugTag("TOOL", "Success: %s", tc.Function.Name)
 	logger.DebugTag("TOOL", "  result: %s", logger.TruncateString(result, 200))
-	logger.PrintToolResult(tc.Function.Name, tc.Function.Arguments, result)
+	a.printToolResult(tc.Function.Name, tc.Function.Arguments, result)
 
 	return a.ctxManager.AddMessage(messageCtx, schema.ToolMessage(result, tc.ID))
+}
+
+func (a *Agent) printToolCall(name string, args string, concurrent bool) {
+	if a != nil && a.toolEventSink != nil {
+		text := logger.FormatToolCall(name, args, concurrent)
+		a.toolEventSink(logger.ToolEvent{Kind: "call", Name: name, Text: text, Args: args, Concurrent: concurrent})
+		return
+	}
+	logger.PrintToolCall(name, args, concurrent)
+}
+
+func (a *Agent) printToolResult(name string, args string, result string) {
+	if a != nil && a.toolEventSink != nil {
+		text := logger.FormatToolResult(name, args, result)
+		a.toolEventSink(logger.ToolEvent{Kind: "result", Name: name, Text: text, Args: args, Result: result})
+		return
+	}
+	logger.PrintToolResult(name, args, result)
+}
+
+func (a *Agent) printToolError(name string, args string, err error) {
+	if a != nil && a.toolEventSink != nil {
+		text, errText := logger.FormatToolError(name, args, err)
+		a.toolEventSink(logger.ToolEvent{Kind: "error", Name: name, Text: text, Args: args, Error: errText})
+		return
+	}
+	logger.PrintToolError(name, args, err)
 }
 
 // formatToolErr 格式化工具执行错误
