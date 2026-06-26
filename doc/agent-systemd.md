@@ -386,7 +386,7 @@ StartProcess(spec)
 
 - B1. 已完成：`SkillRefs` 从已激活 skill 列表提取 `Name/Description`，生成 `PromptSpec.Skills`。
 - B2. 已完成：`SkillRefs` 不读取 skill 正文。
-- B3. 人工 review：PromptSpec 只含 system、skill name、skill description。
+- B3. 审计通过：`PromptSpec` 只含 `System` 和 `[]SkillRef`；`SkillRef` 只含 `Name/Description`。
 - B4. 进入实现阶段后，再决定是否需要 `BuildPrompt`；一行包装逻辑优先内联。
 
 ### C. 内存上下文模型
@@ -394,21 +394,21 @@ StartProcess(spec)
 - C1. 已完成：新增 `runtime.NewInMemory`，可创建不绑定 session store 的 Runtime。
 - C2. 标记当前冲突点：`runtime.New`、`RunTaskOnce`、`openMessageCtx`。
 - C3. 已完成：`context.Manager` 增加 `BindSession/SaveSession/DropSession`，并注册 `sys.session create/save/drop`。
-- C4. 人工 review：AgentProcess 退出后内存 context 不可恢复；只有显式 session 才落盘。
+- C4. 审计通过：`runtime.NewInMemory` 使用不 autobind 的 context manager；`Runtime.RunProcess` 每次创建空 session id 的内存 context；只有 `sys.session` 调 `BindSession/SaveSession` 才写 `~/.5hAgent/sessions`。
 - C5. 明确 meta 级 session 路径只在 `~/.5hAgent` 下。
 
 ### D. 退出条件
 
 - D1. 定义 `ExitSpec` 最小字段：`Condition/Deadline/MaxTurns`。
 - D2. 已完成：定义并最小实现 `ShouldExit(proc, event) bool`。
-- D3. 人工 review：满足 max turns、deadline、完成事件时退出。
+- D3. 审计通过：`shouldExit` 覆盖 exited/failed/stopped 状态、目标事件、`task.completed`、`MaxTurns` 和 `Deadline`。
 
 ### E. 事件和 IPC
 
 - E1. 先只定义 `Event` 类型。
 - E2. 已完成：`Event.ProcessID` 标记目标进程，空值表示广播事件。
 - E3. 禁止共享 context，只允许短消息和 artifact 路径。
-- E4. 人工 review：A 进程不能读 B 进程 context。
+- E4. 审计通过：IPC 只暴露 `from/to/summary/artifact`，`sys.ipc` 通过 `ToolRuntime.ProcessID` 调 `SendIPC/RecvIPC`，没有读取其他进程 context 的接口。
 - E5. 已完成：`IPCMessage`、`Send`、`Recv` 提供内存短消息队列。
 - E6. 已完成：`AgentSystemd.RunProcess` 注入 `ProcessID/IPC`，并注册 `sys.ipc send/recv` 工具。
 
@@ -417,7 +417,7 @@ StartProcess(spec)
 - F1. 定义 `DecisionInput` / `DecisionResult`。
 - F2. 已完成：定义 `Decision(ctx, caller, input) (DecisionResult, error)`，caller 负责唯一 LM 调用。
 - F3. 已完成：`ParseDecision` 校验 JSON action enum、PromptSpec、ExitSpec。
-- F4. 人工 review：非法 JSON、缺退出条件、skill 正文泄漏都失败。
+- F4. 审计通过：`ParseDecision` 使用 `DisallowUnknownFields`，校验 action enum、system prompt、exit 条件、skill name，并拒绝 skill 正文和未知字段。
 
 ### G. 单进程调度
 
@@ -503,4 +503,33 @@ Agent Systemd 的实现必须继续保持本项目的极简代码风格。第一
 
 ## 当前状态
 
-已完成 Agent Systemd 的最小调度链路：进程表、内存事件队列、timer 事件源、外部事件源接口、单文件轮询 watcher、task 文件事件源、`PromptSpec/ExitSpec`、`runtime.NewInMemory`、runtime runner、decision caller、`sys.session`、`sys.ipc`、runtime 级 tools registry、`ProjectDir`、base tools workspace root、进程 report/worklog artifact 和 Agent 实例级工具事件 sink。下一步主要是人工 review。
+已完成 Agent Systemd 的最小调度链路：进程表、内存事件队列、timer 事件源、外部事件源接口、单文件轮询 watcher、task 文件事件源、`PromptSpec/ExitSpec`、`runtime.NewInMemory`、runtime runner、decision caller、`sys.session`、`sys.ipc`、runtime 级 tools registry、`ProjectDir`、base tools workspace root、进程 report/worklog artifact 和 Agent 实例级工具事件 sink。当前实现项已闭合，等待人工复核。
+
+## 完成审计
+
+| 要求 | 证据 | 状态 |
+| --- | --- | --- |
+| AgentProcess 启动只接收提示词和退出条件 | `ProcessSpec{Prompt, Exit}` | 已完成 |
+| Prompt 只含 system 和 skill 摘要 | `PromptSpec.System`、`[]SkillRef{Name, Description}`、`SkillRefs` | 已完成 |
+| Project/WorkDir 不进入 PromptSpec | `runtime.Options.ProjectDir`、`Runtime.ProjectDir`、`tools.Registry.SetWorkspaceRoot` | 已完成 |
+| context 默认是进程内存 | `runtime.NewInMemory`、`Runtime.RunProcess` 每进程新建 context | 已完成 |
+| session 必须由 Agent 显式持久化 | `sys.session create/save/drop`、`BindSession/SaveSession/DropSession` | 已完成 |
+| Agent 间通信不共享 context | `IPCMessage` 只含 `from/to/summary/artifact`，`sys.ipc send/recv` | 已完成 |
+| 退出条件可执行 | `ShouldExit`、`timer.tick`、`RunProcess` cancel 和结束事件 | 已完成 |
+| decision 是受控升级点 | `DecisionCaller`、`Decision`、`ParseDecision` 严格 JSON 校验 | 已完成 |
+| 进程结束有 report/worklog artifact | `Runtime.RunProcess` 写 report/worklog，`ProcessEventPayload` 携带路径 | 已完成 |
+| 事件源可接文件和 task 文件 | `FileEventSource`、`TaskFileEventSource` | 已完成 |
+| 多 Runtime 前置隔离 | `tools.Registry` 持有工具列表、工具元数据、MCP map；Agent 实例级 tool event sink | 已完成 |
+
+验证命令：
+
+```bash
+go test ./internal/systemd ./internal/runtime ./internal/context ./internal/tools ./internal/agent
+go build -o 5hagent cmd/5hagent/main.go
+git diff --check
+```
+
+全仓剩余已知测试缺口：
+
+- `internal/cli` 的 ANSI 渲染断言仍失败。
+- `internal/logger` 的日志格式断言仍失败。
