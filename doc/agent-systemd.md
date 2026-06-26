@@ -426,7 +426,7 @@ StartProcess(spec)
 - G2. 已完成：定义 `ProcessRunner`，由外部执行引擎运行进程，不复制 ReAct。
 - G3. 已完成：`RunProcess` 当前只允许一个进程运行；进程表和本地 PID 由最小 mutex 保护。
 - G4. 已完成：`Emit` 对非空事件 ID 去重。
-- G5. 部分完成：`RunProcess` 结束后自动投递 `process.exited/process.failed` 事件；report/worklog 收集仍需接 runtime 外层。
+- G5. 已完成：`RunProcess` 结束后自动投递 `process.exited/process.failed` 事件；`Runtime.RunProcess` 写进程 report/worklog，并把路径回填到结束事件 payload。
 
 ## 已落地最小实现
 
@@ -442,8 +442,8 @@ StartProcess(spec)
 - `RunWithDecision(ctx, runner, caller)`：在 `task.failed` 事件后调用受控 decision；同一失败 key 默认最多触发一次，并用 `ApplyDecision` 执行返回动作。
 - `DispatchEvent(ctx, runner, event)`：支持 `process.start/task.created/manual.request` 从 payload 解析 `ProcessSpec` 并异步启动；`risk=high` 只记录不启动；其他事件应用 `process.exited/process.failed/process.stopped`，不启动 watcher。
 - `timer.tick`：扫描进程退出条件，满足 `Deadline/MaxTurns` 或超过 stalled 阈值时 cancel 并标记 stopped。
-- `RunProcess(ctx, runner, spec)`：同步执行单个进程，runner 由外部注入；单进程检查和进程登记受锁保护；为运行中的进程保存 cancel；执行结束后自动投递 `process.exited/process.failed` 事件。
-- `Runtime.RunProcess(ctx, proc)`：runtime 适配器，先把 `PromptSpec.System` 和 `SkillRef Name/Description` 注入内存 context，再调用 `Agent.RunStream`。
+- `RunProcess(ctx, runner, spec)`：同步执行单个进程，runner 由外部注入；单进程检查和进程登记受锁保护；为运行中的进程保存 cancel；执行结束后自动投递带 report/worklog 路径的 `process.exited/process.failed` 事件。
+- `Runtime.RunProcess(ctx, proc)`：runtime 适配器，先把 `PromptSpec.System` 和 `SkillRef Name/Description` 注入内存 context，再调用 `Agent.RunStream`，最后写 Project 下的 `.5hagent/reports/<pid>.md` 和 `.5hagent/agents/<pid>/logs/`。
 - `Runtime.CallDecision(ctx, input)`：具体 `DecisionCaller` 适配器，使用未绑定工具的模型执行一次 `Generate`，要求只返回 JSON。
 - `ShouldExit(proc, event)`：按进程状态、目标事件、`MaxTurns`、`Deadline` 判断退出。
 - `Policy`：decision 输入包含 `dedup_event_id/single_process/max_retries` 的硬编码规则摘要。

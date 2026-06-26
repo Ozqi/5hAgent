@@ -78,7 +78,9 @@ type Event struct {
 
 // ProcessEventPayload 是进程结束类事件的最小负载。
 type ProcessEventPayload struct {
-	Error string `json:"error,omitempty"` // runner 返回的错误文本
+	Error       string `json:"error,omitempty"`        // runner 返回的错误文本
+	ReportPath  string `json:"report_path,omitempty"`  // 进程报告路径
+	WorkLogPath string `json:"worklog_path,omitempty"` // 进程工作日志路径
 }
 
 // FileEventPayload 是文件 watcher 事件的最小负载。
@@ -155,6 +157,8 @@ type AgentProcess struct {
 	EndedAt      time.Time    // 结束时间
 	LastActiveAt time.Time    // 最近活跃时间
 	LastEvent    Event        // 最近处理的事件
+	ReportPath   string       // 进程报告路径
+	WorkLogPath  string       // 进程工作日志路径
 	Turns        int          // 已执行轮次；由后续 runtime 回填
 	cancel       context.CancelFunc
 }
@@ -527,11 +531,11 @@ func (s *AgentSystemd) RunProcess(ctx context.Context, runner ProcessRunner, spe
 	s.mu.Lock()
 	proc.EndedAt = time.Now().UTC()
 	eventType := "process.exited"
-	payload := json.RawMessage(nil)
+	payload, _ := json.Marshal(ProcessEventPayload{ReportPath: proc.ReportPath, WorkLogPath: proc.WorkLogPath})
 	if err != nil {
 		proc.State = ProcessFailed
 		eventType = "process.failed"
-		payload, _ = json.Marshal(ProcessEventPayload{Error: err.Error()})
+		payload, _ = json.Marshal(ProcessEventPayload{Error: err.Error(), ReportPath: proc.ReportPath, WorkLogPath: proc.WorkLogPath})
 		if proc.cancel != nil {
 			proc.cancel()
 			proc.cancel = nil

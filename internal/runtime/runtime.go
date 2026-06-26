@@ -72,6 +72,16 @@ type RunReport struct {
 	EndedAt    time.Time
 }
 
+type processReport struct {
+	ProcessID string
+	Prompt    systemd.PromptSpec
+	Exit      systemd.ExitSpec
+	Response  string
+	Err       error
+	StartedAt time.Time
+	EndedAt   time.Time
+}
+
 // New 初始化一个可交互或无头复用的 Runtime。
 // 步骤：加载配置 -> 初始化日志 -> 打开任务文件和 session store -> 创建 LLM/Agent -> 注册本地与 MCP 工具。
 // 副作用：创建 ~/.5hAgent、项目 .5hagent、日志文件，可能启动 MCP stdio 子进程。
@@ -201,11 +211,12 @@ func NewInMemory(ctx context.Context, opts Options) (*Runtime, error) {
 // RunProcess 让 Runtime 作为 Agent Systemd 的同步执行 runner。
 // 参数：proc 只读取 PromptSpec/ExitSpec；Project/WorkDir 仍由外层启动 runtime 时决定。
 // 调用层级：systemd.AgentSystemd.RunProcess -> Runtime.RunProcess -> Agent.RunStream。
-// 步骤：创建内存 context -> 注入 ProcessSpec.Prompt -> 调用 Agent.RunStream；不写 report，不创建 session。
+// 步骤：创建内存 context -> 注入 ProcessSpec.Prompt -> 调用 Agent.RunStream -> 写进程 report/worklog。
 func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess) error {
 	if proc == nil {
 		return fmt.Errorf("process is nil")
 	}
+	started := time.Now().UTC()
 	messageCtx, err := r.CtxManager.CreateContext("")
 	if err != nil {
 		return fmt.Errorf("create process context: %w", err)
@@ -230,8 +241,19 @@ func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess) er
 			return fmt.Errorf("add process skill %s: %w", skill.Name, err)
 		}
 	}
-	_, err = r.Agent.RunStream(ctx, messageCtx, processInput(proc), nil)
-	return err
+	dataDir := projectDataDir(r.ProjectDir)
+	workLog := newHeadlessWorkLog(false, dataDir, proc.ID, started)
+	workLog.Start(processLogTask(proc))
+	response, runErr := r.Agent.RunStream(ctx, messageCtx, processInput(proc), workLog.OnToken, workLog.OnReasoning)
+	workLog.End(runErr)
+	proc.WorkLogPath = workLog.path
+	report := &processReport{ProcessID: proc.ID, Prompt: proc.Spec.Prompt, Exit: proc.Spec.Exit, Response: response, Err: runErr, StartedAt: started, EndedAt: time.Now().UTC()}
+	path, writeErr := r.writeProcessReport("", report)
+	proc.ReportPath = path
+	if writeErr != nil {
+		return writeErr
+	}
+	return runErr
 }
 
 // CallDecision 执行一次受控 LM 判断。
@@ -418,6 +440,20 @@ func (r *Runtime) writeReport(dir string, report *RunReport) (string, error) {
 	return path, nil
 }
 
+func (r *Runtime) writeProcessReport(dir string, report *processReport) (string, error) {
+	if dir == "" {
+		dir = filepath.Join(projectDataDir(r.ProjectDir), "reports")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create process report dir: %w", err)
+	}
+	path := filepath.Join(dir, safeName(report.ProcessID)+".md")
+	if err := os.WriteFile(path, []byte(renderProcessReport(report)), 0o644); err != nil {
+		return "", fmt.Errorf("write process report: %w", err)
+	}
+	return path, nil
+}
+
 func projectDataDir(projectDir string) string {
 	return filepath.Join(projectDir, ".5hagent")
 }
@@ -431,6 +467,13 @@ func projectRoot(projectDir string) (string, error) {
 		return "", err
 	}
 	return cwd, nil
+}
+
+func processLogTask(proc *systemd.AgentProcess) *task.Task {
+	if proc == nil {
+		return nil
+	}
+	return &task.Task{ID: proc.ID, Title: proc.Name, Description: proc.Spec.Exit.Condition}
 }
 
 func renderReport(report *RunReport) string {
@@ -455,6 +498,37 @@ func renderReport(report *RunReport) string {
 
 %s
 %s`, report.Task.Title, report.Task.ID, status, report.StartedAt.Format(time.RFC3339), report.EndedAt.Format(time.RFC3339), report.Task.Description, strings.TrimSpace(report.Response), errText)
+}
+
+func renderProcessReport(report *processReport) string {
+	status := "completed"
+	errText := ""
+	if report.Err != nil {
+		status = "failed"
+		errText = "\n## Error\n\n```text\n" + report.Err.Error() + "\n```\n"
+	}
+	skills := make([]string, 0, len(report.Prompt.Skills))
+	for _, skill := range report.Prompt.Skills {
+		if skill.Name != "" {
+			skills = append(skills, skill.Name)
+		}
+	}
+	return fmt.Sprintf(`# Agent Process Report
+
+- process: %s
+- status: %s
+- started_at: %s
+- ended_at: %s
+- skills: %s
+
+## Exit Condition
+
+%s
+
+## Agent Output
+
+%s
+%s`, report.ProcessID, status, report.StartedAt.Format(time.RFC3339), report.EndedAt.Format(time.RFC3339), strings.Join(skills, ", "), report.Exit.Condition, strings.TrimSpace(report.Response), errText)
 }
 
 func safeName(raw string) string {
