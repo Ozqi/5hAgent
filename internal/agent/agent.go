@@ -52,6 +52,7 @@ type Config struct {
 	Debug               bool   // 是否启用调试
 	ContextAutoCompress bool   // 是否自动触发上下文压缩
 	SystemPrompt        string // 系统提示词
+	ProjectDataDir      string // 项目 .5hagent 数据目录；为空时使用当前工作目录
 }
 
 // State Agent 运行状态
@@ -79,14 +80,22 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 		config.RepeatToolLimit = 5
 	}
 
-	// 初始化技能管理器，使用配置目录
 	configDir, err := utils.GetConfigDir()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get config directory: %w", err)
 	}
-	skillsDir := filepath.Join(configDir, "skills")
-
-	skillMgr := skill.NewManager(skillsDir)
+	projectDataDir := config.ProjectDataDir
+	if projectDataDir == "" {
+		var err error
+		projectDataDir, err = utils.GetProjectDataDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get project data directory: %w", err)
+		}
+	}
+	skillMgr := skill.NewManagerFromDirs(
+		skill.Source{Scope: "global", Dir: filepath.Join(configDir, "skills")},
+		skill.Source{Scope: "project", Dir: filepath.Join(projectDataDir, "skills")},
+	)
 	if err := skillMgr.LoadSkills(); err != nil {
 		logger.DebugTag("SKILL", "Failed to load skills: %v", err)
 	}

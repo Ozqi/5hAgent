@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/eino/components/tool"
@@ -61,12 +62,12 @@ Use systematic checks.
 	}
 	skillTool := &SkillTool{mgr: skillMgr}
 	assertToolName(t, skillTool, "skill.skill")
-	if _, err := skillTool.InvokableRun(ctx, `{"skill":"debugging","action":"disable"}`); err != nil {
-		t.Fatalf("skill tool disable failed: %v", err)
+	skillResult, err := skillTool.InvokableRun(ctx, `{"action":"get","skill":"debugging"}`)
+	if err != nil {
+		t.Fatalf("skill tool get failed: %v", err)
 	}
-	loadedSkill, ok := skillMgr.GetSkill("debugging")
-	if !ok || loadedSkill.Enabled {
-		t.Fatalf("skill was not disabled: %#v", loadedSkill)
+	if !strings.Contains(skillResult, "# Skill: debugging") || !strings.Contains(skillResult, "Use systematic checks.") {
+		t.Fatalf("skill result = %q, want skill content", skillResult)
 	}
 
 	taskList, err := task.NewTaskList(filepath.Join(t.TempDir(), "task.md"))

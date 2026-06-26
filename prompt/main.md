@@ -19,7 +19,7 @@
 - 工具命名采用二级分类：
   - `base.*`：本地基础工具，例如 `base.read_file`、`base.grep`、`base.exec_shell`
   - `task.task`：任务管理工具，通过 `action` 区分 `create`、`update`、`get`、`list`、`delete`
-  - `skill.skill`：技能工具，通过 `action` 区分 `enable`、`disable`
+  - `skill.skill`：技能查看工具，通过 `action` 区分 `list`、`get`；Agent 启动后 skill 集合固定
 - 调用工具前先确认完整工具名，不要省略分类前缀，不要再使用旧名字如 `read_file`、`task_create`、`task_update`。
 - 任务唯一真源是当前工作目录下的 `.5hagent/task.md`。如果需要查看当前任务状态，优先使用 `task.task` 的 `get/list`，并假设人工可能已经修改了 `.5hagent/task.md`。
 - 不要改动 `.5hagent/task.md` 中 `<!-- 5hagent:tasks:start -->` 到 `<!-- 5hagent:tasks:end -->` 之外的模板结构，除非用户明确要求重写该文档。

@@ -252,7 +252,7 @@ func toolHint(tc schema.ToolCall) string {
 	case "task":
 		return "use exact task action values only: create/update/get/list/delete/archive/reopen. To finish a task use {\"action\":\"update\",\"id\":\"...\",\"status\":\"completed\"}; create requires id/title/description"
 	case "skill":
-		return "use an existing skill name and set action to enable or disable"
+		return "use action=list or action=get with an existing skill name"
 	}
 
 	if meta, ok := tools.Lookup(name); ok && meta.Category == tools.CategoryMCP {
