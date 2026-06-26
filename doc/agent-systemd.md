@@ -278,9 +278,6 @@ func (s *AgentSystemd) Run(ctx context.Context, runner ProcessRunner) error {
 - 同一个事件 ID 不重复启动两个 Agent。
 - 同一个 Agent 名称可设置并发上限。
 - `timer.tick` 扫描 `Deadline/MaxTurns`，满足退出条件时标记 stopped。
-
-当前暂缓的 policy：
-
 - 失败任务最多重试 N 次。
 - stalled 当前用 `LastActiveAt` + `timer.tick` 做最小检测，后续可接真实输出心跳。
 - 高风险事件当前通过 `risk=high` 只记录，不自动启动 Agent，不触发 decision。
@@ -298,7 +295,9 @@ func (s *AgentSystemd) Run(ctx context.Context, runner ProcessRunner) error {
   "policy": {
     "dedup_event_id": true,
     "single_process": true,
-    "max_retries": 1
+    "high_risk_wait": true,
+    "max_retries": 1,
+    "stalled_after": "30m0s"
   }
 }
 ```
@@ -446,7 +445,7 @@ StartProcess(spec)
 - `Runtime.RunProcess(ctx, proc)`：runtime 适配器，先把 `PromptSpec.System` 和 `SkillRef Name/Description` 注入内存 context，再调用 `Agent.RunStream`，最后写 Project 下的 `.5hagent/reports/<pid>.md` 和 `.5hagent/agents/<pid>/logs/`。
 - `Runtime.CallDecision(ctx, input)`：具体 `DecisionCaller` 适配器，使用未绑定工具的模型执行一次 `Generate`，要求只返回 JSON。
 - `ShouldExit(proc, event)`：按进程状态、目标事件、`MaxTurns`、`Deadline` 判断退出。
-- `Policy`：decision 输入包含 `dedup_event_id/single_process/max_retries` 的硬编码规则摘要。
+- `Policy`：decision 输入包含 `dedup_event_id/single_process/high_risk_wait/max_retries/stalled_after` 的硬编码规则摘要。
 - `runtime.NewInMemory(...)`：创建默认不绑定 session 的 Runtime，但保留 session store 供 `sys.session.create` 显式持久化；现有 `runtime.New` 默认行为不变。
 - `sys.session create/save/drop`：显式创建、保存、解除当前 context 的 session 绑定。
 - `Decision(ctx, caller, input)`：编码结构化输入，调用一次外部 `DecisionCaller`，再用 `ParseDecision` 校验输出。
@@ -503,4 +502,4 @@ Agent Systemd 的实现必须继续保持本项目的极简代码风格。第一
 
 ## 当前状态
 
-已完成 Agent Systemd 的最小调度链路：进程表、内存事件队列、timer 事件源、外部事件源接口、单文件轮询 watcher、`PromptSpec/ExitSpec`、`runtime.NewInMemory`、runtime runner、decision caller、`sys.session`、`sys.ipc`、runtime 级 tools registry、`ProjectDir`、base tools workspace root 和 logger sink 保存/恢复保护。下一步主要是增强项：把文件事件解析成具体任务事件、更丰富 policy、logger 完全实例化和人工 review。
+已完成 Agent Systemd 的最小调度链路：进程表、内存事件队列、timer 事件源、外部事件源接口、单文件轮询 watcher、`PromptSpec/ExitSpec`、`runtime.NewInMemory`、runtime runner、decision caller、`sys.session`、`sys.ipc`、runtime 级 tools registry、`ProjectDir`、base tools workspace root、进程 report/worklog artifact 和 logger sink 保存/恢复保护。下一步主要是增强项：把文件事件解析成具体任务事件、logger 完全实例化和人工 review。

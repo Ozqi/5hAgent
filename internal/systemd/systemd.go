@@ -165,9 +165,11 @@ type AgentProcess struct {
 
 // Policy 是交给 decision 的硬编码调度规则摘要。
 type Policy struct {
-	DedupEventID  bool `json:"dedup_event_id"` // 非空事件 ID 会去重
-	SingleProcess bool `json:"single_process"` // 当前只允许一个 running 进程
-	MaxRetries    int  `json:"max_retries"`    // task.failed 最多触发几次 decision
+	DedupEventID  bool   `json:"dedup_event_id"` // 非空事件 ID 会去重
+	SingleProcess bool   `json:"single_process"` // 当前只允许一个 running 进程
+	HighRiskWait  bool   `json:"high_risk_wait"` // high risk 事件只记录，不启动进程或 decision
+	MaxRetries    int    `json:"max_retries"`    // task.failed 最多触发几次 decision
+	StalledAfter  string `json:"stalled_after"`  // running 进程无活跃多久后停止
 }
 
 // DecisionInput 是交给 decision 的结构化事实。
@@ -743,7 +745,9 @@ func (s *AgentSystemd) decisionInput(event Event) DecisionInput {
 		Policy: Policy{
 			DedupEventID:  true,
 			SingleProcess: true,
+			HighRiskWait:  true,
 			MaxRetries:    s.maxRetry,
+			StalledAfter:  s.stalledAfter.String(),
 		},
 	}
 }
