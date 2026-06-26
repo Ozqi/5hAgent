@@ -16,6 +16,7 @@ import (
 
 	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/skill"
+	"github.com/lzq/5hAgent/internal/task"
 )
 
 // ProcessState 表示 AgentProcess 生命周期状态。
@@ -90,6 +91,9 @@ type FileEventPayload struct {
 	Size    int64     `json:"size"`     // 文件大小
 }
 
+// TaskSpecBuilder 把任务转换为 AgentProcess 启动规格。
+type TaskSpecBuilder func(t *task.Task) (ProcessSpec, error)
+
 // EventSource 是外部事件源的最小接口。
 type EventSource interface {
 	Next(ctx context.Context) (Event, error)
@@ -104,6 +108,13 @@ type FileEventSource struct {
 	lastModTime time.Time
 	lastSize    int64
 	ready       bool
+}
+
+// TaskFileEventSource 把 task.md 文件变化解析成 task.created 事件。
+type TaskFileEventSource struct {
+	file  *FileEventSource // 底层文件 watcher
+	list  *task.TaskList   // 任务列表
+	build TaskSpecBuilder  // 任务到 ProcessSpec 的转换策略
 }
 
 // StartEvent 创建启动 AgentProcess 的事件。
@@ -136,6 +147,18 @@ func NewFileEventSource(path string, eventType string, source string, interval t
 		interval = time.Second
 	}
 	return &FileEventSource{Path: path, EventType: eventType, Source: source, Interval: interval}
+}
+
+// NewTaskFileEventSource 创建 task.md 事件源。
+// 参数：list 是已有任务列表；builder 由上层决定如何把 task 转成 PromptSpec/ExitSpec。
+// 调用层级：外部入口 -> NewTaskFileEventSource -> StartSource -> Run。
+// 步骤：复用 FileEventSource 监听文件变化；变化后选 in_progress/pending 任务并生成 task.created。
+func NewTaskFileEventSource(list *task.TaskList, interval time.Duration, builder TaskSpecBuilder) *TaskFileEventSource {
+	path := ""
+	if list != nil {
+		path = list.Path()
+	}
+	return &TaskFileEventSource{file: NewFileEventSource(path, "task.changed", "task", interval), list: list, build: builder}
 }
 
 // IPCMessage 是 AgentProcess 之间的短消息。
@@ -415,6 +438,62 @@ func (w *FileEventSource) poll() (Event, bool, error) {
 	}
 	id := fmt.Sprintf("%s:%s:%d", w.Path, modTime.Format(time.RFC3339Nano), size)
 	return Event{ID: id, Type: w.EventType, Source: w.Source, Payload: payload, CreatedAt: time.Now().UTC()}, true, nil
+}
+
+// Next 等待 task.md 变化并返回 task.created 事件。
+// 参数：ctx 控制等待生命周期。
+// 调用层级：StartSource -> TaskFileEventSource.Next -> FileEventSource.Next -> TaskList.ListTasksByStatus。
+// 步骤：等待文件变化 -> 读取任务列表 -> 选择 in_progress/pending -> 调 builder 生成 ProcessSpec。
+func (w *TaskFileEventSource) Next(ctx context.Context) (Event, error) {
+	if w == nil || w.file == nil || w.list == nil {
+		return Event{}, fmt.Errorf("task file event source path is required")
+	}
+	if w.build == nil {
+		return Event{}, fmt.Errorf("task spec builder is required")
+	}
+	for {
+		fileEvent, err := w.file.Next(ctx)
+		if err != nil {
+			return Event{}, err
+		}
+		selected := nextTask(w.list)
+		if selected == nil {
+			continue
+		}
+		spec, err := w.build(selected)
+		if err != nil {
+			return Event{}, err
+		}
+		event, err := StartEvent("task.created", "task."+selected.ID+"."+fileEvent.ID, "task", spec)
+		if err != nil {
+			return Event{}, err
+		}
+		event.Payload = mustTaskPayload(spec, selected, fileEvent)
+		return event, nil
+	}
+}
+
+func nextTask(list *task.TaskList) *task.Task {
+	for _, status := range []task.TaskStatus{task.StatusInProgress, task.StatusPending} {
+		tasks := list.ListTasksByStatus(status)
+		if len(tasks) > 0 {
+			return tasks[0]
+		}
+	}
+	return nil
+}
+
+func mustTaskPayload(spec ProcessSpec, selected *task.Task, fileEvent Event) json.RawMessage {
+	payload, err := json.Marshal(struct {
+		ProcessSpec
+		TaskID    string `json:"task_id"`
+		TaskTitle string `json:"task_title"`
+		FileEvent Event  `json:"file_event"`
+	}{ProcessSpec: spec, TaskID: selected.ID, TaskTitle: selected.Title, FileEvent: fileEvent})
+	if err != nil {
+		return nil
+	}
+	return payload
 }
 
 // DispatchEvent 处理一个已入队事件。
