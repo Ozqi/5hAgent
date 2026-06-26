@@ -45,8 +45,8 @@ flowchart TB
         markdown["markdown_stream.go<br/>终端渲染"]
     end
 
-    subgraph Meta["元数据 internal/toolmeta"]
-        tm["toolmeta.go<br/>工具分类"]
+    subgraph Meta["元数据"]
+        tm["tools.Registry.meta<br/>工具分类"]
     end
 
     subgraph Ext["扩展层"]
@@ -177,11 +177,11 @@ sequenceDiagram
 │   │   ├── tasklist.go       # Task CRUD、Markdown 持久化、历史归档
 │   │   └── task_actions.go   # TaskActionRequest 分发
 │   │
-│   ├── toolmeta/               # 工具元数据注册
-│   │   └── toolmeta.go       # 工具分类（base/task/skill/context/mcp）、只读属性
+│   ├── toolmeta/               # 工具元数据类型
+│   │   └── toolmeta.go       # 工具分类（base/task/skill/context/sys/mcp）、只读属性类型
 │   │
 │   ├── tools/                  # 工具实现
-│   │   ├── registry.go       # 工具注册表 InitRegistry / GetAllTools / RegisterMCPTools
+│   │   ├── registry.go       # 工具注册表 Registry / InitRegistry / RegisterMCPTools
 │   │   ├── read_file.go      # 读文件（offset/limit 范围）
 │   │   ├── write_file.go     # 写文件
 │   │   ├── edit.go           # 字符串替换编辑
@@ -272,7 +272,7 @@ flowchart LR
 | `Context` | `context/ctx.go` | 单次对话的消息历史 |
 | `Manager` | `context/ctx.go` | 管理多个 Context，支持压缩、inspect、pin、audit |
 | `Skill.Manager` | `skill/skill.go` | 启动时技能加载快照 |
-| `toolmeta.Meta` | `toolmeta/toolmeta.go` | 工具元数据（分类/只读/显示名） |
+| `toolmeta.Meta` | `toolmeta/toolmeta.go` | 工具元数据类型（分类/只读/显示名） |
 | `AppModel` | `cli/tui.go` | TUI 主界面状态管理 |
 | `LLMClient` | `llm/client.go` | LLM 模型客户端封装 |
 

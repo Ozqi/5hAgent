@@ -15,7 +15,7 @@ flowchart TB
     end
 
     subgraph Meta["元数据"]
-        tm["toolmeta<br/>分类/只读"]
+        tm["Registry.meta<br/>分类/只读"]
     end
 
     subgraph Dispatch["调度层"]
@@ -80,16 +80,16 @@ func (r *Registry) Init(taskList *task.TaskList, skillMgr *skill.Manager) error 
     for _, t := range tools {
         tool, err := t.fn()
         r.tools = append(r.tools, tool)
-        toolmeta.Register(t.meta)
+        r.registerMeta(t.meta)
     }
 
     // 注册 task 工具
     r.tools = append(r.tools, &TaskTool{taskList: taskList})
-    toolmeta.Register(toolmeta.Meta{..., FullName: "task.task"})
+    r.registerMeta(toolmeta.Meta{..., FullName: "task.task"})
 
     // 注册 skill 工具
     r.tools = append(r.tools, &SkillTool{mgr: skillMgr})
-    toolmeta.Register(toolmeta.Meta{..., FullName: "skill.skill"})
+    r.registerMeta(toolmeta.Meta{..., FullName: "skill.skill"})
 
     // 注册系统工具
     r.tools = append(r.tools, NewSessionTool(), NewIPCTool())
@@ -97,7 +97,7 @@ func (r *Registry) Init(taskList *task.TaskList, skillMgr *skill.Manager) error 
 
 func (r *Registry) RegisterContextTool(llm model.ToolCallingChatModel, promptDir string) {
     r.tools = append(r.tools, NewContextTool(llm, promptDir))
-    toolmeta.Register(toolmeta.Meta{..., FullName: "context.context"})
+    r.registerMeta(toolmeta.Meta{..., FullName: "context.context"})
 }
 ```
 
@@ -280,7 +280,7 @@ LLM stream reader
      -> Agent.invokeTool
 ```
 
-`toolmeta.Meta.ReadOnly` 目前用于记录工具元数据和展示，不参与 `RunStream` 的并发调度。`task.task get/list` 也没有在当前执行路径中被单独判定为可并发。
+`toolmeta.Meta.ReadOnly` 目前由 `tools.Registry` 实例保存，用于记录工具元数据和展示，不参与 `RunStream` 的并发调度。`task.task get/list` 也没有在当前执行路径中被单独判定为可并发。
 
 TUI 的 `[并发]` 标记只来自 `logger.PrintToolCall(name, args, concurrent)` 的 `concurrent` 参数。当前 `RunStream` 调用 `exeToolCall(..., false)`，所以按当前源码执行时不应显示 `[并发]`。
 
@@ -289,8 +289,8 @@ TUI 的 `[并发]` 标记只来自 `logger.PrintToolCall(name, args, concurrent)
 1. 在 `internal/tools/` 创建实现文件
 2. 定义输入输出结构体
 3. 实现 `NewXxxTool()` 工厂函数
-4. 在 `InitRegistry()` 中注册
-5. 更新 `toolmeta.Meta.ReadOnly` 如需要
+4. 在 `Registry.Init()` 中注册
+5. 更新对应的 `toolmeta.Meta.ReadOnly` 如需要
 
 示例（[exec_shell.go](internal/tools/exec_shell.go)）：
 

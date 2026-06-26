@@ -1,6 +1,6 @@
 // session_tool.go - Agent Systemd session 系统工具
 // 功能：让 Agent 显式创建、保存、解除当前内存 context 的持久化 session。
-// 调用方：由 tools.InitRegistry 注册为 sys.session；Agent.RunStream 通过 Go context 传入当前 Context。
+// 调用方：由 Registry.Init 注册为 sys.session；Agent.RunStream 通过 Go context 传入当前 Context。
 package tools
 
 import (

@@ -1,6 +1,6 @@
 // ipc_tool.go - Agent Systemd IPC 系统工具
 // 功能：让 Agent 发送/接收短 IPC 消息，不共享上下文。
-// 调用方：由 tools.InitRegistry 注册为 sys.ipc；Agent.RunStream 通过 Go context 传入进程身份。
+// 调用方：由 Registry.Init 注册为 sys.ipc；Agent.RunStream 通过 Go context 传入进程身份。
 package tools
 
 import (

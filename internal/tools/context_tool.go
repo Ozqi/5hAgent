@@ -1,6 +1,6 @@
 // context_tool.go - LLM 可调用的上下文管理工具
 // 功能：暴露 inspect/pin/audit/compress，让模型通过 tool call 管理当前 message context。
-// 调用方：由 tools.RegisterContextTool 注册；Agent.RunStream 通过 Go context 传入当前 Context。
+// 调用方：由 Registry.RegisterContextTool 注册；Agent.RunStream 通过 Go context 传入当前 Context。
 package tools
 
 import (

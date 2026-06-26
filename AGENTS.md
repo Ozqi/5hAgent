@@ -72,10 +72,10 @@ cmd/5hagent/main.go
 
 1. `cmd/5hagent/main.go` 解析 CLI 参数，选择 TUI 或 headless。
 2. `internal/runtime.New` 统一初始化配置、logger、任务文件、session、LLM、Agent、工具和 MCP。
-3. `tools.InitRegistry` 注册 base/task/skill 工具。
-4. `tools.RegisterContextTool` 注册 `context.context`。
-5. MCP server 启动后追加注册 `mcp.*` 工具。
-6. Runtime 收集所有 `schema.ToolInfo`，调用 `WithTools` 生成绑定工具后的 model，再注入 Agent。
+3. `tools.NewRegistry().Init` 注册 base/task/skill/sys 工具和 registry 级工具元数据。
+4. `toolRegistry.RegisterContextTool` 注册 `context.context`。
+5. MCP server 启动后向当前 registry 追加注册 `mcp.*` 工具。
+6. Runtime 收集当前 registry 的所有 `schema.ToolInfo`，调用 `WithTools` 生成绑定工具后的 model，再注入 Agent。
 
 运行链路：
 
@@ -98,7 +98,7 @@ cmd/5hagent/main.go
 
 工具注册集中在 `internal/tools/registry.go`：
 
-- `tools.NewRegistry().Init(taskList, skillMgr)` 注册 base/task/skill/sys 工具，并重置当前 registry 和包级 toolmeta。
+- `tools.NewRegistry().Init(taskList, skillMgr)` 注册 base/task/skill/sys 工具，并重置当前 registry 的工具列表和元数据。
 - `toolRegistry.RegisterContextTool(llm, promptDir)` 注册 `context.context`，必须在 `WithTools` 前调用。
 - `toolRegistry.RegisterMCPTools(serverName, client, specs)` 注册 MCP 远端工具。
 - 包级 `InitRegistry/RegisterContextTool/RegisterMCPTools` 仍代理默认 registry，只用于兼容旧入口。

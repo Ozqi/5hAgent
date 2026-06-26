@@ -20,6 +20,7 @@ import (
 type Registry struct {
 	mu             sync.RWMutex
 	tools          []tool.BaseTool
+	meta           map[string]toolmeta.Meta
 	mcpServers     map[string]mcp.Client
 	mcpServerDescs map[string]string
 	workspaceRoot  string
@@ -29,6 +30,7 @@ var defaultRegistry = NewRegistry()
 
 func NewRegistry() *Registry {
 	return &Registry{
+		meta:           make(map[string]toolmeta.Meta),
 		mcpServers:     make(map[string]mcp.Client),
 		mcpServerDescs: make(map[string]string),
 	}
@@ -48,7 +50,7 @@ func (r *Registry) Init(taskList *task.TaskList, skillMgr *skill.Manager) error 
 	defer r.mu.Unlock()
 
 	r.tools = nil
-	toolmeta.Reset()
+	r.meta = make(map[string]toolmeta.Meta)
 	r.mcpServers = make(map[string]mcp.Client)
 	r.mcpServerDescs = make(map[string]string)
 
@@ -72,26 +74,26 @@ func (r *Registry) Init(taskList *task.TaskList, skillMgr *skill.Manager) error 
 			return fmt.Errorf("failed to create %s tool: %w", t.meta.FullName, err)
 		}
 		r.tools = append(r.tools, tool)
-		toolmeta.Register(t.meta)
+		r.registerMeta(t.meta)
 	}
 
 	// Task 工具（统一入口）
 	if taskList != nil {
 		r.tools = append(r.tools, &TaskTool{taskList: taskList})
-		toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategoryTask, Source: "local", DisplayName: "task", FullName: "task.task", OriginalName: "task"})
+		r.registerMeta(toolmeta.Meta{Category: toolmeta.CategoryTask, Source: "local", DisplayName: "task", FullName: "task.task", OriginalName: "task"})
 	}
 
 	// Skill 工具
 	if skillMgr != nil {
 		r.tools = append(r.tools, &SkillTool{mgr: skillMgr})
-		toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategorySkill, Source: "local", DisplayName: "skill", FullName: "skill.skill", OriginalName: "skill", ReadOnly: true})
+		r.registerMeta(toolmeta.Meta{Category: toolmeta.CategorySkill, Source: "local", DisplayName: "skill", FullName: "skill.skill", OriginalName: "skill", ReadOnly: true})
 	}
 
 	// System 工具
 	r.tools = append(r.tools, NewSessionTool())
-	toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategorySystem, Source: "local", DisplayName: "session", FullName: "sys.session", OriginalName: "session"})
+	r.registerMeta(toolmeta.Meta{Category: toolmeta.CategorySystem, Source: "local", DisplayName: "session", FullName: "sys.session", OriginalName: "session"})
 	r.tools = append(r.tools, NewIPCTool())
-	toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategorySystem, Source: "local", DisplayName: "ipc", FullName: "sys.ipc", OriginalName: "ipc"})
+	r.registerMeta(toolmeta.Meta{Category: toolmeta.CategorySystem, Source: "local", DisplayName: "ipc", FullName: "sys.ipc", OriginalName: "ipc"})
 
 	return nil
 }
@@ -140,7 +142,7 @@ func (r *Registry) Get(name string) tool.BaseTool {
 		if info.Name == name {
 			return t
 		}
-		if meta, ok := toolmeta.Lookup(info.Name); ok {
+		if meta, ok := r.lookupMeta(info.Name); ok {
 			if meta.DisplayName == name || meta.OriginalName == name {
 				return t
 			}
@@ -157,7 +159,7 @@ func (r *Registry) RegisterContextTool(llm model.ToolCallingChatModel, promptDir
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.tools = append(r.tools, NewContextTool(llm, promptDir))
-	toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategoryContext, Source: "local", DisplayName: "context", FullName: "context.context", OriginalName: "context"})
+	r.registerMeta(toolmeta.Meta{Category: toolmeta.CategoryContext, Source: "local", DisplayName: "context", FullName: "context.context", OriginalName: "context"})
 }
 
 func RegisterMCPTools(serverName string, client mcp.Client, specs []mcp.ToolSpec) error {
@@ -185,7 +187,7 @@ func (r *Registry) RegisterMCPTools(serverName string, client mcp.Client, specs 
 			return fmt.Errorf("mcp tool name is required")
 		}
 		r.tools = append(r.tools, NewMCPTool(serverName, client, spec))
-		toolmeta.Register(toolmeta.Meta{
+		r.registerMeta(toolmeta.Meta{
 			Category:     toolmeta.CategoryMCP,
 			Source:       serverName,
 			DisplayName:  spec.Name,
@@ -240,12 +242,44 @@ func (r *Registry) GetMCPServer(name string) (mcp.Client, bool) {
 
 // DisplayName returns the display name for a tool
 func DisplayName(name string) string {
-	return toolmeta.DisplayName(name)
+	ensureRegistry()
+	return defaultRegistry.DisplayName(name)
 }
 
 // Lookup returns the meta for a tool name
 func Lookup(name string) (toolmeta.Meta, bool) {
-	return toolmeta.Lookup(name)
+	ensureRegistry()
+	return defaultRegistry.Lookup(name)
+}
+
+func (r *Registry) DisplayName(name string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if meta, ok := r.meta[name]; ok && meta.DisplayName != "" {
+		return meta.DisplayName
+	}
+	return toolmeta.DisplayNameFallback(name)
+}
+
+func (r *Registry) Lookup(name string) (toolmeta.Meta, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.lookupMeta(name)
+}
+
+func (r *Registry) registerMeta(meta toolmeta.Meta) {
+	if meta.FullName == "" {
+		return
+	}
+	if r.meta == nil {
+		r.meta = make(map[string]toolmeta.Meta)
+	}
+	r.meta[meta.FullName] = meta
+}
+
+func (r *Registry) lookupMeta(name string) (toolmeta.Meta, bool) {
+	meta, ok := r.meta[name]
+	return meta, ok
 }
 
 // Re-export Category constants

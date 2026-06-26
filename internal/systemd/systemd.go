@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -75,9 +76,32 @@ type Event struct {
 	CreatedAt time.Time       `json:"created_at"` // 创建时间
 }
 
+// ProcessEventPayload 是进程结束类事件的最小负载。
+type ProcessEventPayload struct {
+	Error string `json:"error,omitempty"` // runner 返回的错误文本
+}
+
+// FileEventPayload 是文件 watcher 事件的最小负载。
+type FileEventPayload struct {
+	Path    string    `json:"path"`     // 被观察文件路径
+	ModTime time.Time `json:"mod_time"` // 文件修改时间
+	Size    int64     `json:"size"`     // 文件大小
+}
+
 // EventSource 是外部事件源的最小接口。
 type EventSource interface {
 	Next(ctx context.Context) (Event, error)
+}
+
+// FileEventSource 轮询单个文件并在 mtime/size 变化时产生事件。
+type FileEventSource struct {
+	Path        string        // 被观察文件路径
+	EventType   string        // 变化时产生的事件类型
+	Source      string        // 事件来源
+	Interval    time.Duration // 轮询间隔
+	lastModTime time.Time
+	lastSize    int64
+	ready       bool
 }
 
 // StartEvent 创建启动 AgentProcess 的事件。
@@ -93,6 +117,23 @@ func StartEvent(eventType string, id string, source string, spec ProcessSpec) (E
 		return Event{}, fmt.Errorf("marshal process spec: %w", err)
 	}
 	return Event{ID: id, Type: eventType, Source: source, Payload: payload, CreatedAt: time.Now().UTC()}, nil
+}
+
+// NewFileEventSource 创建单文件轮询事件源。
+// 参数：path 是文件路径；eventType 为空时用 file.changed；source 为空时用 file。
+// 调用层级：外部入口 -> NewFileEventSource -> StartSource -> Run。
+// 步骤：保存配置；首次 Next 只建立基线，后续 mtime/size 变化才返回事件。
+func NewFileEventSource(path string, eventType string, source string, interval time.Duration) *FileEventSource {
+	if eventType == "" {
+		eventType = "file.changed"
+	}
+	if source == "" {
+		source = "file"
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	return &FileEventSource{Path: path, EventType: eventType, Source: source, Interval: interval}
 }
 
 // IPCMessage 是 AgentProcess 之间的短消息。
@@ -242,7 +283,7 @@ func (s *AgentSystemd) run(ctx context.Context, runner ProcessRunner, caller Dec
 				s.retries[key]++
 				s.mu.Unlock()
 			}
-			decision, err := s.Decision(ctx, caller, DecisionInput{Event: event})
+			decision, err := s.Decision(ctx, caller, s.decisionInput(event))
 			if err != nil {
 				return err
 			}
@@ -312,6 +353,62 @@ func (s *AgentSystemd) StartSource(ctx context.Context, source EventSource) {
 			s.Emit(event)
 		}
 	}()
+}
+
+// Next 等待文件变化并返回一个事件。
+// 参数：ctx 控制等待生命周期。
+// 调用层级：StartSource -> FileEventSource.Next -> os.Stat。
+// 步骤：按 Interval 轮询文件状态 -> 首次建立基线 -> 变化时返回 file event。
+func (w *FileEventSource) Next(ctx context.Context) (Event, error) {
+	if w == nil || w.Path == "" {
+		return Event{}, fmt.Errorf("file event source path is required")
+	}
+	interval := w.Interval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return Event{}, ctx.Err()
+		case <-ticker.C:
+			event, ok, err := w.poll()
+			if err != nil {
+				return Event{}, err
+			}
+			if ok {
+				return event, nil
+			}
+		}
+	}
+}
+
+func (w *FileEventSource) poll() (Event, bool, error) {
+	info, err := os.Stat(w.Path)
+	if err != nil {
+		return Event{}, false, fmt.Errorf("stat watched file %s: %w", w.Path, err)
+	}
+	modTime := info.ModTime().UTC()
+	size := info.Size()
+	if !w.ready {
+		w.lastModTime = modTime
+		w.lastSize = size
+		w.ready = true
+		return Event{}, false, nil
+	}
+	if modTime.Equal(w.lastModTime) && size == w.lastSize {
+		return Event{}, false, nil
+	}
+	w.lastModTime = modTime
+	w.lastSize = size
+	payload, err := json.Marshal(FileEventPayload{Path: w.Path, ModTime: modTime, Size: size})
+	if err != nil {
+		return Event{}, false, fmt.Errorf("marshal file event payload: %w", err)
+	}
+	id := fmt.Sprintf("%s:%s:%d", w.Path, modTime.Format(time.RFC3339Nano), size)
+	return Event{ID: id, Type: w.EventType, Source: w.Source, Payload: payload, CreatedAt: time.Now().UTC()}, true, nil
 }
 
 // DispatchEvent 处理一个已入队事件。
@@ -389,7 +486,7 @@ func (s *AgentSystemd) ListProcesses() []AgentProcess {
 // RunProcess 同步运行一个 AgentProcess。
 // 参数：ctx 控制执行生命周期；runner 是外部执行引擎；spec 只包含 PromptSpec/ExitSpec。
 // 调用层级：Agent Systemd 单进程调度 -> RunProcess -> StartProcess -> runner.RunProcess。
-// 步骤：创建进程记录 -> 标记 running -> 调用 runner -> 按错误标记 exited/failed。
+// 步骤：创建进程记录 -> 标记 running -> 调用 runner -> 按错误标记状态 -> 投递结束事件。
 func (s *AgentSystemd) RunProcess(ctx context.Context, runner ProcessRunner, spec ProcessSpec) (*AgentProcess, error) {
 	if runner == nil {
 		return nil, fmt.Errorf("process runner is required")
@@ -429,13 +526,18 @@ func (s *AgentSystemd) RunProcess(ctx context.Context, runner ProcessRunner, spe
 	err := runner.RunProcess(runCtx, proc)
 	s.mu.Lock()
 	proc.EndedAt = time.Now().UTC()
+	eventType := "process.exited"
+	payload := json.RawMessage(nil)
 	if err != nil {
 		proc.State = ProcessFailed
+		eventType = "process.failed"
+		payload, _ = json.Marshal(ProcessEventPayload{Error: err.Error()})
 		if proc.cancel != nil {
 			proc.cancel()
 			proc.cancel = nil
 		}
 		s.mu.Unlock()
+		s.Emit(Event{Type: eventType, Source: "systemd", ProcessID: proc.ID, Payload: payload, CreatedAt: proc.EndedAt})
 		return proc, err
 	}
 	proc.State = ProcessExited
@@ -444,6 +546,7 @@ func (s *AgentSystemd) RunProcess(ctx context.Context, runner ProcessRunner, spe
 		proc.cancel = nil
 	}
 	s.mu.Unlock()
+	s.Emit(Event{Type: eventType, Source: "systemd", ProcessID: proc.ID, CreatedAt: proc.EndedAt})
 	return proc, nil
 }
 
@@ -627,6 +730,18 @@ func shouldExit(proc *AgentProcess, event Event) bool {
 		return true
 	}
 	return false
+}
+
+func (s *AgentSystemd) decisionInput(event Event) DecisionInput {
+	return DecisionInput{
+		Event:     event,
+		Processes: s.ListProcesses(),
+		Policy: Policy{
+			DedupEventID:  true,
+			SingleProcess: true,
+			MaxRetries:    s.maxRetry,
+		},
+	}
 }
 
 // Decision 在硬编码规则无法判断时做一次受控 LM 升级。

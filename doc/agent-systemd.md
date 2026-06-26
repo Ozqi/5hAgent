@@ -234,6 +234,7 @@ type Event struct {
 | `process.exited` | AgentProcess 结束 | 收集报告并更新进程表 |
 | `process.start` | 外部调度入口 | 从 payload 解析 `ProcessSpec` 并启动 AgentProcess |
 | `ipc.message` | AgentProcess 系统工具 | 投递给目标 AgentProcess |
+| `file.changed` | 单文件 watcher | 通知上层重新读取 Project 文件 |
 
 ## Agent 间通信
 
@@ -367,7 +368,7 @@ StartProcess(spec)
 后续如果要同一 OS 下启动多份 runtime，应避免全局状态污染，重点检查：
 
 - `tools.Registry` 已经实例化工具列表和 MCP server map；包级默认 registry 仍保留兼容入口。
-- `toolmeta` 仍是包级全局变量。
+- `toolmeta` 已收敛为类型和 fallback；工具元数据由 `tools.Registry` 实例持有。
 - `logger` sink 仍是包级全局变量，目前只有保存/恢复保护。
 - MCP client 生命周期需要绑定到单个 runtime。
 - `runtime.Options.ProjectDir` 已固定 Project root；默认空值仍来自启动时 cwd。
@@ -425,7 +426,7 @@ StartProcess(spec)
 - G2. 已完成：定义 `ProcessRunner`，由外部执行引擎运行进程，不复制 ReAct。
 - G3. 已完成：`RunProcess` 当前只允许一个进程运行；进程表和本地 PID 由最小 mutex 保护。
 - G4. 已完成：`Emit` 对非空事件 ID 去重。
-- G5. 未完成：运行结束后的 report/worklog 收集和 `process.exited` 自动事件回写仍需接 runtime 外层。
+- G5. 部分完成：`RunProcess` 结束后自动投递 `process.exited/process.failed` 事件；report/worklog 收集仍需接 runtime 外层。
 
 ## 已落地最小实现
 
@@ -437,10 +438,11 @@ StartProcess(spec)
 - `Emit(event)` / `Run(ctx, runner)`：内存事件队列和最小事件循环；`Emit` 对非空事件 ID 去重并唤醒循环；`Run` 等待事件直到 ctx 取消。
 - `StartTimer(ctx, interval)`：周期性发出 `timer.tick` 事件；ctx 取消时停止。
 - `StartSource(ctx, source)`：接入外部事件源，循环读取 `source.Next(ctx)` 并 `Emit`。
+- `NewFileEventSource(path, type, source, interval)`：轮询单个文件 mtime/size，变化时产生 `file.changed` 或调用方指定事件；首次读取只建立基线。
 - `RunWithDecision(ctx, runner, caller)`：在 `task.failed` 事件后调用受控 decision；同一失败 key 默认最多触发一次，并用 `ApplyDecision` 执行返回动作。
 - `DispatchEvent(ctx, runner, event)`：支持 `process.start/task.created/manual.request` 从 payload 解析 `ProcessSpec` 并异步启动；`risk=high` 只记录不启动；其他事件应用 `process.exited/process.failed/process.stopped`，不启动 watcher。
 - `timer.tick`：扫描进程退出条件，满足 `Deadline/MaxTurns` 或超过 stalled 阈值时 cancel 并标记 stopped。
-- `RunProcess(ctx, runner, spec)`：同步执行单个进程，runner 由外部注入；单进程检查和进程登记受锁保护；为运行中的进程保存 cancel。
+- `RunProcess(ctx, runner, spec)`：同步执行单个进程，runner 由外部注入；单进程检查和进程登记受锁保护；为运行中的进程保存 cancel；执行结束后自动投递 `process.exited/process.failed` 事件。
 - `Runtime.RunProcess(ctx, proc)`：runtime 适配器，先把 `PromptSpec.System` 和 `SkillRef Name/Description` 注入内存 context，再调用 `Agent.RunStream`。
 - `Runtime.CallDecision(ctx, input)`：具体 `DecisionCaller` 适配器，使用未绑定工具的模型执行一次 `Generate`，要求只返回 JSON。
 - `ShouldExit(proc, event)`：按进程状态、目标事件、`MaxTurns`、`Deadline` 判断退出。
@@ -448,6 +450,7 @@ StartProcess(spec)
 - `runtime.NewInMemory(...)`：创建默认不绑定 session 的 Runtime，但保留 session store 供 `sys.session.create` 显式持久化；现有 `runtime.New` 默认行为不变。
 - `sys.session create/save/drop`：显式创建、保存、解除当前 context 的 session 绑定。
 - `Decision(ctx, caller, input)`：编码结构化输入，调用一次外部 `DecisionCaller`，再用 `ParseDecision` 校验输出。
+- `decisionInput(event)`：为 decision 填入当前事件、进程表快照和硬编码 policy 摘要。
 - `ParseDecision(data)`：解析并校验 decision JSON，拒绝未知字段。
 - `ApplyDecision(ctx, runner, decision)`：已校验 decision 的最小执行入口；执行 `start_agent/retry_agent`，`stop_agent` cancel 并标记目标进程 stopped，`wait/escalate` 暂不动作。
 - `sys.ipc send/recv`：内存 IPC 短消息队列，不共享 context。
@@ -455,11 +458,11 @@ StartProcess(spec)
 ## 当前增强项
 
 - Agent Systemd 进程模式采用“进程 prompt 替代默认 main prompt”；完整 skill 正文由 `skill.skill get` 显式获取。
-- `tools.Registry` 已实例化工具列表和 MCP map；`toolmeta` 仍是包级全局，当前仅影响展示名/category/read-only 元数据。后续如需多 Runtime 强隔离，再把 `toolmeta` 纳入 `tools.Registry`。
+- `tools.Registry` 已实例化工具列表、工具元数据和 MCP map；包级默认 registry 仍保留兼容入口。
 
 ### H. 多进程前置改造
 
-- H1. 把 `tools` registry 从包级全局收敛到 runtime 实例。
+- H1. 已完成：把 `tools` registry 从包级全局收敛到 runtime 实例；工具列表、工具元数据和 MCP server map 都由 `tools.Registry` 持有。
 - H2. 已完成基础保护：`logger.PushToolEventSink` 支持保存/恢复旧 sink，TUI/headless 不再无条件清空外层 sink；完全实例化仍需后续重构。
 - H3. 移除并发路径对 `os.Getwd()` 的依赖。
 - H4. 已完成当前可见边界：MCP 工具注册到 runtime 的实例 registry；MCP client 仍由 `Runtime.Close` 关闭。
@@ -467,11 +470,11 @@ StartProcess(spec)
 
 ### H1 拆解：tools registry 实例化
 
-- H1.1. 已完成：新增 `tools.Registry` 结构体，包住工具列表和 MCP server map。
+- H1.1. 已完成：新增 `tools.Registry` 结构体，包住工具列表、工具元数据和 MCP server map。
 - H1.2. 已完成：包级 registry 函数先代理默认 registry，保持兼容入口。
 - H1.3. 已完成：`Runtime` 持有自己的 registry；`WithTools` 从实例 registry 取工具。
 - H1.4. 已完成：`context.context`、`sys.session`、MCP 工具注册到当前 runtime registry。
-- H1.5. 已完成基础防护：`Registry.All/GetMCPServers` 返回副本，MCP 注册加锁；两个 Runtime 不共享工具列表和 MCP server map。
+- H1.5. 已完成基础防护：`Registry.All/GetMCPServers` 返回副本，MCP 注册加锁；两个 Runtime 不共享工具列表、工具元数据和 MCP server map。
 
 ### I. 文档同步
 
@@ -500,4 +503,4 @@ Agent Systemd 的实现必须继续保持本项目的极简代码风格。第一
 
 ## 当前状态
 
-已完成 Agent Systemd 的最小调度链路：进程表、内存事件队列、timer 事件源、外部事件源接口、`PromptSpec/ExitSpec`、`runtime.NewInMemory`、runtime runner、decision caller、`sys.session`、`sys.ipc`、runtime 级 tools registry、`ProjectDir`、base tools workspace root 和 logger sink 保存/恢复保护。下一步主要是增强项：具体 watcher、更丰富 policy、logger 完全实例化和人工 review。
+已完成 Agent Systemd 的最小调度链路：进程表、内存事件队列、timer 事件源、外部事件源接口、单文件轮询 watcher、`PromptSpec/ExitSpec`、`runtime.NewInMemory`、runtime runner、decision caller、`sys.session`、`sys.ipc`、runtime 级 tools registry、`ProjectDir`、base tools workspace root 和 logger sink 保存/恢复保护。下一步主要是增强项：把文件事件解析成具体任务事件、更丰富 policy、logger 完全实例化和人工 review。

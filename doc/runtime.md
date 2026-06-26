@@ -43,11 +43,11 @@ flowchart TD
 
 | 函数 | 位置 | 作用 | 关键调用 |
 | --- | --- | --- | --- |
-| `runtime.New` | [`runtime.go`](../internal/runtime/runtime.go) | 初始化共享运行时 | `utils.LoadConfig` -> `task.NewTaskList` -> `agent.NewAgent` -> `tools.InitRegistry` |
+| `runtime.New` | [`runtime.go`](../internal/runtime/runtime.go) | 初始化共享运行时 | `utils.LoadConfig` -> `task.NewTaskList` -> `agent.NewAgent` -> `tools.NewRegistry().Init` |
 | `Runtime.RunTaskOnce` | [`runtime.go`](../internal/runtime/runtime.go) | 执行一个文件任务并写报告 | `selectTask` -> `Agent.RunStream` -> `TaskList.UpdateTaskStatus` -> `writeReport` |
 | `runTUI` | [`main.go`](../cmd/5hagent/main.go) | 启动 TUI 前端 | `runtime.New` -> `cli.LaunchTUI` |
 | `runHeadless` | [`main.go`](../cmd/5hagent/main.go) | 启动无头任务执行 | `runtime.New` -> `Runtime.RunTaskOnce` |
-| `headlessWorkLog` | [`worklog.go`](../internal/runtime/worklog.go) | 无头模式正常工作日志 | `logger.SetToolEventSink` -> stdout + `.5hagent/agents/<agent>/logs` |
+| `headlessWorkLog` | [`worklog.go`](../internal/runtime/worklog.go) | 无头模式正常工作日志 | `logger.PushToolEventSink` -> stdout + `.5hagent/agents/<agent>/logs` |
 
 ## 初始化顺序
 
