@@ -149,7 +149,7 @@ sequenceDiagram
 │   │   └── markdown_stream.go # Markdown 终端渲染
 │   │
 │   ├── commands/               # Slash 命令处理
-│   │   ├── skill.go           # /skill list/enable/disable
+│   │   ├── skill.go           # /skill list/get
 │   │   ├── task.go            # /task create/update/get/list/delete/archive/reopen
 │   │   ├── compress.go        # /compress 手动触发上下文压缩
 │   │   └── mcp.go             # /mcp list/add/remove/enable/disable
@@ -171,7 +171,7 @@ sequenceDiagram
 │   │   └── client_stdio.go   # StdioClient 实现
 │   │
 │   ├── skill/                  # 技能加载与管理
-│   │   └── skill.go          # 从 .5hagent/skills/*/SKILL.md 加载
+│   │   └── skill.go          # 从全局和项目 skills 目录加载启动快照
 │   │
 │   ├── task/                   # 任务列表持久化
 │   │   ├── tasklist.go       # Task CRUD、Markdown 持久化、历史归档
@@ -210,6 +210,7 @@ sequenceDiagram
 │   ├── cli.md                 # TUI 界面
 │   ├── llm.md                 # LLM 客户端
 │   ├── llm-call-flow.md       # 一次 LLM 调用和 Tool Call 数据流
+│   ├── agent-systemd.md       # 下一阶段 Agent Systemd 顶层调度设计
 │   ├── logger.md              # 日志模块
 │   ├── prompt.md              # prompt 文件加载
 │   └── task.md                # 任务管理
@@ -270,7 +271,7 @@ flowchart LR
 | `TaskList` | `task/tasklist.go` | 任务列表（Markdown 持久化） |
 | `Context` | `context/ctx.go` | 单次对话的消息历史 |
 | `Manager` | `context/ctx.go` | 管理多个 Context，支持压缩、inspect、pin、audit |
-| `Skill.Manager` | `skill/skill.go` | 技能加载与启用状态 |
+| `Skill.Manager` | `skill/skill.go` | 启动时技能加载快照 |
 | `toolmeta.Meta` | `toolmeta/toolmeta.go` | 工具元数据（分类/只读/显示名） |
 | `AppModel` | `cli/tui.go` | TUI 主界面状态管理 |
 | `LLMClient` | `llm/client.go` | LLM 模型客户端封装 |
@@ -280,11 +281,12 @@ flowchart LR
 | 文档 | 模块 | 重点 |
 |------|------|------|
 | [runtime.md](runtime.md) | `internal/runtime` | 共享运行时初始化、TUI/无头入口、报告写入、工具绑定 |
+| [agent-systemd.md](agent-systemd.md) | Stage 6 设计 | Agent Systemd、PromptSpec/ExitSpec、内存 context、IPC、decision JSON 判断 |
 | [agent.md](agent.md) | `internal/agent` | ReAct 循环、stream 读取、tool call 收集、上下文写回 |
 | [tools.md](tools.md) | `internal/tools` / `internal/toolmeta` | 工具注册、工具 schema、执行策略、MCP 工具包装 |
 | [context.md](context.md) | `internal/context` | 消息上下文、session、压缩、`context.context` |
 | [task.md](task.md) | `internal/task` | `.5hagent/task.md` 格式、状态流转、task 工具 |
-| [skill.md](skill.md) | `internal/skill` | Skill 加载、启用状态、prompt 注入 |
+| [skill.md](skill.md) | `internal/skill` | Skill 加载快照、来源覆盖、prompt 注入 |
 | [llm.md](llm.md) | `internal/llm` | Claude/OpenAI-compatible provider 配置和模型创建 |
 | [llm-call-flow.md](llm-call-flow.md) | LLM 调用链路 | 一次 stream 调用、ToolCall 合并、工具结果回灌 |
 | [prompt.md](prompt.md) | `prompt/` / `utils` | 主 prompt、模型 prefix、压缩 prompt |

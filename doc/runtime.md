@@ -54,14 +54,14 @@ flowchart TD
 `runtime.New` 的顺序很关键，因为工具定义必须在 `WithTools` 之前收齐：
 
 1. `utils.LoadConfig()` 读取 `~/.5hAgent/.env` 和进程环境变量。
-2. 初始化 logger、任务文件、session store 和默认 message context。
+2. 初始化 logger、任务文件、context manager 和默认 message context；默认绑定 session，`runtime.NewInMemory` 默认不绑定 session 但保留 store 供显式持久化；`Options.ProjectDir` 可显式指定 Project 数据目录。
 3. `llm.NewClient()` 创建未绑定工具的 provider model。
 4. `utils.LoadSystemPrompt()` 加载 `main.md` 和可选模型 prefix。
-5. `agent.NewAgent(nil, nil, config)` 创建 Agent，并传入 `ContextAutoCompress`。
-6. `tools.InitRegistry(taskList, skillMgr)` 注册 base/task/skill 工具并重置工具元数据。
-7. `tools.RegisterContextTool(client.GetModel(), promptDir)` 注册 `context.context`。
-8. `startMCPServers()` 启动 MCP stdio server 并注册远端工具。
-9. 遍历 `tools.GetAllTools()` 生成 `schema.ToolInfo`。
+5. `agent.NewAgent(nil, nil, config)` 创建 Agent，并传入 `ContextAutoCompress` 和当前 Project 的 `.5hagent` 数据目录。
+6. `tools.NewRegistry().Init(taskList, skillMgr)` 注册 base/task/skill/sys 工具并重置工具元数据。
+7. `toolRegistry.RegisterContextTool(client.GetModel(), promptDir)` 注册 `context.context`。
+8. `startMCPServers(ctx, toolRegistry)` 启动 MCP stdio server 并注册远端工具到当前 runtime registry。
+9. 遍历 `toolRegistry.All()` 生成 `schema.ToolInfo`。
 10. `client.GetModel().WithTools(toolInfos)` 绑定工具。
 11. `ag.SetModel(modelWithTools)` 和 `ag.SetTools(allTools)` 完成 Agent 注入。
 
@@ -118,7 +118,7 @@ Runtime 将 `.env` 中的配置拆成两个方向：
 
 ## 副作用
 
-- 会创建或更新项目目录 `.5hagent/task.md`、`.5hagent/reports/` 和 `.5hagent/agents/<agent-name>/logs/`。
+- 会创建或更新 Project 目录下 `.5hagent/task.md`、`.5hagent/reports/`、`.5hagent/agents/<agent-name>/logs/` 和项目 skills；未设置 `ProjectDir` 时使用当前工作目录。
 - 会写日志到 `~/.5hAgent` 下的日志文件。
-- 会读写 `~/.5hAgent/sessions/*.jsonl`。
+- 默认会读写 `~/.5hAgent/sessions/*.jsonl`；`runtime.NewInMemory` 创建的 Runtime 默认只使用内存 context，调用 `sys.session.create/save` 后才写入 session。
 - 如果配置了 MCP，会启动 stdio 子进程；`Runtime.Close` 负责关闭。

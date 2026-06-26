@@ -60,7 +60,7 @@ cmd/5hagent/main.go
 - provider 配置分别放在 `LLM_CLAUDE_*` 和 `LLM_OPENAI_*`；本地 Ollama 通过 `LLM_PROVIDER=openai` + `LLM_OPENAI_BASE_URL=http://localhost:11434/v1` 接入。
 - Agent 配置包括 `AGENT_NAME`、`AGENT_MAX_TOTAL_TOKENS`、`AGENT_REPEAT_TOOL_LIMIT`、`AGENT_CONTEXT_AUTO_COMPRESS`。
 - Prompts 从 `~/.5hAgent/prompt/*.md` 加载；主 prompt 是 `main.md`，模型专用前缀是 `prefix.<provider>.<model-slug>.md`。
-- Skills 从 `~/.5hAgent/skills/*/SKILL.md` 加载。
+- Skills 启动时从 `~/.5hAgent/skills/*/SKILL.md` 和项目 `.5hagent/skills/*/SKILL.md` 加载；项目同名 skill 覆盖全局 skill，Agent 生命周期内不热加载也不动态启停。
 - 项目数据目录是当前工作目录下的 `.5hagent/`；用户级配置目录是 `~/.5hAgent/`。
 - 需要跑真实 headless/LLM/toolcall 测试时，统一使用 `/Users/bytedance/Proj/5hWorkSpace` 作为测试 workspace，不要再临时散落到 `/private/tmp`。
 
@@ -98,9 +98,10 @@ cmd/5hagent/main.go
 
 工具注册集中在 `internal/tools/registry.go`：
 
-- `InitRegistry(taskList, skillMgr)` 注册 base/task/skill 工具，并重置 registry 和 toolmeta。
-- `RegisterContextTool(llm, promptDir)` 注册 `context.context`，必须在 `WithTools` 前调用。
-- `RegisterMCPTools(serverName, client, specs)` 注册 MCP 远端工具。
+- `tools.NewRegistry().Init(taskList, skillMgr)` 注册 base/task/skill/sys 工具，并重置当前 registry 和包级 toolmeta。
+- `toolRegistry.RegisterContextTool(llm, promptDir)` 注册 `context.context`，必须在 `WithTools` 前调用。
+- `toolRegistry.RegisterMCPTools(serverName, client, specs)` 注册 MCP 远端工具。
+- 包级 `InitRegistry/RegisterContextTool/RegisterMCPTools` 仍代理默认 registry，只用于兼容旧入口。
 
 LLM 可见工具当前包括：
 
@@ -114,7 +115,8 @@ LLM 可见工具当前包括：
 - `task.task`
 - `skill.skill`
 - `context.context`
-- `mcp.list_tools`
+- `sys.session`
+- `sys.ipc`
 - `mcp.<server>.<tool>`
 
 当前执行策略：`RunStream` 中 LLM stream 读取和工具 worker 可以重叠；多个工具调用在单个 worker 内仍是串行执行。不要把当前实现描述成“只读工具并行”。
@@ -140,6 +142,7 @@ LLM 可见工具当前包括：
 | `learn/stage-3-skill-prompt` | Stage 3 学习快照：Skill 系统、prompt 管理、Skill 注入机制。 |
 | `learn/stage-4-mcp-session-tui` | Stage 4 学习快照：MCP、session 持久化、TUI 和日志体验。 |
 | `learn/stage-5-current` | Stage 5 学习快照：当前公开 baseline，对齐 `master` / `origin/master`。 |
+| Stage 6 设计 | Agent Systemd 顶层调度设计：启动只传 PromptSpec/ExitSpec，context 默认视作进程内存；先记录在 `doc/agent-systemd.md`，尚未对应稳定学习分支。 |
 | `master` | 公开稳定 baseline；当前指向 `learn/stage-5-current`。 |
 | `develop` | 当前开发主线；在 `master` 之后继续开发 headless runtime、Ollama baseline、context 工具和文档。 |
 

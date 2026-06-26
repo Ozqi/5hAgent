@@ -1,6 +1,8 @@
 # 5hAgent
 
-5hAgent 是一个学习型 Go + Eino Agent runtime：用尽量少的代码保留 ReAct 循环、工具调用、任务文件、报告文件、MCP/Skill 扩展这些关键骨架。
+5hAgent 是一个学习型 Go + Eino Agent runtime：通过自己做一个tiny版Claude，可以让自己对Agent的工作原理更加深刻。
+
+用尽量少的代码保留 ReAct 循环、工具调用、任务文件、报告文件、MCP/Skill 扩展这些关键骨架。
 
 
 ## 已完成
@@ -123,7 +125,7 @@ EOF
 | 命令        | 说明                 |
 | ----------- | -------------------- |
 | `/task`     | 创建、更新、归档任务 |
-| `/skill`    | 管理技能模板         |
+| `/skill`    | 查看已加载技能       |
 | `/compress` | 压缩上下文           |
 
 ## 目录结构
@@ -133,9 +135,9 @@ internal/
 ├── runtime/        # 无头/TUI 共享运行时：初始化配置、Agent、工具、任务、报告
 ├── agent/          # Agent 核心：ReAct 循环、工具调度
 ├── llm/            # LLM 客户端
-├── tools/          # 文件读写、搜索、执行、task/skill/context/mcp 工具
+├── tools/          # 文件读写、搜索、执行、task/skill/context/sys/mcp 工具
 ├── task/           # 文件任务模型、Markdown 持久化、状态流转
-├── skill/          # 技能管理
+├── skill/          # 技能快照加载
 ├── context/        # 上下文和 session 管理
 └── cli/            # TUI/CLI 展示层
 cmd/5hagent/       # 入口

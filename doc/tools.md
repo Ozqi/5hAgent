@@ -5,11 +5,12 @@
 ```mermaid
 flowchart TB
     subgraph Registry["工具注册表"]
-        init["InitRegistry()"]
+        init["Registry.Init()"]
         base["base.*<br/>7个内置工具"]
         task["task.task<br/>任务工具"]
-        skill["skill.skill<br/>技能工具"]
+        skill["skill.skill<br/>技能查看工具"]
         context["context.context<br/>上下文工具"]
+        sys["sys.*<br/>系统工具"]
         mcp["mcp.*<br/>MCP工具"]
     end
 
@@ -26,6 +27,7 @@ flowchart TB
     init --> base
     init --> task
     init --> skill
+    init --> sys
     init --> context
     init --> mcp
     init --> tm
@@ -52,45 +54,49 @@ flowchart TB
 | `base.list_dir` | `list_dir.go` | 只读 | 列目录（递归/非递归） |
 | `base.exec_shell` | `exec_shell.go` | 写 | 执行 shell 命令 |
 | `task.task` | `task_tool.go` | 混合 | 统一任务管理入口 |
-| `skill.skill` | `skill_tool.go` | 写 | 启用或禁用技能 |
+| `skill.skill` | `skill_tool.go` | 只读 | 查看启动时加载的技能 |
 | `context.context` | `context_tool.go` | 混合 | inspect/pin/audit/compress 当前上下文 |
-| `mcp.list_tools` | `mcp_list_tools.go` | 只读 | 列出 MCP 服务器及工具 |
+| `sys.session` | `session_tool.go` | 写 | 显式创建/保存/解除当前 context 的 session 绑定 |
+| `sys.ipc` | `ipc_tool.go` | 写 | Agent 进程间短消息收发 |
 | `mcp.<server>.<tool>` | `mcp_tool.go` | 取决于远端 | MCP Server 提供的工具 |
 
 ## 注册顺序
 
-本地基础工具、task 工具和 skill 工具由 `InitRegistry(taskList, skillMgr)` 注册。`context.context` 需要 LLM model 和 prompt 目录，因此由 runtime 在 `InitRegistry` 之后单独调用 `RegisterContextTool(llm, promptDir)` 注册。MCP 工具最后由 `RegisterMCPTools(server, client, specs)` 追加。
+本地基础工具、task 工具、skill 工具和 sys 工具由 `Registry.Init(taskList, skillMgr)` 注册。包级 `InitRegistry` 仍代理默认 registry，保留旧入口兼容。`context.context` 需要 LLM model 和 prompt 目录，因此由 runtime 在 `Init` 之后调用 `toolRegistry.RegisterContextTool(llm, promptDir)` 注册。MCP 工具最后由 `toolRegistry.RegisterMCPTools(server, client, specs)` 追加。
 
 入口函数（[registry.go](../internal/tools/registry.go)）：
 
 ```go
-func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
+func (r *Registry) Init(taskList *task.TaskList, skillMgr *skill.Manager) error {
     // 注册 base 工具
     tools := []struct {
         meta toolmeta.Meta
         fn   func() (tool.BaseTool, error)
     }{
-        {meta: toolmeta.Meta{..., FullName: "base.read_file"}, fn: NewReadFileTool},
-        {meta: toolmeta.Meta{..., FullName: "base.write_file"}, fn: NewWriteFileTool},
+        {meta: toolmeta.Meta{..., FullName: "base.read_file"}, fn: func() (tool.BaseTool, error) { return NewReadFileTool(r.workspaceRoot) }},
+        {meta: toolmeta.Meta{..., FullName: "base.write_file"}, fn: func() (tool.BaseTool, error) { return NewWriteFileTool(r.workspaceRoot) }},
         // ...
     }
     for _, t := range tools {
         tool, err := t.fn()
-        registry = append(registry, tool)
+        r.tools = append(r.tools, tool)
         toolmeta.Register(t.meta)
     }
 
     // 注册 task 工具
-    registry = append(registry, &TaskTool{taskList: taskList})
+    r.tools = append(r.tools, &TaskTool{taskList: taskList})
     toolmeta.Register(toolmeta.Meta{..., FullName: "task.task"})
 
     // 注册 skill 工具
-    registry = append(registry, &SkillTool{mgr: skillMgr})
+    r.tools = append(r.tools, &SkillTool{mgr: skillMgr})
     toolmeta.Register(toolmeta.Meta{..., FullName: "skill.skill"})
+
+    // 注册系统工具
+    r.tools = append(r.tools, NewSessionTool(), NewIPCTool())
 }
 
-func RegisterContextTool(llm model.ToolCallingChatModel, promptDir string) {
-    registry = append(registry, NewContextTool(llm, promptDir))
+func (r *Registry) RegisterContextTool(llm model.ToolCallingChatModel, promptDir string) {
+    r.tools = append(r.tools, NewContextTool(llm, promptDir))
     toolmeta.Register(toolmeta.Meta{..., FullName: "context.context"})
 }
 ```
@@ -99,11 +105,12 @@ func RegisterContextTool(llm model.ToolCallingChatModel, promptDir string) {
 
 | 函数 | 说明 |
 |------|------|
-| `InitRegistry(taskList, skillMgr)` | 初始化注册表 |
-| `RegisterContextTool(llm, promptDir)` | 注册 LLM 可调用的上下文工具 |
-| `GetAllTools()` | 获取所有工具 |
-| `GetToolByName(name)` | 按名称查找工具 |
-| `RegisterMCPTools(server, client, specs)` | 注册 MCP 工具 |
+| `NewRegistry()` | 创建 runtime 独立工具注册表 |
+| `(*Registry).Init(taskList, skillMgr)` | 初始化注册表 |
+| `(*Registry).RegisterContextTool(llm, promptDir)` | 注册 LLM 可调用的上下文工具 |
+| `(*Registry).All()` | 获取当前 runtime 所有工具 |
+| `(*Registry).Get(name)` | 按名称查找工具 |
+| `(*Registry).RegisterMCPTools(server, client, specs)` | 注册 MCP 工具 |
 
 ## 工具实现类型
 
@@ -125,8 +132,9 @@ func RegisterContextTool(llm model.ToolCallingChatModel, promptDir string) {
 
 `skill.skill` 的关键约束：
 
-- `skill` 必填，必须是精确 skill 名称
-- `action` 只能是 `enable/disable`，默认 `enable`
+- `action` 只能是 `list/get`，默认 `list`
+- `get` 时 `skill` 必填，必须是精确 skill 名称
+- skill 集合在 Agent 启动时固定，运行期不能启用或禁用
 
 `context.context` 的关键约束：
 
@@ -135,6 +143,29 @@ func RegisterContextTool(llm model.ToolCallingChatModel, promptDir string) {
 - `pin` 必须带 `start/end/reason`
 - `compress` 支持 `mode=lm` 或 `mode=truncate`
 - 工具执行依赖 `Agent.RunStream()` 注入的 `ToolRuntime`；脱离 Agent 当前上下文直接调用会返回 `context runtime not found`
+
+`sys.session` 的关键约束：
+
+- `action` 只能是 `create/save/drop`
+- `create` 可选 `session_id`；为空时创建新 session
+- `save/drop` 只作用于当前 Agent context
+- 不删除 session 文件，不读取其他 Agent context
+- 工具执行依赖 `Agent.RunStream()` 注入的 `ToolRuntime`
+
+`sys.ipc` 的关键约束：
+
+- `action` 只能是 `send/recv`
+- `send` 必须带 `to`，且 `summary/artifact` 至少一个非空
+- `recv` 只接收当前 Agent process 的消息
+- 不共享 context，只传短消息或 artifact 路径
+- 工具执行依赖 Agent Systemd 注入 `ProcessID/IPC`
+
+Project 路径边界：
+
+- `list_dir` / `glob` / `grep` 的空 path 会使用当前 runtime 的 workspace root。
+- `exec_shell` 默认在当前 runtime 的 workspace root 下执行。
+- 未设置 `runtime.Options.ProjectDir` 时，workspace root 仍是进程当前工作目录。
+- 所有 base 文件工具都保留绝对路径优先；相对路径会基于当前 runtime 的 workspace root。
 
 ### context.context
 
@@ -289,6 +320,5 @@ func NewExecShellTool() (tool.BaseTool, error) {
 - [task_tool.go](../internal/tools/task_tool.go)
 - [skill_tool.go](../internal/tools/skill_tool.go)
 - [mcp_tool.go](../internal/tools/mcp_tool.go)
-- [mcp_list_tools.go](../internal/tools/mcp_list_tools.go)
 - [tool_use.go](../internal/agent/tool_use.go)
 - [toolmeta.go](../internal/toolmeta/toolmeta.go)

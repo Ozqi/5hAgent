@@ -260,6 +260,7 @@ JSONL 第一行是 session 元信息，后续每行是一条消息：
 | 方法 | 说明 |
 |------|------|
 | `NewManager(sessionDir ...string)` | 创建 manager，可选启用持久化 |
+| `NewMemoryManagerWithStore(sessionDir)` | 创建默认内存 context，但允许后续显式绑定 session |
 | `NewManagerWithStore(store)` | 用已有 store 创建 manager |
 | `CreateContext(sessionID)` | 创建或恢复 context |
 | `CloneContext(parent)` | 克隆消息列表，用于 sub-agent |
@@ -273,6 +274,9 @@ JSONL 第一行是 session 元信息，后续每行是一条消息：
 | `GetLatestSessionID()` | 返回最近更新的 session id |
 | `GetStore()` | 返回底层 store |
 | `GetSessionTitle(ctx)` | 返回 session title |
+| `BindSession(ctx, id)` | 将内存 context 显式绑定并写入 session |
+| `SaveSession(ctx)` | 保存已绑定 session |
+| `DropSession(ctx)` | 解除 session 绑定，不删除文件 |
 | `Inspect(ctx)` | 返回结构化上下文视图，不返回完整消息内容 |
 | `PinRange(ctx, range)` | 标记消息范围为 pinned，并记录 audit |
 | `Audit(ctx)` | 返回 context 管理操作记录 |
@@ -445,6 +449,7 @@ compact/messages/<YYYYMMDD-HHMMSS>.md
 - 压缩会通过 `ReplaceMessages()` 重写当前 session 文件。
 - `Clear(ctx)` 只清空内存，不清空 session 文件。
 - `CloneContext()` 只复制消息 slice，不复制 session 关联。
+- `BindSession/SaveSession/DropSession` 是 Agent Systemd `sys.session.*` 的底座；默认内存 context 不会自动落盘。
 - `Compress()` fallback 不保护 system 消息。
 - 压缩摘要是普通 system 消息，没有结构化元数据标记来源、范围或 archive id。
 - pinned range 和 audit event 目前只在内存中维护，不随 session 恢复。

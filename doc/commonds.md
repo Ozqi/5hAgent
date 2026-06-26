@@ -58,8 +58,7 @@ func (m *AppModel) submit() tea.Cmd {
 | 命令 | 说明 |
 |------|------|
 | `/skill list` | 列出所有技能 |
-| `/skill enable <name>` | 启用技能 |
-| `/skill disable <name>` | 禁用技能 |
+| `/skill get <name>` | 查看技能正文和来源 |
 
 底层调用 [skill.Manager](../internal/skill/skill.go)。
 

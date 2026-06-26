@@ -81,22 +81,22 @@ type State struct {
 sequenceDiagram
     participant Main as main.go
     participant Agent as agent.NewAgent
-    participant Skill as skill.NewManager
-    participant Tool as tools.InitRegistry
+    participant Skill as skill.NewManagerFromDirs
+    participant Tool as tools.Registry
 
     Main->>Agent: NewAgent(model, tools, config)
-    Agent->>Skill: NewManager(skillsDir)
+    Agent->>Skill: NewManagerFromDirs(global, project)
     Agent->>Skill: LoadSkills()
     Agent->>Agent: 初始化 toolMap, ctxManager, tokenBudget
+    Main->>Tool: NewRegistry().Init(taskList, skillMgr)
     Main->>Agent: SetModel(modelWithTools)
     Main->>Agent: SetTools(allTools)
-    Main->>Tool: InitRegistry(taskList, skillMgr)
 ```
 
 关键代码（[agent.go:68-113](internal/agent/agent.go)）：
 
 ```go
-skillMgr := skill.NewManager(skillsDir)
+skillMgr := skill.NewManagerFromDirs(globalSource, projectSource)
 if err := skillMgr.LoadSkills(); err != nil {
     logger.DebugTag("SKILL", "Failed to load skills: %v", err)
 }

@@ -161,22 +161,9 @@ Agent.RunStream() → toolQueue → exeToolCall() → MCPTool.InvokableRun() →
 
 MCP 工具执行失败时，错误信息直接透传 MCP 服务器的原始返回，不添加额外提示干扰。
 
-## mcp_list_tools
-
-`mcp.list_tools` 是内置工具，用于列出当前已连接的 MCP 服务器及其工具列表：
-
-```
-Agent >>> 使用 mcp_list_tools 查看可用工具
-```
-
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| server | string | MCP 服务器名称（可选，不填则列出所有） |
-
 ## 相关代码
 
 - [mcp.go](../internal/mcp/mcp.go)
 - [client_stdio.go](../internal/mcp/client_stdio.go)
 - [mcp_tool.go](../internal/tools/mcp_tool.go)
-- [mcp_list_tools.go](../internal/tools/mcp_list_tools.go)
 - [commands/mcp.go](../internal/commands/mcp.go)
