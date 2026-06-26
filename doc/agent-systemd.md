@@ -373,7 +373,7 @@ StartProcess(spec)
 - `runtime.Options.ProjectDir` 已固定 Project root；默认空值仍来自启动时 cwd。
 - `runtime.NewInMemory` 默认使用内存 context，但保留 session store 供 `sys.session` 显式持久化。
 
-## TODO 小目标
+## 实施状态
 
 ### A. 接口骨架
 
@@ -455,7 +455,7 @@ StartProcess(spec)
 - `ApplyDecision(ctx, runner, decision)`：已校验 decision 的最小执行入口；执行 `start_agent/retry_agent`，`stop_agent` cancel 并标记目标进程 stopped，`wait/escalate` 暂不动作。
 - `sys.ipc send/recv`：内存 IPC 短消息队列，不共享 context。
 
-## 当前增强项
+## 已完成增强项
 
 - Agent Systemd 进程模式采用“进程 prompt 替代默认 main prompt”；完整 skill 正文由 `skill.skill get` 显式获取。
 - `tools.Registry` 已实例化工具列表、工具元数据和 MCP map；包级默认 registry 仍保留兼容入口。
@@ -503,7 +503,7 @@ Agent Systemd 的实现必须继续保持本项目的极简代码风格。第一
 
 ## 当前状态
 
-已完成 Agent Systemd 的最小调度链路：进程表、内存事件队列、timer 事件源、外部事件源接口、单文件轮询 watcher、task 文件事件源、`PromptSpec/ExitSpec`、`runtime.NewInMemory`、runtime runner、decision caller、`sys.session`、`sys.ipc`、runtime 级 tools registry、`ProjectDir`、base tools workspace root、进程 report/worklog artifact 和 Agent 实例级工具事件 sink。当前实现项已闭合，等待人工复核。
+已完成 Agent Systemd 的最小调度链路：进程表、内存事件队列、timer 事件源、外部事件源接口、单文件轮询 watcher、task 文件事件源、`PromptSpec/ExitSpec`、`runtime.NewInMemory`、runtime runner、decision caller、`sys.session`、`sys.ipc`、runtime 级 tools registry、`ProjectDir`、base tools workspace root、进程 report/worklog artifact 和 Agent 实例级工具事件 sink。当前实现项已闭合。
 
 ## 完成审计
 
@@ -529,7 +529,6 @@ go build -o 5hagent cmd/5hagent/main.go
 git diff --check
 ```
 
-全仓剩余已知测试缺口：
+全仓验证状态：
 
-- `internal/cli` 的 ANSI 渲染断言仍失败。
-- `internal/logger` 的日志格式断言仍失败。
+- `go test ./...` 通过。

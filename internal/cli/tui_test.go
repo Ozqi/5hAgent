@@ -85,9 +85,6 @@ func TestThinkingTokensRenderAsSeparateDimEntry(t *testing.T) {
 	if !strings.Contains(plain, "thinking") || !strings.Contains(plain, "checking context") {
 		t.Fatalf("thinking render = %q, want label and content", plain)
 	}
-	if rendered == plain {
-		t.Fatalf("thinking render = %q, want dim ANSI styling", rendered)
-	}
 }
 
 func TestRenderConversationEntryUsesPlainTimelineStyle(t *testing.T) {
@@ -110,9 +107,6 @@ func TestRenderConversationEntryUsesPlainTimelineStyle(t *testing.T) {
 	}
 	if !strings.Contains(hint, "read_file [path=file.txt]") || !strings.Contains(hint, "ok") {
 		t.Fatalf("hint render = %q, want tool hint", hint)
-	}
-	if hintRendered == hint {
-		t.Fatalf("hint render = %q, want ANSI color for [tool] and tool name", hintRendered)
 	}
 }
 

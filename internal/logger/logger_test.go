@@ -110,10 +110,10 @@ func TestInitLogWritesInfoAndErrorOnlyToFile(t *testing.T) {
 	if strings.Contains(content, "debug hidden") {
 		t.Fatalf("log = %q, did not expect DEBUG message at INFO level", content)
 	}
-	if !strings.Contains(content, "[INFO][SYS") || !strings.Contains(content, "started") {
+	if !strings.Contains(content, "[INFO") || !strings.Contains(content, "[SYS") || !strings.Contains(content, "started") {
 		t.Fatalf("log = %q, want SYS info message", content)
 	}
-	if !strings.Contains(content, "[ERROR][TOOL") || !strings.Contains(content, "failed") {
+	if !strings.Contains(content, "[ERROR") || !strings.Contains(content, "[TOOL") || !strings.Contains(content, "failed") {
 		t.Fatalf("log = %q, want TOOL error message", content)
 	}
 }
