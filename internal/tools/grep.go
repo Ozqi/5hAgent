@@ -79,13 +79,17 @@ type GrepOutput struct {
 }
 
 // NewGrepTool creates a new grep tool for code searching
-func NewGrepTool() (tool.EnhancedInvokableTool, error) {
+func NewGrepTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
+	root := ""
+	if len(workspaceRoot) > 0 {
+		root = workspaceRoot[0]
+	}
 	return utils.InferEnhancedTool(
 		grepToolName,
 		grepToolDesc,
 		func(ctx context.Context, input GrepInput) (*schema.ToolResult, error) {
 			if _, err := exec.LookPath("rg"); err != nil {
-				return grepFallback(ctx, input)
+				return grepFallback(ctx, input, root)
 			}
 
 			args := []string{
@@ -103,11 +107,7 @@ func NewGrepTool() (tool.EnhancedInvokableTool, error) {
 
 			args = append(args, input.Pattern)
 
-			if input.Path != "" {
-				args = append(args, input.Path)
-			} else {
-				args = append(args, ".")
-			}
+			args = append(args, resolvePath(root, input.Path))
 
 			cmd := exec.CommandContext(ctx, "rg", args...)
 			output, err := cmd.CombinedOutput()
@@ -175,11 +175,8 @@ func parseRipgrepJSON(output string) []GrepMatch {
 }
 
 // grepFallback uses standard grep when ripgrep is not available
-func grepFallback(ctx context.Context, input GrepInput) (*schema.ToolResult, error) {
-	path := input.Path
-	if path == "" {
-		path = "."
-	}
+func grepFallback(ctx context.Context, input GrepInput, root string) (*schema.ToolResult, error) {
+	path := resolvePath(root, input.Path)
 
 	args := []string{
 		"-r",

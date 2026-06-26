@@ -35,23 +35,44 @@ type Context struct {
 // Context Manager 负责创建、克隆、管理多个 Context 实例
 // 同时管理 Session 持久化
 type Manager struct {
-	store *Store // 会话存储
+	store    *Store // 会话存储
+	autobind bool   // CreateContext 是否自动绑定 session
 }
 
 type toolRuntimeKey struct{}
 
+// IPC 是 Agent Systemd 暴露给系统工具的最小进程通信接口。
+type IPC interface {
+	SendIPC(from string, to string, summary string, artifact string) error
+	RecvIPC(pid string) ([]string, error)
+}
+
 type ToolRuntime struct {
-	Manager *Manager
-	Context *Context
+	Manager   *Manager
+	Context   *Context
+	ProcessID string
+	IPC       IPC
 }
 
 func WithToolRuntime(ctx context.Context, mgr *Manager, msgCtx *Context) context.Context {
-	return context.WithValue(ctx, toolRuntimeKey{}, ToolRuntime{Manager: mgr, Context: msgCtx})
+	rt, _ := ctx.Value(toolRuntimeKey{}).(ToolRuntime)
+	rt.Manager = mgr
+	rt.Context = msgCtx
+	return context.WithValue(ctx, toolRuntimeKey{}, rt)
+}
+
+func WithSystemRuntime(ctx context.Context, mgr *Manager, msgCtx *Context, processID string, ipc IPC) context.Context {
+	return context.WithValue(ctx, toolRuntimeKey{}, ToolRuntime{Manager: mgr, Context: msgCtx, ProcessID: processID, IPC: ipc})
 }
 
 func ToolRuntimeFrom(ctx context.Context) (ToolRuntime, bool) {
 	rt, ok := ctx.Value(toolRuntimeKey{}).(ToolRuntime)
 	return rt, ok && rt.Manager != nil && rt.Context != nil
+}
+
+func SystemRuntimeFrom(ctx context.Context) (ToolRuntime, bool) {
+	rt, ok := ctx.Value(toolRuntimeKey{}).(ToolRuntime)
+	return rt, ok && rt.ProcessID != "" && rt.IPC != nil
 }
 
 type CompressResult struct {
@@ -111,7 +132,13 @@ func NewManager(sessionDir ...string) *Manager {
 	if len(sessionDir) > 0 && sessionDir[0] != "" {
 		store, _ = NewStore(sessionDir[0])
 	}
-	return &Manager{store: store}
+	return &Manager{store: store, autobind: store != nil}
+}
+
+// NewMemoryManagerWithStore 创建默认内存 Context、但允许显式绑定 Session 的 manager。
+func NewMemoryManagerWithStore(sessionDir string) *Manager {
+	store, _ := NewStore(sessionDir)
+	return &Manager{store: store, autobind: false}
 }
 
 // NewManagerWithStore 创建带有持久化存储的上下文管理器
@@ -120,7 +147,7 @@ func NewManager(sessionDir ...string) *Manager {
 //
 // 返回: Manager 实例
 func NewManagerWithStore(store *Store) *Manager {
-	return &Manager{store: store}
+	return &Manager{store: store, autobind: store != nil}
 }
 
 // CreateContext 创建新的 Context
@@ -134,7 +161,7 @@ func (m *Manager) CreateContext(sessionID string) (*Context, error) {
 		messages: make([]*schema.Message, 0),
 	}
 
-	if m.store != nil {
+	if m.store != nil && m.autobind {
 		session, err := m.store.GetOrCreate(sessionID)
 		if err != nil {
 			return nil, err
@@ -178,6 +205,57 @@ func (m *Manager) GetSessionTitle(ctx *Context) string {
 		return ""
 	}
 	return ctx.Session.Title
+}
+
+// BindSession 将内存 Context 显式绑定到持久化 Session。
+// 参数：ctx 是当前内存上下文；sessionID 为空时创建新 session。
+// 调用层级：sys.session.create 工具 -> BindSession -> Store.GetOrCreate/ReplaceMessages。
+// 步骤：获取或创建 session -> 绑定到 ctx -> 把当前 messages 写入 session。
+func (m *Manager) BindSession(ctx *Context, sessionID string) (string, error) {
+	if ctx == nil {
+		return "", fmt.Errorf("context is nil")
+	}
+	if m.store == nil {
+		return "", fmt.Errorf("session store not initialized")
+	}
+	session, err := m.store.GetOrCreate(sessionID)
+	if err != nil {
+		return "", err
+	}
+	ctx.Session = session
+	if err := m.store.ReplaceMessages(session, ctx.messages); err != nil {
+		return "", fmt.Errorf("persist session: %w", err)
+	}
+	return session.ID, nil
+}
+
+// SaveSession 将当前 Context 写入已绑定的 Session。
+// 参数：ctx 必须已经通过 BindSession 或 CreateContext 绑定 Session。
+// 调用层级：sys.session.save 工具 -> SaveSession -> Store.ReplaceMessages。
+// 步骤：校验绑定 -> 重写 session messages。
+func (m *Manager) SaveSession(ctx *Context) error {
+	if ctx == nil {
+		return fmt.Errorf("context is nil")
+	}
+	if m.store == nil {
+		return fmt.Errorf("session store not initialized")
+	}
+	if ctx.Session == nil {
+		return fmt.Errorf("context has no bound session")
+	}
+	return m.store.ReplaceMessages(ctx.Session, ctx.messages)
+}
+
+// DropSession 解除 Context 和 Session 的绑定。
+// 参数：ctx 是当前上下文。
+// 调用层级：sys.session.drop 工具 -> DropSession。
+// 步骤：只清空内存绑定，不删除 session 文件，不清空 messages。
+func (m *Manager) DropSession(ctx *Context) error {
+	if ctx == nil {
+		return fmt.Errorf("context is nil")
+	}
+	ctx.Session = nil
+	return nil
 }
 
 // CloneContext 克隆 Context（用于 sub-agent）

@@ -1268,10 +1268,10 @@ func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, promptDir
 	model := NewAppModel(ctx, ag, modelName, promptDir, taskList, skillMgr, ctxManager, messageCtx, sessionID)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	model.program = p
-	logger.SetToolEventSink(func(event logger.ToolEvent) {
+	restoreSink := logger.PushToolEventSink(func(event logger.ToolEvent) {
 		p.Send(toolEventMsg{event: event})
 	})
-	defer logger.SetToolEventSink(nil)
+	defer restoreSink()
 	_, err := p.Run()
 	return err
 }

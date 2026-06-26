@@ -24,6 +24,7 @@ type headlessWorkLog struct {
 	path            string
 	printedHeader   bool
 	fileInAssistant bool
+	restoreSink     func()
 }
 
 func newHeadlessWorkLog(console bool, dataDir string, agentName string, startedAt time.Time) *headlessWorkLog {
@@ -62,7 +63,7 @@ func (l *headlessWorkLog) Start(t *task.Task) {
 			fmt.Fprintf(os.Stdout, "worklog: %s\n", l.path)
 		}
 	}
-	logger.SetToolEventSink(func(event logger.ToolEvent) {
+	l.restoreSink = logger.PushToolEventSink(func(event logger.ToolEvent) {
 		l.printToolEvent(event)
 	})
 }
@@ -71,7 +72,10 @@ func (l *headlessWorkLog) Stop() {
 	if l == nil {
 		return
 	}
-	logger.SetToolEventSink(nil)
+	if l.restoreSink != nil {
+		l.restoreSink()
+		l.restoreSink = nil
+	}
 	if l.file != nil {
 		if err := l.file.Close(); err != nil {
 			logger.WarnTag("RUN", "close headless work log: %v", err)

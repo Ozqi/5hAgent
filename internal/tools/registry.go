@@ -16,36 +16,54 @@ import (
 	"github.com/lzq/5hAgent/internal/toolmeta"
 )
 
-// registry holds all registered tools
-var registry []tool.BaseTool
-var registryMu sync.RWMutex
+// Registry 保存一次 runtime 可见的工具集合。
+type Registry struct {
+	mu             sync.RWMutex
+	tools          []tool.BaseTool
+	mcpServers     map[string]mcp.Client
+	mcpServerDescs map[string]string
+	workspaceRoot  string
+}
 
-// mcpServers 注册的 MCP 服务器
-var mcpServers map[string]mcp.Client
-var mcpServerDescs map[string]string
+var defaultRegistry = NewRegistry()
+
+func NewRegistry() *Registry {
+	return &Registry{
+		mcpServers:     make(map[string]mcp.Client),
+		mcpServerDescs: make(map[string]string),
+	}
+}
+
+func (r *Registry) SetWorkspaceRoot(root string) {
+	r.workspaceRoot = root
+}
 
 // InitRegistry 初始化工具注册表（需要在 main 中调用）
 func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
-	registryMu.Lock()
-	defer registryMu.Unlock()
+	return defaultRegistry.Init(taskList, skillMgr)
+}
 
-	registry = nil // 清空
+func (r *Registry) Init(taskList *task.TaskList, skillMgr *skill.Manager) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.tools = nil
 	toolmeta.Reset()
-	mcpServers = make(map[string]mcp.Client)
-	mcpServerDescs = make(map[string]string)
+	r.mcpServers = make(map[string]mcp.Client)
+	r.mcpServerDescs = make(map[string]string)
 
 	// 基础文件工具
 	baseTools := []struct {
 		meta toolmeta.Meta
 		fn   func() (tool.BaseTool, error)
 	}{
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "read_file", FullName: "base.read_file", OriginalName: "read_file", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewReadFileTool() }},
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "exec_shell", FullName: "base.exec_shell", OriginalName: "exec_shell"}, fn: func() (tool.BaseTool, error) { return NewExecShellTool() }},
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "glob", FullName: "base.glob", OriginalName: "glob", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewGlobTool() }},
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "edit", FullName: "base.edit", OriginalName: "edit"}, fn: func() (tool.BaseTool, error) { return NewEditTool() }},
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "write_file", FullName: "base.write_file", OriginalName: "write_file"}, fn: func() (tool.BaseTool, error) { return NewWriteFileTool() }},
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "grep", FullName: "base.grep", OriginalName: "grep", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewGrepTool() }},
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "list_dir", FullName: "base.list_dir", OriginalName: "list_dir", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewListDirTool() }},
+		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "read_file", FullName: "base.read_file", OriginalName: "read_file", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewReadFileTool(r.workspaceRoot) }},
+		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "exec_shell", FullName: "base.exec_shell", OriginalName: "exec_shell"}, fn: func() (tool.BaseTool, error) { return NewExecShellTool(r.workspaceRoot) }},
+		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "glob", FullName: "base.glob", OriginalName: "glob", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewGlobTool(r.workspaceRoot) }},
+		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "edit", FullName: "base.edit", OriginalName: "edit"}, fn: func() (tool.BaseTool, error) { return NewEditTool(r.workspaceRoot) }},
+		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "write_file", FullName: "base.write_file", OriginalName: "write_file"}, fn: func() (tool.BaseTool, error) { return NewWriteFileTool(r.workspaceRoot) }},
+		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "grep", FullName: "base.grep", OriginalName: "grep", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewGrepTool(r.workspaceRoot) }},
+		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "list_dir", FullName: "base.list_dir", OriginalName: "list_dir", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewListDirTool(r.workspaceRoot) }},
 	}
 
 	for _, t := range baseTools {
@@ -53,29 +71,35 @@ func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
 		if err != nil {
 			return fmt.Errorf("failed to create %s tool: %w", t.meta.FullName, err)
 		}
-		registry = append(registry, tool)
+		r.tools = append(r.tools, tool)
 		toolmeta.Register(t.meta)
 	}
 
 	// Task 工具（统一入口）
 	if taskList != nil {
-		registry = append(registry, &TaskTool{taskList: taskList})
+		r.tools = append(r.tools, &TaskTool{taskList: taskList})
 		toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategoryTask, Source: "local", DisplayName: "task", FullName: "task.task", OriginalName: "task"})
 	}
 
 	// Skill 工具
 	if skillMgr != nil {
-		registry = append(registry, &SkillTool{mgr: skillMgr})
-		toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategorySkill, Source: "local", DisplayName: "skill", FullName: "skill.skill", OriginalName: "skill"})
+		r.tools = append(r.tools, &SkillTool{mgr: skillMgr})
+		toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategorySkill, Source: "local", DisplayName: "skill", FullName: "skill.skill", OriginalName: "skill", ReadOnly: true})
 	}
+
+	// System 工具
+	r.tools = append(r.tools, NewSessionTool())
+	toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategorySystem, Source: "local", DisplayName: "session", FullName: "sys.session", OriginalName: "session"})
+	r.tools = append(r.tools, NewIPCTool())
+	toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategorySystem, Source: "local", DisplayName: "ipc", FullName: "sys.ipc", OriginalName: "ipc"})
 
 	return nil
 }
 
 func ensureRegistry() {
-	registryMu.RLock()
-	initialized := len(registry) > 0
-	registryMu.RUnlock()
+	defaultRegistry.mu.RLock()
+	initialized := len(defaultRegistry.tools) > 0
+	defaultRegistry.mu.RUnlock()
 	if initialized {
 		return
 	}
@@ -86,19 +110,29 @@ func ensureRegistry() {
 // GetAllTools returns all registered tools
 func GetAllTools() []tool.BaseTool {
 	ensureRegistry()
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	return registry
+	return defaultRegistry.All()
+}
+
+func (r *Registry) All() []tool.BaseTool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	tools := make([]tool.BaseTool, len(r.tools))
+	copy(tools, r.tools)
+	return tools
 }
 
 // GetToolByName returns a tool by its name, or nil if not found
 func GetToolByName(name string) tool.BaseTool {
 	ensureRegistry()
-	registryMu.RLock()
-	defer registryMu.RUnlock()
+	return defaultRegistry.Get(name)
+}
+
+func (r *Registry) Get(name string) tool.BaseTool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 
 	ctx := context.Background()
-	for _, t := range registry {
+	for _, t := range r.tools {
 		info, err := t.Info(ctx)
 		if err != nil {
 			continue
@@ -116,13 +150,21 @@ func GetToolByName(name string) tool.BaseTool {
 }
 
 func RegisterContextTool(llm model.ToolCallingChatModel, promptDir string) {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	registry = append(registry, NewContextTool(llm, promptDir))
+	defaultRegistry.RegisterContextTool(llm, promptDir)
+}
+
+func (r *Registry) RegisterContextTool(llm model.ToolCallingChatModel, promptDir string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tools = append(r.tools, NewContextTool(llm, promptDir))
 	toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategoryContext, Source: "local", DisplayName: "context", FullName: "context.context", OriginalName: "context"})
 }
 
 func RegisterMCPTools(serverName string, client mcp.Client, specs []mcp.ToolSpec) error {
+	return defaultRegistry.RegisterMCPTools(serverName, client, specs)
+}
+
+func (r *Registry) RegisterMCPTools(serverName string, client mcp.Client, specs []mcp.ToolSpec) error {
 	if serverName == "" {
 		return fmt.Errorf("mcp server name is required")
 	}
@@ -130,14 +172,19 @@ func RegisterMCPTools(serverName string, client mcp.Client, specs []mcp.ToolSpec
 		return fmt.Errorf("mcp client is required")
 	}
 
-	// 注册服务器到全局 map（供 mcp_list_tools 使用）
-	RegisterMCPServer(serverName, client)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.mcpServers == nil {
+		r.mcpServers = make(map[string]mcp.Client)
+	}
+	r.mcpServers[serverName] = client
 
 	for _, spec := range specs {
 		if spec.Name == "" {
 			return fmt.Errorf("mcp tool name is required")
 		}
-		registry = append(registry, NewMCPTool(serverName, client, spec))
+		r.tools = append(r.tools, NewMCPTool(serverName, client, spec))
 		toolmeta.Register(toolmeta.Meta{
 			Category:     toolmeta.CategoryMCP,
 			Source:       serverName,
@@ -152,20 +199,42 @@ func RegisterMCPTools(serverName string, client mcp.Client, specs []mcp.ToolSpec
 
 // RegisterMCPServer 注册 MCP 服务器
 func RegisterMCPServer(name string, client mcp.Client) {
-	if mcpServers == nil {
-		mcpServers = make(map[string]mcp.Client)
+	defaultRegistry.RegisterMCPServer(name, client)
+}
+
+func (r *Registry) RegisterMCPServer(name string, client mcp.Client) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.mcpServers == nil {
+		r.mcpServers = make(map[string]mcp.Client)
 	}
-	mcpServers[name] = client
+	r.mcpServers[name] = client
 }
 
 // GetMCPServers 返回所有注册的 MCP 服务器
 func GetMCPServers() map[string]mcp.Client {
-	return mcpServers
+	return defaultRegistry.GetMCPServers()
+}
+
+func (r *Registry) GetMCPServers() map[string]mcp.Client {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	servers := make(map[string]mcp.Client, len(r.mcpServers))
+	for name, client := range r.mcpServers {
+		servers[name] = client
+	}
+	return servers
 }
 
 // GetMCPServer 返回指定名称的 MCP 服务器
 func GetMCPServer(name string) (mcp.Client, bool) {
-	client, ok := mcpServers[name]
+	return defaultRegistry.GetMCPServer(name)
+}
+
+func (r *Registry) GetMCPServer(name string) (mcp.Client, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	client, ok := r.mcpServers[name]
 	return client, ok
 }
 
@@ -185,5 +254,6 @@ const (
 	CategoryTask    = toolmeta.CategoryTask
 	CategorySkill   = toolmeta.CategorySkill
 	CategoryContext = toolmeta.CategoryContext
+	CategorySystem  = toolmeta.CategorySystem
 	CategoryMCP     = toolmeta.CategoryMCP
 )

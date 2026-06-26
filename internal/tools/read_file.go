@@ -71,7 +71,11 @@ type ReadFileOutput struct {
 }
 
 // NewReadFileTool creates a new read_file tool using Eino's InferEnhancedTool
-func NewReadFileTool() (tool.EnhancedInvokableTool, error) {
+func NewReadFileTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
+	root := ""
+	if len(workspaceRoot) > 0 {
+		root = workspaceRoot[0]
+	}
 	return utils.InferEnhancedTool(
 		readFileToolName,
 		readFileToolDesc,
@@ -79,6 +83,7 @@ func NewReadFileTool() (tool.EnhancedInvokableTool, error) {
 			if input.Path == "" {
 				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'path' is required. You must provide the file path to read")
 			}
+			input.Path = resolvePath(root, input.Path)
 
 			if input.Offset == 0 {
 				input.Offset = 1

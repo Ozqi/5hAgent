@@ -49,6 +49,18 @@ func SetToolEventSink(sink func(ToolEvent)) {
 	toolEventSink = sink
 }
 
+func PushToolEventSink(sink func(ToolEvent)) func() {
+	toolEventSinkMu.Lock()
+	prev := toolEventSink
+	toolEventSink = sink
+	toolEventSinkMu.Unlock()
+	return func() {
+		toolEventSinkMu.Lock()
+		toolEventSink = prev
+		toolEventSinkMu.Unlock()
+	}
+}
+
 func currentToolEventSink() func(ToolEvent) {
 	toolEventSinkMu.RLock()
 	defer toolEventSinkMu.RUnlock()

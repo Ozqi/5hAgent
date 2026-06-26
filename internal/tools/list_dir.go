@@ -76,14 +76,16 @@ type ListDirOutput struct {
 }
 
 // NewListDirTool creates a new list_dir tool for listing directory contents
-func NewListDirTool() (tool.EnhancedInvokableTool, error) {
+func NewListDirTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
+	root := ""
+	if len(workspaceRoot) > 0 {
+		root = workspaceRoot[0]
+	}
 	return utils.InferEnhancedTool(
 		listDirToolName,
 		listDirToolDesc,
 		func(ctx context.Context, input ListDirInput) (*schema.ToolResult, error) {
-			if input.Path == "" {
-				input.Path = "."
-			}
+			input.Path = resolvePath(root, input.Path)
 
 			info, err := os.Stat(input.Path)
 			if err != nil {

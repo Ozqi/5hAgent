@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"github.com/lzq/5hAgent/internal/agent"
 	"github.com/lzq/5hAgent/internal/commands"
@@ -19,17 +20,21 @@ import (
 	"github.com/lzq/5hAgent/internal/llm"
 	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/mcp"
+	"github.com/lzq/5hAgent/internal/systemd"
 	"github.com/lzq/5hAgent/internal/task"
 	"github.com/lzq/5hAgent/internal/tools"
 	"github.com/lzq/5hAgent/internal/utils"
 )
 
 // Options 控制运行时初始化方式。
-// Debug 会提升日志级别；SessionID/ContinueLast 只影响默认 MessageCtx，headless task 可继续创建独立上下文。
+// Debug 会提升日志级别；SessionID/ContinueLast 只影响默认 MessageCtx。
+// MemoryContext 为 Agent Systemd 预留：启用后不绑定 session store，Context 随进程退出销毁。
 type Options struct {
-	Debug        bool
-	SessionID    string
-	ContinueLast bool
+	Debug         bool
+	SessionID     string
+	ContinueLast  bool
+	MemoryContext bool
+	ProjectDir    string
 }
 
 // Runtime 持有一次 5hAgent 进程运行所需的核心对象。
@@ -42,8 +47,11 @@ type Runtime struct {
 	SessionID  string
 	PromptDir  string
 	ModelName  string
+	ProjectDir string
 
-	mcpClients []*mcp.StdioClient // 需要随进程退出释放的 MCP stdio 子进程
+	ToolRegistry  *tools.Registry            // 当前 Runtime 独立工具注册表
+	decisionModel model.ToolCallingChatModel // 未绑定工具的模型，仅用于 Agent Systemd decision
+	mcpClients    []*mcp.StdioClient         // 需要随进程退出释放的 MCP stdio 子进程
 }
 
 // RunOptions 描述一次文件任务执行。
@@ -82,10 +90,11 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 	logger.InfoTag("SYS", "Log initialized: %s", logFile)
 
-	projectDataDir, err := utils.GetProjectDataDir()
+	projectRoot, err := projectRoot(opts.ProjectDir)
 	if err != nil {
-		return nil, fmt.Errorf("get project data directory: %w", err)
+		return nil, fmt.Errorf("get project root: %w", err)
 	}
+	projectDataDir := projectDataDir(projectRoot)
 	list, err := task.NewTaskList(filepath.Join(projectDataDir, "task.md"))
 	if err != nil {
 		return nil, fmt.Errorf("initialize task list: %w", err)
@@ -95,7 +104,11 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get config directory: %w", err)
 	}
-	ctxManager := agentctx.NewManager(filepath.Join(configDir, "sessions"))
+	sessionDir := filepath.Join(configDir, "sessions")
+	ctxManager := agentctx.NewManager(sessionDir)
+	if opts.MemoryContext {
+		ctxManager = agentctx.NewMemoryManagerWithStore(sessionDir)
+	}
 	messageCtx, sessionID, err := openMessageCtx(ctxManager, opts.SessionID, opts.ContinueLast)
 	if err != nil {
 		return nil, err
@@ -127,19 +140,22 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		ContextAutoCompress: appConfig.Agent.ContextAutoCompress,
 		Debug:               appConfig.Agent.Debug,
 		SystemPrompt:        systemPrompt,
+		ProjectDataDir:      projectDataDir,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 	ag.SetCtxManager(ctxManager)
 
-	if err := tools.InitRegistry(list, ag.GetSkillManager()); err != nil {
+	toolRegistry := tools.NewRegistry()
+	toolRegistry.SetWorkspaceRoot(projectRoot)
+	if err := toolRegistry.Init(list, ag.GetSkillManager()); err != nil {
 		return nil, fmt.Errorf("init tools: %w", err)
 	}
-	tools.RegisterContextTool(client.GetModel(), promptDir)
-	mcpClients := startMCPServers(ctx)
+	toolRegistry.RegisterContextTool(client.GetModel(), promptDir)
+	mcpClients := startMCPServers(ctx, toolRegistry)
 
-	allTools := tools.GetAllTools()
+	allTools := toolRegistry.All()
 	toolInfos := make([]*schema.ToolInfo, 0, len(allTools))
 	for _, t := range allTools {
 		info, err := t.Info(ctx)
@@ -157,15 +173,84 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	ag.SetTools(allTools)
 
 	return &Runtime{
-		Agent:      ag,
-		TaskList:   list,
-		CtxManager: ctxManager,
-		MessageCtx: messageCtx,
-		SessionID:  sessionID,
-		PromptDir:  promptDir,
-		ModelName:  llmConfig.Model,
-		mcpClients: mcpClients,
+		Agent:         ag,
+		TaskList:      list,
+		CtxManager:    ctxManager,
+		MessageCtx:    messageCtx,
+		SessionID:     sessionID,
+		PromptDir:     promptDir,
+		ModelName:     llmConfig.Model,
+		ProjectDir:    projectRoot,
+		ToolRegistry:  toolRegistry,
+		decisionModel: client.GetModel(),
+		mcpClients:    mcpClients,
 	}, nil
+}
+
+// NewInMemory 初始化不绑定 session store 的 Runtime。
+// 参数：ctx 控制初始化生命周期；opts 只保留 Debug 等非 session 选项。
+// 调用层级：Agent Systemd -> NewInMemory -> New。
+// 步骤：强制 MemoryContext=true，忽略 SessionID/ContinueLast，复用 New 的其余初始化逻辑。
+func NewInMemory(ctx context.Context, opts Options) (*Runtime, error) {
+	opts.MemoryContext = true
+	opts.SessionID = ""
+	opts.ContinueLast = false
+	return New(ctx, opts)
+}
+
+// RunProcess 让 Runtime 作为 Agent Systemd 的同步执行 runner。
+// 参数：proc 只读取 PromptSpec/ExitSpec；Project/WorkDir 仍由外层启动 runtime 时决定。
+// 调用层级：systemd.AgentSystemd.RunProcess -> Runtime.RunProcess -> Agent.RunStream。
+// 步骤：创建内存 context -> 注入 ProcessSpec.Prompt -> 调用 Agent.RunStream；不写 report，不创建 session。
+func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess) error {
+	if proc == nil {
+		return fmt.Errorf("process is nil")
+	}
+	messageCtx, err := r.CtxManager.CreateContext("")
+	if err != nil {
+		return fmt.Errorf("create process context: %w", err)
+	}
+	if sys, ok := agentctx.SystemRuntimeFrom(ctx); ok {
+		ctx = agentctx.WithSystemRuntime(ctx, r.CtxManager, messageCtx, sys.ProcessID, sys.IPC)
+	}
+	if proc.Spec.Prompt.System != "" {
+		if err := r.CtxManager.AddMessage(messageCtx, &schema.Message{Role: schema.System, Content: proc.Spec.Prompt.System}); err != nil {
+			return fmt.Errorf("add process system prompt: %w", err)
+		}
+	}
+	for _, skill := range proc.Spec.Prompt.Skills {
+		if skill.Name == "" {
+			continue
+		}
+		content := "# Skill: " + skill.Name
+		if skill.Description != "" {
+			content += "\n\n" + skill.Description
+		}
+		if err := r.CtxManager.AddMessage(messageCtx, &schema.Message{Role: schema.System, Content: content}); err != nil {
+			return fmt.Errorf("add process skill %s: %w", skill.Name, err)
+		}
+	}
+	_, err = r.Agent.RunStream(ctx, messageCtx, processInput(proc), nil)
+	return err
+}
+
+// CallDecision 执行一次受控 LM 判断。
+// 参数：input 是 Agent Systemd 编码后的结构化 JSON。
+// 调用层级：AgentSystemd.Decision -> Runtime.CallDecision -> model.Generate。
+// 步骤：构造只要求 JSON 的单轮消息 -> 调用未绑定工具的模型 -> 返回原始文本。
+func (r *Runtime) CallDecision(ctx context.Context, input []byte) ([]byte, error) {
+	if r.decisionModel == nil {
+		return nil, fmt.Errorf("decision model is nil")
+	}
+	resp, err := r.decisionModel.Generate(ctx, []*schema.Message{{
+		Role: schema.User,
+		Content: "Return only decision JSON. No markdown.\n\n" +
+			string(input),
+	}})
+	if err != nil {
+		return nil, fmt.Errorf("decision generate: %w", err)
+	}
+	return []byte(strings.TrimSpace(resp.Content)), nil
 }
 
 // Close 释放 Runtime 启动的外部资源。
@@ -200,10 +285,7 @@ func (r *Runtime) RunTaskOnce(ctx context.Context, opts RunOptions) (*RunReport,
 		return nil, fmt.Errorf("create task session: %w", err)
 	}
 	input := taskPrompt(r.TaskList.Path(), selected)
-	projectDataDir, err := utils.GetProjectDataDir()
-	if err != nil {
-		return nil, fmt.Errorf("get project data directory: %w", err)
-	}
+	projectDataDir := projectDataDir(r.ProjectDir)
 	workLog := newHeadlessWorkLog(opts.WorkLog, projectDataDir, r.Agent.Name(), started)
 	workLog.Start(selected)
 	defer workLog.Stop()
@@ -255,7 +337,7 @@ func openMessageCtx(manager *agentctx.Manager, sessionID string, continueLast bo
 	return ctx, manager.GetSessionID(ctx), nil
 }
 
-func startMCPServers(ctx context.Context) []*mcp.StdioClient {
+func startMCPServers(ctx context.Context, registry *tools.Registry) []*mcp.StdioClient {
 	servers, err := commands.LoadMCPServers()
 	if err != nil {
 		logger.WarnTag("MCP", "load MCP config: %v", err)
@@ -274,7 +356,7 @@ func startMCPServers(ctx context.Context) []*mcp.StdioClient {
 			logger.ErrorTag("MCP", "start %s: %v", cfg.Name, err)
 			continue
 		}
-		if err := tools.RegisterMCPTools(cfg.Name, client, client.ListTools()); err != nil {
+		if err := registry.RegisterMCPTools(cfg.Name, client, client.ListTools()); err != nil {
 			logger.ErrorTag("MCP", "register %s: %v", cfg.Name, err)
 			_ = client.Close()
 			continue
@@ -313,13 +395,18 @@ func taskPrompt(taskPath string, t *task.Task) string {
 3. 完成后给出可写入执行报告的简短结果、证据和后续建议。`, taskPath, t.ID, t.Title, t.Status, t.Description)
 }
 
+func processInput(proc *systemd.AgentProcess) string {
+	return fmt.Sprintf(`你正在以 Agent Systemd 进程模式运行。
+
+Exit Condition:
+%s
+
+请在当前进程上下文内完成任务。上下文默认只存在于内存；如需持久化，必须显式调用系统级持久化工具。`, proc.Spec.Exit.Condition)
+}
+
 func (r *Runtime) writeReport(dir string, report *RunReport) (string, error) {
 	if dir == "" {
-		dataDir, err := utils.GetProjectDataDir()
-		if err != nil {
-			return "", err
-		}
-		dir = filepath.Join(dataDir, "reports")
+		dir = filepath.Join(projectDataDir(r.ProjectDir), "reports")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create report dir: %w", err)
@@ -329,6 +416,21 @@ func (r *Runtime) writeReport(dir string, report *RunReport) (string, error) {
 		return "", fmt.Errorf("write report: %w", err)
 	}
 	return path, nil
+}
+
+func projectDataDir(projectDir string) string {
+	return filepath.Join(projectDir, ".5hagent")
+}
+
+func projectRoot(projectDir string) (string, error) {
+	if projectDir != "" {
+		return filepath.Abs(projectDir)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return cwd, nil
 }
 
 func renderReport(report *RunReport) string {

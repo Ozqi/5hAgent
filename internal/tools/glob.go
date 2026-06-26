@@ -71,14 +71,16 @@ type GlobOutput struct {
 }
 
 // NewGlobTool creates a new glob tool for file pattern matching
-func NewGlobTool() (tool.EnhancedInvokableTool, error) {
+func NewGlobTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
+	root := ""
+	if len(workspaceRoot) > 0 {
+		root = workspaceRoot[0]
+	}
 	return utils.InferEnhancedTool(
 		globToolName,
 		globToolDesc,
 		func(ctx context.Context, input GlobInput) (*schema.ToolResult, error) {
-			if input.Path == "" {
-				input.Path = "."
-			}
+			input.Path = resolvePath(root, input.Path)
 
 			fullPattern := filepath.Join(input.Path, input.Pattern)
 

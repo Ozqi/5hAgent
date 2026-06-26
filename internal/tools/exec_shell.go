@@ -70,21 +70,29 @@ type ExecShellOutput struct {
 }
 
 // NewExecShellTool creates a new exec_shell tool using Eino's InferEnhancedTool
-func NewExecShellTool() (tool.EnhancedInvokableTool, error) {
-	workspaceRoot, err := os.Getwd()
-	if err != nil {
-		workspaceRoot = "."
+func NewExecShellTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
+	root := ""
+	if len(workspaceRoot) > 0 {
+		root = workspaceRoot[0]
+	}
+	if root == "" {
+		var err error
+		root, err = os.Getwd()
+		if err != nil {
+			root = "."
+		}
 	}
 
 	return utils.InferEnhancedTool(
 		execShellToolName,
-		fmt.Sprintf("%s (workspace root: %s)", execShellToolDesc, workspaceRoot),
+		fmt.Sprintf("%s (workspace root: %s)", execShellToolDesc, root),
 		func(ctx context.Context, input ExecShellInput) (*schema.ToolResult, error) {
 			if input.Command == "" {
 				return nil, fmt.Errorf("command cannot be empty. Provide a valid shell command to execute.")
 			}
 
 			cmd := exec.CommandContext(ctx, "sh", "-c", input.Command)
+			cmd.Dir = root
 
 			stdout, err := cmd.Output()
 			var stderr []byte

@@ -16,6 +16,7 @@ const (
 	CategoryTask    Category = "task"
 	CategorySkill   Category = "skill"
 	CategoryContext Category = "context"
+	CategorySystem  Category = "sys"
 	CategoryMCP     Category = "mcp"
 )
 
