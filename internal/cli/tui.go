@@ -180,6 +180,11 @@ var (
 			BorderForeground(colorSurface).
 			Padding(0, 1)
 
+	slashHintStyle = lipgloss.NewStyle().
+			Foreground(colorGray).
+			Background(colorBlack).
+			Padding(0, 1)
+
 	messageBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorSurface).
@@ -187,6 +192,20 @@ var (
 )
 
 var menuItems = []string{"CHATS", "HISTORY", "LOGS", "AGENTS"}
+
+type slashCommandHint struct {
+	Name  string
+	Usage string
+	Desc  string
+}
+
+var slashCommandHints = []slashCommandHint{
+	{Name: "/task", Usage: "/task <list|create|update|get|delete|archive|reopen>", Desc: "task file"},
+	{Name: "/skill", Usage: "/skill <list|enable|disable|show>", Desc: "skills"},
+	{Name: "/compress", Usage: "/compress [compact|truncate]", Desc: "context"},
+	{Name: "/mcp", Usage: "/mcp <list|add|remove|enable|disable>", Desc: "mcp servers"},
+	{Name: "/session", Usage: "/session <new|list|switch|save|drop>", Desc: "sessions"},
+}
 
 func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string) *AppModel {
 	vp := viewport.New(0, 0)
@@ -562,7 +581,7 @@ func (m *AppModel) resize() {
 	mainWidth := max(20, m.width-sidebarWidth-m.statusWidth-6)
 	headerHeight := 3
 	footerHeight := 1
-	inputHeight := 4
+	inputHeight := 5
 	// 预留 2 字符给滚动条 + 2 字符内边距，防止内容被右侧面板遮挡
 	m.viewport.Width = max(8, mainWidth-6)
 	m.viewport.Height = max(1, m.height-headerHeight-footerHeight-inputHeight)
@@ -653,15 +672,52 @@ func renderMainPane(m *AppModel) string {
 	conversationHeight := max(1, m.viewport.Height)
 	conversation := lipgloss.NewStyle().Height(conversationHeight).Render(renderViewportPane(m.viewport))
 	inputBlock := inputShellStyle.Width(max(12, m.viewport.Width)).Render(m.input.View())
+	slashHint := m.renderSlashHint(max(12, m.viewport.Width))
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		header,
 		stateLine,
 		"",
 		conversation,
 		"",
+		slashHint,
 		inputBlock,
 	)
 	return mainViewStyle.Width(max(20, m.width-24-m.statusWidth-4)).Height(max(1, m.height-1)).Render(content)
+}
+
+func (m *AppModel) renderSlashHint(width int) string {
+	text := strings.TrimSpace(m.input.Value())
+	if !strings.HasPrefix(text, "/") {
+		return slashHintStyle.Width(width).Render("")
+	}
+	matches := slashHintMatches(text)
+	if len(matches) == 0 {
+		return slashHintStyle.Width(width).Render("unknown slash command")
+	}
+	parts := make([]string, 0, len(matches))
+	for _, hint := range matches {
+		parts = append(parts, hint.Usage+"  "+hint.Desc)
+	}
+	line := strings.Join(parts, "    ")
+	return slashHintStyle.Width(width).Render(truncateMiddle(line, max(24, width-2)))
+}
+
+func slashHintMatches(input string) []slashCommandHint {
+	fields := strings.Fields(input)
+	prefix := input
+	if len(fields) > 0 {
+		prefix = fields[0]
+	}
+	if prefix == "/" {
+		return slashCommandHints
+	}
+	matches := make([]slashCommandHint, 0, len(slashCommandHints))
+	for _, hint := range slashCommandHints {
+		if strings.HasPrefix(hint.Name, prefix) {
+			matches = append(matches, hint)
+		}
+	}
+	return matches
 }
 
 func renderBottomStatusBar(width int, status string, busy bool) string {

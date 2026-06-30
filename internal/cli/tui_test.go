@@ -110,6 +110,30 @@ func TestRenderConversationEntryUsesPlainTimelineStyle(t *testing.T) {
 	}
 }
 
+func TestSlashHintMatchesPrefix(t *testing.T) {
+	all := slashHintMatches("/")
+	if len(all) < 4 {
+		t.Fatalf("slashHintMatches('/') = %d, want common slash commands", len(all))
+	}
+	task := slashHintMatches("/ta")
+	if len(task) != 1 || task[0].Name != "/task" {
+		t.Fatalf("slashHintMatches('/ta') = %#v, want /task", task)
+	}
+	if got := slashHintMatches("/unknown"); len(got) != 0 {
+		t.Fatalf("slashHintMatches('/unknown') = %#v, want none", got)
+	}
+}
+
+func TestRenderSlashHintShowsUsage(t *testing.T) {
+	m := newTestAppModel()
+	m.input.SetValue("/m")
+
+	rendered := stripANSI(m.renderSlashHint(80))
+	if !strings.Contains(rendered, "/mcp") {
+		t.Fatalf("renderSlashHint = %q, want /mcp usage", rendered)
+	}
+}
+
 func TestWrapVisibleLinesPreservesANSIAndWideWidth(t *testing.T) {
 	colored := logger.Green("这是一段很长的中文文本")
 	wrapped := wrapVisibleLines(colored, 6)
