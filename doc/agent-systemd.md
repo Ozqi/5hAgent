@@ -2,6 +2,25 @@
 
 > 由 GPT-5.5 于 2026-06-26 阅读 `internal/runtime/runtime.go`、`internal/agent/agent.go`、`internal/context/session.go`、`doc/runtime.md`、`doc/agent.md` 后生成。
 
+
+## 设计目标
+
+- 把 Agent 抽象成进程：启动参数只包含提示词和退出条件，运行时上下文视作进程内存。
+- 借鉴 OS 的进程调度和 supervisor 思路，但不追求完整 OS 语义。
+- 保持上层调度 AI 无关：调度循环、事件处理、进程表、状态机和策略都用确定性代码实现。
+- 只保留一个受控 AI 升级点：`decision` 函数调用一次 LM API，要求返回格式化 JSON，不允许自由文本驱动控制流。
+- 保持 runtime 可复用：当前 `internal/runtime` 是执行引擎，一个调度层实例下可以启动多份 runtime。
+- 支持事件触发：外部事件、文件变化、定时器、任务状态变化或人工输入都可以成为启动 Agent 的原因。
+
+## 非目标
+
+- 不在第一阶段实现完整 daemon、网络 API、分布式调度或持久化队列。
+- 不让 LLM 直接控制 Harness 的主循环。
+- 不共享不同 Agent 进程的上下文；跨进程通信必须走显式 IPC：事件、消息、报告或系统工具。
+- 不由 Agent Systemd 自动落盘 Agent 上下文；上下文持久化必须是 Agent 内部显式行为。
+- 不把顶层调度层写成新的大 Agent；它是调度约束，不是另一个 ReAct 循环。
+
+
 ## 摘要
 
 下一阶段的顶层调度层正式命名为 Agent Systemd。这个名字取 systemd 的 supervisor / process manager 语义，但只是类比：最终目标是做一个极简、可靠的 Agent 调度框架，不是复刻操作系统。Agent Systemd 不替代当前 `internal/runtime`，而是站在 runtime 之上，把每个运行中的 Agent 看作一个独立进程，把 5hAgent runtime 看作执行引擎。Agent Systemd 本身应尽量保持 AI 无关；`decision` 只是纯规则判断不了时的受控升级点，类似 `sudo`，用一次 LM API 调用把字符串事实判断成结构化 JSON。
@@ -37,23 +56,6 @@ flowchart TB
     rtA --> ctxA
     rtB --> ctxB
 ```
-
-## 设计目标
-
-- 把 Agent 抽象成进程：启动参数只包含提示词和退出条件，运行时上下文视作进程内存。
-- 借鉴 OS 的进程调度和 supervisor 思路，但不追求完整 OS 语义。
-- 保持上层调度 AI 无关：调度循环、事件处理、进程表、状态机和策略都用确定性代码实现。
-- 只保留一个受控 AI 升级点：`decision` 函数调用一次 LM API，要求返回格式化 JSON，不允许自由文本驱动控制流。
-- 保持 runtime 可复用：当前 `internal/runtime` 是执行引擎，一个调度层实例下可以启动多份 runtime。
-- 支持事件触发：外部事件、文件变化、定时器、任务状态变化或人工输入都可以成为启动 Agent 的原因。
-
-## 非目标
-
-- 不在第一阶段实现完整 daemon、网络 API、分布式调度或持久化队列。
-- 不让 LLM 直接控制 Harness 的主循环。
-- 不共享不同 Agent 进程的上下文；跨进程通信必须走显式 IPC：事件、消息、报告或系统工具。
-- 不由 Agent Systemd 自动落盘 Agent 上下文；上下文持久化必须是 Agent 内部显式行为。
-- 不把顶层调度层写成新的大 Agent；它是调度约束，不是另一个 ReAct 循环。
 
 ## 核心概念
 
