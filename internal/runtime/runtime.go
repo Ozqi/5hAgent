@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +36,9 @@ type Options struct {
 	ContinueLast  bool
 	MemoryContext bool
 	ProjectDir    string
+	LLMSupplier   string
+	LLMFormat     string
+	LLMModel      string
 }
 
 // Runtime 持有一次 5hAgent 进程运行所需的核心对象。
@@ -74,6 +78,8 @@ type RunReport struct {
 
 type processReport struct {
 	ProcessID string
+	Source    systemd.SourceTask
+	WorkLog   string
 	Prompt    systemd.PromptSpec
 	Exit      systemd.ExitSpec
 	Response  string
@@ -86,7 +92,11 @@ type processReport struct {
 // 步骤：加载配置 -> 初始化日志 -> 打开任务文件和 session store -> 创建 LLM/Agent -> 注册本地与 MCP 工具。
 // 副作用：创建 ~/.5hAgent、项目 .5hagent、日志文件，可能启动 MCP stdio 子进程。
 func New(ctx context.Context, opts Options) (*Runtime, error) {
-	appConfig, err := utils.LoadConfig()
+	appConfig, err := utils.LoadConfigWithOptions(utils.LoadConfigOptions{
+		LLMSupplier: opts.LLMSupplier,
+		LLMFormat:   opts.LLMFormat,
+		LLMModel:    opts.LLMModel,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("load configuration: %w", err)
 	}
@@ -212,17 +222,23 @@ func NewInMemory(ctx context.Context, opts Options) (*Runtime, error) {
 // 参数：proc 只读取 PromptSpec/ExitSpec；Project/WorkDir 仍由外层启动 runtime 时决定。
 // 调用层级：systemd.AgentSystemd.RunProcess -> Runtime.RunProcess -> Agent.RunStream。
 // 步骤：创建内存 context -> 注入 ProcessSpec.Prompt -> 调用 Agent.RunStream -> 写进程 report/worklog。
-func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess) error {
+func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess, ipc systemd.IPC) error {
 	if proc == nil {
 		return fmt.Errorf("process is nil")
 	}
 	started := time.Now().UTC()
+	logTask := processLogTask(proc)
+	if proc.SourceTask.ID != "" {
+		fmt.Fprintf(os.Stdout, "process start: %s task=%s report=pending\n", proc.ID, proc.SourceTask.ID)
+	} else {
+		fmt.Fprintf(os.Stdout, "process start: %s report=pending\n", proc.ID)
+	}
 	messageCtx, err := r.CtxManager.CreateContext("")
 	if err != nil {
 		return fmt.Errorf("create process context: %w", err)
 	}
-	if sys, ok := agentctx.SystemRuntimeFrom(ctx); ok {
-		ctx = agentctx.WithSystemRuntime(ctx, r.CtxManager, messageCtx, sys.ProcessID, sys.IPC)
+	if proc.ID != "" && ipc != nil {
+		ctx = agentctx.WithSystemRuntime(ctx, r.CtxManager, messageCtx, proc.ID, ipc)
 	}
 	if proc.Spec.Prompt.System != "" {
 		if err := r.CtxManager.AddMessage(messageCtx, &schema.Message{Role: schema.System, Content: proc.Spec.Prompt.System}); err != nil {
@@ -244,19 +260,47 @@ func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess) er
 	dataDir := projectDataDir(r.ProjectDir)
 	workLog := newHeadlessWorkLog(false, dataDir, proc.ID, started)
 	workLog.useGlobalSink = false
-	workLog.Start(processLogTask(proc))
+	workLog.Start(logTask)
 	r.Agent.SetToolEventSink(func(event logger.ToolEvent) {
 		workLog.printToolEvent(event)
 	})
 	defer r.Agent.SetToolEventSink(nil)
-	response, runErr := r.Agent.RunStream(ctx, messageCtx, processInput(proc), workLog.OnToken, workLog.OnReasoning)
+	input := fmt.Sprintf(`你正在以 Agent Systemd 进程模式运行。
+
+Exit Condition:
+%s
+
+请在当前进程上下文内完成任务。上下文默认只存在于内存；如需持久化，必须显式调用系统级持久化工具。`, proc.Spec.Exit.Condition)
+	restoreModel := r.useProcessModel(proc)
+	defer restoreModel()
+	response, runErr := r.Agent.RunStreamWithOptions(ctx, messageCtx, input, workLog.OnToken, r.processModelOptions(proc), workLog.OnReasoning)
 	workLog.End(runErr)
 	proc.WorkLogPath = workLog.path
-	report := &processReport{ProcessID: proc.ID, Prompt: proc.Spec.Prompt, Exit: proc.Spec.Exit, Response: response, Err: runErr, StartedAt: started, EndedAt: time.Now().UTC()}
+	if proc.SourceTask.ID != "" {
+		finalStatus := task.StatusCompleted
+		if runErr != nil {
+			finalStatus = task.StatusFailed
+		}
+		if err := r.TaskList.UpdateTaskStatus(proc.SourceTask.ID, finalStatus); err != nil && runErr == nil {
+			runErr = fmt.Errorf("mark source task %s: %w", finalStatus, err)
+		} else if err != nil {
+			logger.ErrorTag("TASK", "mark source task %s: %v", finalStatus, err)
+		}
+	}
+	report := &processReport{ProcessID: proc.ID, Source: proc.SourceTask, WorkLog: proc.WorkLogPath, Prompt: proc.Spec.Prompt, Exit: proc.Spec.Exit, Response: response, Err: runErr, StartedAt: started, EndedAt: time.Now().UTC()}
 	path, writeErr := r.writeProcessReport("", report)
 	proc.ReportPath = path
 	if writeErr != nil {
 		return writeErr
+	}
+	status := "completed"
+	if runErr != nil {
+		status = "failed"
+	}
+	if proc.SourceTask.ID != "" {
+		fmt.Fprintf(os.Stdout, "process %s: %s task=%s report=%s\n", status, proc.ID, proc.SourceTask.ID, proc.ReportPath)
+	} else {
+		fmt.Fprintf(os.Stdout, "process %s: %s report=%s\n", status, proc.ID, proc.ReportPath)
 	}
 	return runErr
 }
@@ -347,6 +391,57 @@ func (r *Runtime) RunTaskOnce(ctx context.Context, opts RunOptions) (*RunReport,
 	return report, runErr
 }
 
+// TaskProcessSpec 把文件任务转换成 AgentProcess 启动规格。
+// 参数：t 是 .5hagent/task.md 中的任务。
+// 调用层级：daemon/event source -> TaskProcessSpec -> AgentSystemd.RunProcess。
+// 步骤：复用 taskPrompt 生成进程 system prompt；退出条件要求写出报告或明确 blocker。
+func (r *Runtime) TaskProcessSpec(t *task.Task) (systemd.ProcessSpec, error) {
+	if t == nil {
+		return systemd.ProcessSpec{}, fmt.Errorf("task is nil")
+	}
+	return systemd.ProcessSpec{
+		Prompt: systemd.PromptSpec{System: taskPrompt(r.TaskList.Path(), t)},
+		Exit: systemd.ExitSpec{
+			Condition: "完成任务并写出可审计结果；如果遇到不可恢复阻塞，说明 blocker 后退出。",
+			MaxTurns:  12,
+		},
+	}, nil
+}
+
+// EmitCurrentTask 把当前 in_progress/pending 任务作为一次 task.created 事件投递。
+// 参数：sys 是目标调度器。
+// 调用层级：daemon 启动 -> EmitCurrentTask -> AgentSystemd.Emit。
+// 步骤：选择当前任务 -> 生成 ProcessSpec -> 编码 TaskCreatedPayload -> Emit。
+func (r *Runtime) EmitCurrentTask(sys *systemd.AgentSystemd) error {
+	if sys == nil {
+		return fmt.Errorf("systemd is nil")
+	}
+	selected, err := r.selectTask("")
+	if err != nil {
+		return err
+	}
+	spec, err := r.TaskProcessSpec(selected)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(systemd.TaskCreatedPayload{
+		ProcessSpec: spec,
+		TaskID:      selected.ID,
+		TaskTitle:   selected.Title,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal initial task event: %w", err)
+	}
+	sys.Emit(systemd.Event{
+		ID:        "task." + selected.ID + ".initial",
+		Type:      "task.created",
+		Source:    "task",
+		Payload:   payload,
+		CreatedAt: time.Now().UTC(),
+	})
+	return nil
+}
+
 func openMessageCtx(manager *agentctx.Manager, sessionID string, continueLast bool) (*agentctx.Context, string, error) {
 	if sessionID != "" {
 		ctx, err := manager.CreateContext(sessionID)
@@ -422,18 +517,10 @@ func taskPrompt(taskPath string, t *task.Task) string {
 %s
 
 要求：
-1. 先读取必要文件和任务上下文，再行动。
-2. 如需修改代码，保持极简 baseline，优先复用已有模块。
-3. 完成后给出可写入执行报告的简短结果、证据和后续建议。`, taskPath, t.ID, t.Title, t.Status, t.Description)
-}
-
-func processInput(proc *systemd.AgentProcess) string {
-	return fmt.Sprintf(`你正在以 Agent Systemd 进程模式运行。
-
-Exit Condition:
-%s
-
-请在当前进程上下文内完成任务。上下文默认只存在于内存；如需持久化，必须显式调用系统级持久化工具。`, proc.Spec.Exit.Condition)
+1. 先判断任务是否需要工具；如果任务明确禁止工具，不得调用任何工具。
+2. 如果任务明确指定某个工具名，必须按该工具名调用，不要用其他工具替代。
+3. 如需修改代码，保持极简 baseline，优先复用已有模块。
+4. 完成后给出可写入执行报告的简短结果、证据和后续建议。`, taskPath, t.ID, t.Title, t.Status, t.Description)
 }
 
 func (r *Runtime) writeReport(dir string, report *RunReport) (string, error) {
@@ -457,11 +544,73 @@ func (r *Runtime) writeProcessReport(dir string, report *processReport) (string,
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create process report dir: %w", err)
 	}
-	path := filepath.Join(dir, safeName(report.ProcessID)+".md")
+	name := processReportName(report)
+	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(renderProcessReport(report)), 0o644); err != nil {
 		return "", fmt.Errorf("write process report: %w", err)
 	}
 	return path, nil
+}
+
+func processLogTask(proc *systemd.AgentProcess) *task.Task {
+	if proc == nil {
+		return nil
+	}
+	id := proc.ID
+	title := proc.Name
+	if proc.SourceTask.ID != "" {
+		id = proc.SourceTask.ID
+		title = proc.SourceTask.Title
+	}
+	if title == "" {
+		title = id
+	}
+	return &task.Task{ID: id, Title: title, Description: proc.Spec.Exit.Condition}
+}
+
+func (r *Runtime) useProcessModel(proc *systemd.AgentProcess) func() {
+	if r == nil || r.Agent == nil || r.decisionModel == nil || !r.processForbidsTools(proc) {
+		return func() {}
+	}
+	old := r.Agent.GetModel()
+	r.Agent.SetModel(r.decisionModel)
+	return func() { r.Agent.SetModel(old) }
+}
+
+func (r *Runtime) processForbidsTools(proc *systemd.AgentProcess) bool {
+	if r == nil || proc == nil || proc.SourceTask.ID == "" || r.TaskList == nil {
+		return false
+	}
+	t, err := r.TaskList.GetTask(proc.SourceTask.ID)
+	if err != nil {
+		return false
+	}
+	return taskForbidsTools(t)
+}
+
+func (r *Runtime) processModelOptions(proc *systemd.AgentProcess) []model.Option {
+	if r.processForbidsTools(proc) {
+		return []model.Option{model.WithToolChoice(schema.ToolChoiceForbidden)}
+	}
+	return nil
+}
+
+func taskForbidsTools(t *task.Task) bool {
+	if t == nil {
+		return false
+	}
+	desc := strings.ToLower(t.Description)
+	return strings.Contains(desc, "不要调用工具") || strings.Contains(desc, "严禁调用任何工具")
+}
+
+func processReportName(report *processReport) string {
+	parts := []string{safeName(report.ProcessID)}
+	if report != nil && report.Source.ID != "" {
+		parts = []string{safeName(report.Source.ID), safeName(report.ProcessID)}
+	}
+	ts := time.Now().UTC().Format("20060102-150405.000000000")
+	parts = append(parts, ts)
+	return strings.Join(parts, ".") + ".md"
 }
 
 func projectDataDir(projectDir string) string {
@@ -477,13 +626,6 @@ func projectRoot(projectDir string) (string, error) {
 		return "", err
 	}
 	return cwd, nil
-}
-
-func processLogTask(proc *systemd.AgentProcess) *task.Task {
-	if proc == nil {
-		return nil
-	}
-	return &task.Task{ID: proc.ID, Title: proc.Name, Description: proc.Spec.Exit.Condition}
 }
 
 func renderReport(report *RunReport) string {
@@ -523,12 +665,19 @@ func renderProcessReport(report *processReport) string {
 			skills = append(skills, skill.Name)
 		}
 	}
+	taskID := report.Source.ID
+	taskTitle := report.Source.Title
+	eventID := report.Source.EventID
 	return fmt.Sprintf(`# Agent Process Report
 
 - process: %s
+- task: %s
+- task_title: %s
+- source_event: %s
 - status: %s
 - started_at: %s
 - ended_at: %s
+- worklog: %s
 - skills: %s
 
 ## Exit Condition
@@ -538,7 +687,7 @@ func renderProcessReport(report *processReport) string {
 ## Agent Output
 
 %s
-%s`, report.ProcessID, status, report.StartedAt.Format(time.RFC3339), report.EndedAt.Format(time.RFC3339), strings.Join(skills, ", "), report.Exit.Condition, strings.TrimSpace(report.Response), errText)
+%s`, report.ProcessID, taskID, taskTitle, eventID, status, report.StartedAt.Format(time.RFC3339), report.EndedAt.Format(time.RFC3339), report.WorkLog, strings.Join(skills, ", "), report.Exit.Condition, strings.TrimSpace(report.Response), errText)
 }
 
 func safeName(raw string) string {

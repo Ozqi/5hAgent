@@ -249,6 +249,14 @@ func mergeMeta(current *schema.ResponseMeta, incoming *schema.ResponseMeta) *sch
 //
 // 返回: 完整响应内容和可能的错误
 func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, input string, onToken TokenCallback, onReasoning ...TokenCallback) (string, error) {
+	return a.RunStreamWithOptions(ctx, messageCtx, input, onToken, nil, onReasoning...)
+}
+
+// RunStreamWithOptions 运行 Agent，并为本次模型调用追加临时 model options。
+// 参数：opts 只影响当前 RunStream 调用，不改变 Agent 持有的模型和工具列表。
+// 调用层级：runtime.RunProcess/RunTaskOnce -> RunStreamWithOptions -> model.Stream。
+// 步骤：沿用 ReAct 循环；每轮 Stream 传入 opts；工具执行路径保持不变。
+func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.Context, input string, onToken TokenCallback, opts []model.Option, onReasoning ...TokenCallback) (string, error) {
 	var reasoningCallback TokenCallback
 	if len(onReasoning) > 0 {
 		reasoningCallback = onReasoning[0]
@@ -303,7 +311,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		cb.OnModelStart(ctx, nil, &model.CallbackInput{Messages: messages})
 
 		streamCtx, streamCancel := context.WithCancel(ctx)
-		reader, err := a.model.Stream(streamCtx, messages)
+		reader, err := a.model.Stream(streamCtx, messages, opts...)
 		if err != nil {
 			streamCancel()
 			cb.OnModelError(ctx, nil, err)

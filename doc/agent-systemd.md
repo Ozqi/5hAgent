@@ -260,15 +260,16 @@ type Event struct {
 调度循环应是确定性的：
 
 ```go
-func (s *AgentSystemd) Run(ctx context.Context, runner ProcessRunner) error {
+func (s *AgentSystemd) Run(ctx context.Context, runner ProcessRunner, caller DecisionCaller) error {
     for {
-        event := s.NextEvent(ctx)
-        s.ApplyPolicy(event)
-        if s.NeedsDecision(event) {
-            decision := s.Decision(ctx, event)
-            s.ApplyDecision(decision)
+        event, ok := s.nextEvent(ctx)
+        if !ok { return ctx.Err() }
+        if err := s.dispatch(ctx, runner, event); err != nil { return err }
+        if caller != nil && event.Type == "task.failed" && event.Risk != "high" {
+            decision, err := s.Decision(ctx, caller, s.decisionInput(event))
+            if err != nil { return err }
+            if _, err := s.applyDecision(ctx, runner, decision); err != nil { return err }
         }
-        s.Dispatch()
     }
 }
 ```
@@ -356,10 +357,10 @@ func (s *AgentSystemd) Run(ctx context.Context, runner ProcessRunner) error {
 顶层调度层只需要把这些能力包装成进程生命周期：
 
 ```text
-StartProcess(spec)
-  -> build PromptSpec
+RunProcess(spec)
+  -> systemd 创建 AgentProcess
   -> runtime.NewInMemory(...)
-  -> Runtime.RunProcess(proc)
+  -> Runtime.RunProcess(proc, ipc)
   -> collect report/worklog
   -> emit process.exited
 ```
@@ -375,113 +376,50 @@ StartProcess(spec)
 
 ## 实施状态
 
-### A. 接口骨架
+### 当前实现摘要
 
-- A1. 已完成：新增 `internal/systemd` 包。
-- A2. 已完成：定义 `AgentSystemd`、`AgentProcess`、`ProcessSpec`、`PromptSpec`、`ExitSpec`、`Event`、`Decision`。
-- A3. 已完成：给每个函数写中文头注释：功能、参数、调用下层、步骤。
-- A4. 已完成：移除过早的 `BuildPrompt` 和测试文件；IPC 在事件链路稳定后作为 `sys.ipc` 最小内存队列落地。
-
-### B. Prompt 启动模型
-
-- B1. 已完成：`SkillRefs` 从已激活 skill 列表提取 `Name/Description`，生成 `PromptSpec.Skills`。
-- B2. 已完成：`SkillRefs` 不读取 skill 正文。
-- B3. 审计通过：`PromptSpec` 只含 `System` 和 `[]SkillRef`；`SkillRef` 只含 `Name/Description`。
-- B4. 进入实现阶段后，再决定是否需要 `BuildPrompt`；一行包装逻辑优先内联。
-
-### C. 内存上下文模型
-
-- C1. 已完成：新增 `runtime.NewInMemory`，可创建不绑定 session store 的 Runtime。
-- C2. 标记当前冲突点：`runtime.New`、`RunTaskOnce`、`openMessageCtx`。
-- C3. 已完成：`context.Manager` 增加 `BindSession/SaveSession/DropSession`，并注册 `sys.session create/save/drop`。
-- C4. 审计通过：`runtime.NewInMemory` 使用不 autobind 的 context manager；`Runtime.RunProcess` 每次创建空 session id 的内存 context；只有 `sys.session` 调 `BindSession/SaveSession` 才写 `~/.5hAgent/sessions`。
-- C5. 明确 meta 级 session 路径只在 `~/.5hAgent` 下。
-
-### D. 退出条件
-
-- D1. 定义 `ExitSpec` 最小字段：`Condition/Deadline/MaxTurns`。
-- D2. 已完成：定义并最小实现 `ShouldExit(proc, event) bool`。
-- D3. 审计通过：`shouldExit` 覆盖 exited/failed/stopped 状态、目标事件、`task.completed`、`MaxTurns` 和 `Deadline`。
-
-### E. 事件和 IPC
-
-- E1. 先只定义 `Event` 类型。
-- E2. 已完成：`Event.ProcessID` 标记目标进程，空值表示广播事件。
-- E3. 禁止共享 context，只允许短消息和 artifact 路径。
-- E4. 审计通过：IPC 只暴露 `from/to/summary/artifact`，`sys.ipc` 通过 `ToolRuntime.ProcessID` 调 `SendIPC/RecvIPC`，没有读取其他进程 context 的接口。
-- E5. 已完成：`IPCMessage`、`Send`、`Recv` 提供内存短消息队列。
-- E6. 已完成：`AgentSystemd.RunProcess` 注入 `ProcessID/IPC`，并注册 `sys.ipc send/recv` 工具。
-
-### F. decision
-
-- F1. 定义 `DecisionInput` / `DecisionResult`。
-- F2. 已完成：定义 `Decision(ctx, caller, input) (DecisionResult, error)`，caller 负责唯一 LM 调用。
-- F3. 已完成：`ParseDecision` 校验 JSON action enum、PromptSpec、ExitSpec。
-- F4. 审计通过：`ParseDecision` 使用 `DisallowUnknownFields`，校验 action enum、system prompt、exit 条件、skill name，并拒绝 skill 正文和未知字段。
-
-### G. 单进程调度
-
-- G1. 已完成：`StartProcess(spec)` 只接收 `ProcessSpec`。
-- G2. 已完成：定义 `ProcessRunner`，由外部执行引擎运行进程，不复制 ReAct。
-- G3. 已完成：`RunProcess` 当前只允许一个进程运行；进程表和本地 PID 由最小 mutex 保护。
-- G4. 已完成：`Emit` 对非空事件 ID 去重。
-- G5. 已完成：`RunProcess` 结束后自动投递 `process.exited/process.failed` 事件；`Runtime.RunProcess` 写进程 report/worklog，并把路径回填到结束事件 payload。
+- `internal/systemd` 是纯调度核心，只依赖标准库；执行层由 `ProcessRunner` 接口接入。
+- 启动输入固定为 `ProcessSpec{Prompt, Exit}`；`PromptSpec.Skills` 只接收外部 spec/decision/builder 已给出的 `Name/Description`，systemd 不自动读取或填充 skill 列表。
+- `runtime.NewInMemory` 提供默认不绑定 session 的运行时；只有 `sys.session create/save/drop` 会显式写 `~/.5hAgent/sessions`。
+- `Event.ProcessID` 标记目标进程；IPC 协议类型在 `internal/ipctypes`，只通过 `Message{from,to,summary,artifact}` 传短消息或 artifact 路径。
+- `Run(ctx, runner, caller)` 是唯一调度循环入口；失败事件可升级到 `Decision`，decision 输出用 `ParseDecision` 严格校验。
+- `RunProcess(ctx, runner, spec)` 创建进程、调用 runner、投递 `process.exited/process.failed`，结束事件携带 report/worklog artifact 路径。
+- `task.created` 使用独立 `TaskCreatedPayload`，`process.start/manual.request` 使用纯 `ProcessSpec`；dispatch 对两类 payload 都做严格 JSON 解析。
+- `timer.tick` 不写入 `seen` 去重表，进程结束类事件会清理 retry key，避免长期运行的状态 map 无界增长。
+- `tools.Registry`、toolmeta、MCP map 和 Agent tool event sink 已实例化到 runtime/Agent，降低多 Runtime 互相污染。
+- `5hagent daemon` 已接入最小运行期路径：启动 systemd、timer、task 文件事件源，并用当前 runtime 作为 runner/caller。
 
 ## 已落地最小实现
 
 - `internal/systemd.New()`：创建内存进程表。
-- `SkillRefs(skills)`：从已激活 skill 快照提取 `Name/Description`，不读取 skill 正文。
-- `StartEvent(type, id, source, spec)`：把 `ProcessSpec` 编码成启动类事件 payload，避免外部重复拼 JSON。
-- `StartProcess(spec)`：校验 `PromptSpec/ExitSpec`，登记本地进程，不启动 runtime。
 - `ListProcesses()`：返回进程表快照，不暴露内部 map 和指针。
-- `Emit(event)` / `Run(ctx, runner)`：内存事件队列和最小事件循环；`Emit` 对非空事件 ID 去重并唤醒循环；`Run` 等待事件直到 ctx 取消。
+- `Emit(event)` / `Run(ctx, runner, caller)`：内存事件队列和最小事件循环；`Emit` 对非空事件 ID 去重并唤醒循环；`Run` 等待事件直到 ctx 取消。
 - `StartTimer(ctx, interval)`：周期性发出 `timer.tick` 事件；ctx 取消时停止。
 - `StartSource(ctx, source)`：接入外部事件源，循环读取 `source.Next(ctx)` 并 `Emit`。
 - `NewFileEventSource(path, type, source, interval)`：轮询单个文件 mtime/size，变化时产生 `file.changed` 或调用方指定事件；首次读取只建立基线。
-- `NewTaskFileEventSource(list, interval, builder)`：复用 `TaskList` 读取 `.5hagent/task.md`，在文件变化后选择 `in_progress/pending` 任务，并由上层 builder 生成 `task.created` 事件。
-- `RunWithDecision(ctx, runner, caller)`：在 `task.failed` 事件后调用受控 decision；同一失败 key 默认最多触发一次，并用 `ApplyDecision` 执行返回动作。
-- `DispatchEvent(ctx, runner, event)`：支持 `process.start/task.created/manual.request` 从 payload 解析 `ProcessSpec` 并异步启动；`risk=high` 只记录不启动；其他事件应用 `process.exited/process.failed/process.stopped`，不启动 watcher。
+- `runtime.NewTaskFileEventSource(list, interval, builder)`：复用 `TaskList` 读取 `.5hagent/task.md`，在文件变化后选择 `in_progress/pending` 任务，并生成含 `TaskCreatedPayload` 的 `task.created` 事件。
+- `Run(ctx, runner, caller)`：在 `task.failed` 事件后调用受控 decision；同一失败 key 默认最多触发一次，并通过包内 `applyDecision` 执行 `start_agent/retry_agent/stop_agent/wait/escalate`。
+- 包内 `dispatch(ctx, runner, event)`：支持 `process.start/task.created/manual.request` 从 payload 解析 `ProcessSpec` 并异步启动；`risk=high` 只记录不启动；其他事件应用 `process.exited/process.failed/process.stopped`，不启动 watcher。
 - `timer.tick`：扫描进程退出条件，满足 `Deadline/MaxTurns` 或超过 stalled 阈值时 cancel 并标记 stopped。
 - `RunProcess(ctx, runner, spec)`：同步执行单个进程，runner 由外部注入；单进程检查和进程登记受锁保护；为运行中的进程保存 cancel；执行结束后自动投递带 report/worklog 路径的 `process.exited/process.failed` 事件。
-- `Runtime.RunProcess(ctx, proc)`：runtime 适配器，先把 `PromptSpec.System` 和 `SkillRef Name/Description` 注入内存 context，再调用 `Agent.RunStream`，最后写 Project 下的 `.5hagent/reports/<pid>.md` 和 `.5hagent/agents/<pid>/logs/`。
+- `Runtime.RunProcess(ctx, proc, ipc)`：runtime 适配器，先把 `PromptSpec.System` 和 `SkillRef Name/Description` 注入内存 context，再调用 `Agent.RunStream`，最后写 Project 下的 `.5hagent/reports/<pid>.md` 和 `.5hagent/agents/<pid>/logs/`。
 - `Runtime.CallDecision(ctx, input)`：具体 `DecisionCaller` 适配器，使用未绑定工具的模型执行一次 `Generate`，要求只返回 JSON。
-- `ShouldExit(proc, event)`：按进程状态、目标事件、`MaxTurns`、`Deadline` 判断退出。
+- 包内 `shouldExit(proc, event)`：按进程状态、目标事件、`MaxTurns`、`Deadline` 判断退出。
 - `Policy`：decision 输入包含 `dedup_event_id/single_process/high_risk_wait/max_retries/stalled_after` 的硬编码规则摘要。
 - `runtime.NewInMemory(...)`：创建默认不绑定 session 的 Runtime，但保留 session store 供 `sys.session.create` 显式持久化；现有 `runtime.New` 默认行为不变。
+- `5hagent daemon [--poll <duration>]`：启动最小 Agent Systemd 循环，先投递当前任务，再监听 task 文件变化。
 - `sys.session create/save/drop`：显式创建、保存、解除当前 context 的 session 绑定。
 - `Decision(ctx, caller, input)`：编码结构化输入，调用一次外部 `DecisionCaller`，再用 `ParseDecision` 校验输出。
 - `decisionInput(event)`：为 decision 填入当前事件、进程表快照和硬编码 policy 摘要。
 - `ParseDecision(data)`：解析并校验 decision JSON，拒绝未知字段。
-- `ApplyDecision(ctx, runner, decision)`：已校验 decision 的最小执行入口；执行 `start_agent/retry_agent`，`stop_agent` cancel 并标记目标进程 stopped，`wait/escalate` 暂不动作。
 - `sys.ipc send/recv`：内存 IPC 短消息队列，不共享 context。
 
 ## 已完成增强项
 
 - Agent Systemd 进程模式采用“进程 prompt 替代默认 main prompt”；完整 skill 正文由 `skill.skill get` 显式获取。
 - `tools.Registry` 已实例化工具列表、工具元数据和 MCP map；包级默认 registry 仍保留兼容入口。
-
-### H. 多进程前置改造
-
-- H1. 已完成：把 `tools` registry 从包级全局收敛到 runtime 实例；工具列表、工具元数据和 MCP server map 都由 `tools.Registry` 持有。
-- H2. 已完成：Agent 工具事件 sink 已实例化到 Agent；TUI/headless/runtime 不再占用包级 logger sink。
-- H3. 移除并发路径对 `os.Getwd()` 的依赖。
-- H4. 已完成当前可见边界：MCP 工具注册到 runtime 的实例 registry；MCP client 仍由 `Runtime.Close` 关闭。
-- H5. 已完成基础入口：`runtime.Options.ProjectDir` 可显式指定 Project，任务、worklog、report、项目 skill 加载都走该 Project 的 `.5hagent`；base 文件工具和 `exec_shell` 的相对路径都跟随 runtime workspace root，绝对路径仍优先。
-
-### H1 拆解：tools registry 实例化
-
-- H1.1. 已完成：新增 `tools.Registry` 结构体，包住工具列表、工具元数据和 MCP server map。
-- H1.2. 已完成：包级 registry 函数先代理默认 registry，保持兼容入口。
-- H1.3. 已完成：`Runtime` 持有自己的 registry；`WithTools` 从实例 registry 取工具。
-- H1.4. 已完成：`context.context`、`sys.session`、MCP 工具注册到当前 runtime registry。
-- H1.5. 已完成基础防护：`Registry.All/GetMCPServers` 返回副本，MCP 注册加锁；两个 Runtime 不共享工具列表、工具元数据和 MCP server map。
-
-### I. 文档同步
-
-- I1. 更新 `doc/runtime.md`：区分内存 context 和显式 session。
-- I2. 更新 `doc/context.md`：session 是 Agent 系统工具创建的持久化对象。
-- I3. 更新 `AGENTS.md`：记录 Agent Systemd 的启动参数和实现纪律。
-- I4. 更新开发日志：记录当前设计要求和现有冲突点。
+- `runtime.Options.ProjectDir` 固定 Project root；任务、worklog、report、项目 skill 和 base tools workspace root 都跟随该 Project。
+- 文档已同步到 `doc/runtime.md`、`doc/context.md`、`doc/tools.md`、`AGENTS.md` 和开发日志。
 
 ## 实现纪律
 
@@ -503,23 +441,45 @@ Agent Systemd 的实现必须继续保持本项目的极简代码风格。第一
 
 ## 当前状态
 
-已完成 Agent Systemd 的最小调度链路：进程表、内存事件队列、timer 事件源、外部事件源接口、单文件轮询 watcher、task 文件事件源、`PromptSpec/ExitSpec`、`runtime.NewInMemory`、runtime runner、decision caller、`sys.session`、`sys.ipc`、runtime 级 tools registry、`ProjectDir`、base tools workspace root、进程 report/worklog artifact 和 Agent 实例级工具事件 sink。当前实现项已闭合。
+已完成 Agent Systemd 的最小调度链路：进程表、内存事件队列、timer 事件源、外部事件源接口、单文件轮询 watcher、task 文件事件源、`PromptSpec/ExitSpec`、`runtime.NewInMemory`、runtime runner、decision caller、`sys.session`、`sys.ipc`、runtime 级 tools registry、`ProjectDir`、base tools workspace root、进程 report/worklog artifact、Agent 实例级工具事件 sink 和 `5hagent daemon` 最小入口。
+
+当前状态应表述为“串行 AgentProcess daemon 可用”，不要表述为“完备并发多 Agent 调度框架”。2026-06-30 真实复测确认：daemon 可以启动 `agent-1`，并在同一 daemon 生命周期内继续启动 `agent-2`；当前仍是串行多 AgentProcess，不是并发多 Agent。daemon task 状态闭环、task trace 持久化、report 不覆盖、IPC 基础闭环、decision retry、策略参数化和智能效果基准均按 [agent-systemd-test.md](agent-systemd-test.md) 验收。
 
 ## 完成审计
 
 | 要求 | 证据 | 状态 |
 | --- | --- | --- |
 | AgentProcess 启动只接收提示词和退出条件 | `ProcessSpec{Prompt, Exit}` | 已完成 |
-| Prompt 只含 system 和 skill 摘要 | `PromptSpec.System`、`[]SkillRef{Name, Description}`、`SkillRefs` | 已完成 |
+| Prompt 只含 system 和 skill 摘要 | `PromptSpec.System`、`[]SkillRef{Name, Description}`、`Runtime.RunProcess` 注入摘要 | 已完成 |
 | Project/WorkDir 不进入 PromptSpec | `runtime.Options.ProjectDir`、`Runtime.ProjectDir`、`tools.Registry.SetWorkspaceRoot` | 已完成 |
 | context 默认是进程内存 | `runtime.NewInMemory`、`Runtime.RunProcess` 每进程新建 context | 已完成 |
 | session 必须由 Agent 显式持久化 | `sys.session create/save/drop`、`BindSession/SaveSession/DropSession` | 已完成 |
-| Agent 间通信不共享 context | `IPCMessage` 只含 `from/to/summary/artifact`，`sys.ipc send/recv` | 已完成 |
-| 退出条件可执行 | `ShouldExit`、`timer.tick`、`RunProcess` cancel 和结束事件 | 已完成 |
+| Agent 间通信不共享 context | `ipctypes.Message` 只含 `from/to/summary/artifact`，`sys.ipc send/recv` | 已完成 |
+| 退出条件可执行 | 包内 `shouldExit`、`timer.tick`、`RunProcess` cancel 和结束事件 | 已完成 |
 | decision 是受控升级点 | `DecisionCaller`、`Decision`、`ParseDecision` 严格 JSON 校验 | 已完成 |
 | 进程结束有 report/worklog artifact | `Runtime.RunProcess` 写 report/worklog，`ProcessEventPayload` 携带路径 | 已完成 |
-| 事件源可接文件和 task 文件 | `FileEventSource`、`TaskFileEventSource` | 已完成 |
+| 事件源可接文件和 task 文件 | `systemd.FileEventSource`、`runtime.TaskFileEventSource` | 已完成 |
 | 多 Runtime 前置隔离 | `tools.Registry` 持有工具列表、工具元数据、MCP map；Agent 实例级 tool event sink | 已完成 |
+| 异步启动错误可观察 | `dispatch` 在未创建进程时补发 `process.failed`，已创建进程由 `RunProcess` 投递失败事件 | 已完成 |
+| 调度状态不无界增长 | `timer.tick` 跳过 `seen`，进程结束类事件清理 retry key | 已完成 |
+| 事件 payload 合约清晰 | `TaskCreatedPayload` 和 `ProcessSpec` 分类型解析，`decodeStrict` 拒绝未知字段 | 已完成 |
+| 端到端入口已接通 | `5hagent daemon` 组合 `systemd.New`、`NewTaskFileEventSource`、`Runtime.RunProcess`、`Runtime.CallDecision` | 已完成 |
+| systemd 有最小测试覆盖 | `internal/systemd/systemd_test.go` 覆盖 exited、高风险、异步失败、retry 上限、strict schema、timer 去重、retry 清理 | 已完成 |
+| runtime 适配层有 fake LLM 覆盖 | `internal/runtime/process_test.go` 验证 `Runtime.RunProcess` 注入 system prompt 和 skill 摘要 | 已完成 |
+
+## 已知精简项 (TODO.messages.md)
+
+- 已落地：合并 `Run/RunWithDecision`，删除 `StartProcess/DispatchEvent/ApplyDecision/ShouldExit` 公开入口，统一 `terminate` 收尾，修正 `DecisionInput.Policy` 覆盖问题。
+- 已落地：`systemd` 不再 import `agentctx/skill/task`；`TaskFileEventSource` 迁到 `runtime`；IPC 接口改为结构化 `Send/Recv`。
+- 已落地：内联 `processInput/processLogTask/nextTask/mustTaskPayload` 这类一次性 helper。
+- 复审已落地：`dispatch` 异步错误补发事件、`applyDecision` 保持未导出、`RunProcess` 先校验 spec、`EndedAt` 解锁前复制、`terminate` 标注锁约定。
+- r4 已落地：IPC 协议类型迁到 `internal/ipctypes`；`WithSystemRuntime` 改为 merge 模式；`timer.tick` 不参与 `seen` 去重；`task.created` payload 拆成独立 schema 并严格解析。
+- 保留 TODO：IPC 收信更新 `LastActiveAt` 暂保持同步可见，后续由维护者确认是否改为 `ipc.message` 事件链。
+- r4 已落地：`daemon` 子命令接通最小运行期路径；`internal/systemd/systemd_test.go` 覆盖基础调度闭环。
+- r4 已落地：`internal/runtime/process_test.go` 用 fake LLM 覆盖 `Runtime.RunProcess` 的 PromptSpec 注入。
+- r5 已落地：按当前工作树重新验证指定命令，并补充 strict schema、timer 去重、retry 清理的定向测试。
+- r6 已落地：daemon 任务状态闭环、task trace 写入 process report、report 命名不覆盖、daemon stdout 可观测性、串行策略测试、IPC 基础闭环测试、decision retry/strict JSON 测试、L4 智能效果基准和 `--max-retry` / `--stalled-after` 策略参数。
+- 保留 TODO：IPC 收信更新 `LastActiveAt` 是否改为 `ipc.message` 事件链；并发多 Agent 需先设计资源隔离；测试 workspace 产物归档规范仍需落地。
 
 验证命令：
 
@@ -532,3 +492,5 @@ git diff --check
 全仓验证状态：
 
 - `go test ./...` 通过。
+- `go build -o 5hagent cmd/5hagent/main.go` 通过。
+- `git diff --check` 通过。

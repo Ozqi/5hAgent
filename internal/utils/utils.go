@@ -109,7 +109,8 @@ type AppConfig struct {
 
 // LLMConfig LLM 提供商配置。
 type LLMConfig struct {
-	Provider             string
+	Supplier             string
+	Provider             string // 接口格式：claude / openai
 	APIKey               string
 	BaseURL              string
 	Model                string
@@ -124,6 +125,14 @@ type AgentConfig struct {
 	RepeatToolLimit     int
 	ContextAutoCompress bool
 	Debug               bool
+}
+
+// LoadConfigOptions 描述运行期对 ~/.5hAgent/.env 的覆盖。
+// CLI 可用它临时切换 supplier/format/model，不改写用户保存的配置文件。
+type LoadConfigOptions struct {
+	LLMSupplier string
+	LLMFormat   string
+	LLMModel    string
 }
 
 // 默认值常量。
@@ -160,8 +169,14 @@ func GetProjectDataDir() (string, error) {
 }
 
 // LoadConfig 从 ~/.5hAgent/.env 加载配置。
-// 步骤：读取 env 文件 -> 选择 LLM_PROVIDER -> 加载当前 provider 配置 -> 加载 Agent 配置 -> 校验。
+// 步骤：读取 env 文件 -> 选择 LLM_SUPPLIER 或兼容 LLM_PROVIDER -> 加载当前 LLM 配置 -> 加载 Agent 配置 -> 校验。
 func LoadConfig() (*AppConfig, error) {
+	return LoadConfigWithOptions(LoadConfigOptions{})
+}
+
+// LoadConfigWithOptions 从 ~/.5hAgent/.env 加载配置，并应用运行期覆盖。
+// Supplier 配置使用 LLM_<SUPPLIER>_*，其中 FORMAT 才是 claude/openai 接口格式。
+func LoadConfigWithOptions(opts LoadConfigOptions) (*AppConfig, error) {
 	config := defaultConfig()
 
 	configDir, err := GetConfigDir()
@@ -174,7 +189,10 @@ func LoadConfig() (*AppConfig, error) {
 		return nil, err
 	}
 
-	config.LLM = loadProviderLLMConfig(env, config.LLM)
+	config.LLM, err = loadLLMConfig(env, config.LLM, opts)
+	if err != nil {
+		return nil, err
+	}
 	loadAgentConfig(env, &config.Agent)
 
 	if err := config.Validate(); err != nil {
@@ -194,19 +212,79 @@ func readEnvFile(path string) (map[string]string, error) {
 	return env, nil
 }
 
+func loadLLMConfig(env map[string]string, defaults LLMConfig, opts LoadConfigOptions) (LLMConfig, error) {
+	supplier := strings.TrimSpace(opts.LLMSupplier)
+	if supplier == "" {
+		supplier = strings.TrimSpace(getEnvValue(env, "LLM_SUPPLIER", ""))
+	}
+	if supplier != "" {
+		cfg, err := loadSupplierLLMConfig(env, supplier, defaults)
+		if err != nil {
+			return LLMConfig{}, err
+		}
+		return applyLLMOverrides(env, cfg, opts), nil
+	}
+	cfg := loadProviderLLMConfig(env, defaults)
+	return applyLLMOverrides(env, cfg, opts), nil
+}
+
 func loadProviderLLMConfig(env map[string]string, defaults LLMConfig) LLMConfig {
-	provider := strings.ToLower(getEnvValue(env, "LLM_PROVIDER", defaults.Provider))
-	cfg := providerDefaults(provider, defaults)
-	cfg.Provider = provider
-	cfg.APIKey = getProviderEnv(env, provider, "API_KEY", cfg.APIKey)
-	cfg.BaseURL = getProviderEnv(env, provider, "BASE_URL", cfg.BaseURL)
-	cfg.Model = getProviderEnv(env, provider, "MODEL", cfg.Model)
-	if maxTokens := getProviderEnv(env, provider, "MAX_TOKENS", ""); maxTokens != "" {
+	format := strings.ToLower(getEnvValue(env, "LLM_PROVIDER", defaults.Provider))
+	return loadProviderLLMConfigFor(env, format, defaults)
+}
+
+func loadSupplierLLMConfig(env map[string]string, supplier string, defaults LLMConfig) (LLMConfig, error) {
+	prefix := supplierEnvPrefix(supplier)
+	format := strings.ToLower(getEnvValue(env, prefix+"_FORMAT", ""))
+	if format == "" {
+		return LLMConfig{}, fmt.Errorf("%s_FORMAT is required for LLM supplier %q", prefix, supplier)
+	}
+	cfg := providerDefaults(format, defaults)
+	cfg.Supplier = supplier
+	cfg.Provider = format
+	cfg.APIKey = getEnvValue(env, prefix+"_API_KEY", cfg.APIKey)
+	cfg.BaseURL = getEnvValue(env, prefix+"_BASE_URL", cfg.BaseURL)
+	cfg.Model = getEnvValue(env, prefix+"_MODEL", cfg.Model)
+	if maxTokens := getEnvValue(env, prefix+"_MAX_TOKENS", ""); maxTokens != "" {
 		if v, err := strconv.Atoi(maxTokens); err == nil {
 			cfg.MaxTokens = v
 		}
 	}
-	if budget := getProviderEnv(env, provider, "THINKING_BUDGET_TOKENS", ""); budget != "" {
+	if budget := getEnvValue(env, prefix+"_THINKING_BUDGET_TOKENS", ""); budget != "" {
+		if v, err := strconv.Atoi(budget); err == nil {
+			cfg.ThinkingBudgetTokens = v
+		}
+	}
+	return cfg, nil
+}
+
+func applyLLMOverrides(env map[string]string, cfg LLMConfig, opts LoadConfigOptions) LLMConfig {
+	if format := strings.ToLower(strings.TrimSpace(opts.LLMFormat)); format != "" {
+		if cfg.Supplier != "" {
+			cfg.Provider = format
+			cfg = applyProviderDefaults(cfg, defaultConfig().LLM)
+		} else {
+			cfg = loadProviderLLMConfigFor(env, format, defaultConfig().LLM)
+		}
+	}
+	if model := strings.TrimSpace(opts.LLMModel); model != "" {
+		cfg.Model = model
+	}
+	return cfg
+}
+
+func loadProviderLLMConfigFor(env map[string]string, format string, defaults LLMConfig) LLMConfig {
+	cfg := providerDefaults(format, defaults)
+	cfg.Provider = format
+	cfg.APIKey = getProviderEnv(env, format, "API_KEY", cfg.APIKey)
+	cfg.BaseURL = getProviderEnv(env, format, "BASE_URL", cfg.BaseURL)
+	cfg.Model = getProviderEnv(env, format, "MODEL", cfg.Model)
+	if maxTokens := getProviderEnv(env, format, "MAX_TOKENS", ""); maxTokens != "" {
+		if v, err := strconv.Atoi(maxTokens); err == nil {
+			cfg.MaxTokens = v
+		}
+	}
+	if budget := getProviderEnv(env, format, "THINKING_BUDGET_TOKENS", ""); budget != "" {
 		if v, err := strconv.Atoi(budget); err == nil {
 			cfg.ThinkingBudgetTokens = v
 		}
@@ -214,12 +292,27 @@ func loadProviderLLMConfig(env map[string]string, defaults LLMConfig) LLMConfig 
 	return cfg
 }
 
-func providerDefaults(provider string, defaults LLMConfig) LLMConfig {
+func providerDefaults(format string, defaults LLMConfig) LLMConfig {
 	cfg := defaults
-	if provider == "openai" {
+	cfg.Provider = format
+	if format == "openai" {
 		cfg.BaseURL = defaultOpenAIBaseURL
 		cfg.Model = ""
 		cfg.ThinkingBudgetTokens = 0
+	}
+	return cfg
+}
+
+func applyProviderDefaults(cfg LLMConfig, defaults LLMConfig) LLMConfig {
+	withDefaults := providerDefaults(cfg.Provider, defaults)
+	if cfg.BaseURL == "" || cfg.BaseURL == defaults.BaseURL || (withDefaults.Provider == "openai" && cfg.BaseURL == defaultOpenAIBaseURL) {
+		cfg.BaseURL = withDefaults.BaseURL
+	}
+	if cfg.MaxTokens == 0 {
+		cfg.MaxTokens = withDefaults.MaxTokens
+	}
+	if cfg.Model == "" {
+		cfg.Model = withDefaults.Model
 	}
 	return cfg
 }
@@ -233,6 +326,29 @@ func getProviderEnv(env map[string]string, provider, field, fallback string) str
 
 func providerEnvKey(provider, field string) string {
 	return "LLM_" + strings.ToUpper(provider) + "_" + field
+}
+
+func supplierEnvPrefix(supplier string) string {
+	var b strings.Builder
+	b.WriteString("LLM_")
+	lastUnderscore := false
+	for _, r := range supplier {
+		if r >= 'a' && r <= 'z' {
+			b.WriteRune(r - 'a' + 'A')
+			lastUnderscore = false
+			continue
+		}
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			b.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	return strings.TrimRight(b.String(), "_")
 }
 
 func loadAgentConfig(env map[string]string, config *AgentConfig) {
@@ -298,24 +414,31 @@ func validateLLMConfig(config LLMConfig) error {
 	switch config.Provider {
 	case "claude":
 		if config.APIKey == "" {
-			return fmt.Errorf("LLM_CLAUDE_API_KEY is required for claude provider. Please set in ~/.5hAgent/.env")
+			return fmt.Errorf("%s is required for claude format. Please set in ~/.5hAgent/.env", llmEnvKey(config, "API_KEY"))
 		}
 	case "openai":
-		// OpenAI-compatible 本地服务可使用 dummy key；远端服务按上游要求填写。
+	// OpenAI-compatible 本地服务可使用 dummy key；远端服务按上游要求填写。
 	default:
-		return fmt.Errorf("unsupported LLM_PROVIDER %q, supported: claude, openai", config.Provider)
+		return fmt.Errorf("unsupported LLM format %q, supported: claude, openai", config.Provider)
 	}
 	if config.BaseURL == "" {
-		return fmt.Errorf("LLM_%s_BASE_URL is required", strings.ToUpper(config.Provider))
+		return fmt.Errorf("%s is required", llmEnvKey(config, "BASE_URL"))
 	}
 	if config.Model == "" {
-		return fmt.Errorf("LLM_%s_MODEL is required", strings.ToUpper(config.Provider))
+		return fmt.Errorf("%s is required", llmEnvKey(config, "MODEL"))
 	}
 	if config.MaxTokens <= 0 {
-		return fmt.Errorf("LLM_%s_MAX_TOKENS must be positive", strings.ToUpper(config.Provider))
+		return fmt.Errorf("%s must be positive", llmEnvKey(config, "MAX_TOKENS"))
 	}
 	if config.ThinkingBudgetTokens < 0 {
-		return fmt.Errorf("LLM_%s_THINKING_BUDGET_TOKENS must be non-negative", strings.ToUpper(config.Provider))
+		return fmt.Errorf("%s must be non-negative", llmEnvKey(config, "THINKING_BUDGET_TOKENS"))
 	}
 	return nil
+}
+
+func llmEnvKey(config LLMConfig, field string) string {
+	if config.Supplier != "" {
+		return supplierEnvPrefix(config.Supplier) + "_" + field
+	}
+	return providerEnvKey(config.Provider, field)
 }

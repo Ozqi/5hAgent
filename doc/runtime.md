@@ -45,15 +45,18 @@ flowchart TD
 | --- | --- | --- | --- |
 | `runtime.New` | [`runtime.go`](../internal/runtime/runtime.go) | 初始化共享运行时 | `utils.LoadConfig` -> `task.NewTaskList` -> `agent.NewAgent` -> `tools.NewRegistry().Init` |
 | `Runtime.RunTaskOnce` | [`runtime.go`](../internal/runtime/runtime.go) | 执行一个文件任务并写报告 | `selectTask` -> `Agent.RunStream` -> `TaskList.UpdateTaskStatus` -> `writeReport` |
+| `Runtime.RunProcess` | [`runtime.go`](../internal/runtime/runtime.go) | 作为 Agent Systemd runner 执行单个 AgentProcess | 注入 `PromptSpec` -> `WithSystemRuntime` -> `Agent.RunStream` -> `writeProcessReport` |
+| `NewTaskFileEventSource` | [`event_source_task.go`](../internal/runtime/event_source_task.go) | 把 task 文件变化转换成 `task.created` 事件 | `FileEventSource.Next` -> `TaskList.ListTasksByStatus` -> `TaskSpecBuilder` |
 | `runTUI` | [`main.go`](../cmd/5hagent/main.go) | 启动 TUI 前端 | `runtime.New` -> `cli.LaunchTUI` |
 | `runHeadless` | [`main.go`](../cmd/5hagent/main.go) | 启动无头任务执行 | `runtime.New` -> `Runtime.RunTaskOnce` |
+| `runDaemon` | [`main.go`](../cmd/5hagent/main.go) | 启动 Agent Systemd 任务监督循环 | `NewInMemory` -> `systemd.New` -> `NewTaskFileEventSource` -> `AgentSystemd.Run` |
 | `headlessWorkLog` | [`worklog.go`](../internal/runtime/worklog.go) | 无头模式正常工作日志 | `logger.PushToolEventSink` -> stdout + `.5hagent/agents/<agent>/logs` |
 
 ## 初始化顺序
 
 `runtime.New` 的顺序很关键，因为工具定义必须在 `WithTools` 之前收齐：
 
-1. `utils.LoadConfig()` 读取 `~/.5hAgent/.env` 和进程环境变量。
+1. `utils.LoadConfigWithOptions()` 读取 `~/.5hAgent/.env`、进程环境变量和 CLI LLM 覆盖项。
 2. 初始化 logger、任务文件、context manager 和默认 message context；默认绑定 session，`runtime.NewInMemory` 默认不绑定 session 但保留 store 供显式持久化；`Options.ProjectDir` 可显式指定 Project 数据目录。
 3. `llm.NewClient()` 创建未绑定工具的 provider model。
 4. `utils.LoadSystemPrompt()` 加载 `main.md` 和可选模型 prefix。
@@ -78,6 +81,20 @@ flowchart TD
 7. Markdown 报告写入 `.5hagent/reports/<task-id>.md`。
 
 `taskPrompt()` 会把任务真源路径、任务 ID、标题、状态和描述写进用户消息，便于 LLM 先读取必要文件再执行。
+
+## Agent Systemd 适配
+
+`Runtime.RunProcess(ctx, proc, ipc)` 是 `systemd.ProcessRunner` 的执行层适配器：
+
+1. 为当前进程创建新的内存 message context。
+2. 把 `PromptSpec.System` 和每个 `SkillRef{Name, Description}` 写入 system message。
+3. 用 `agentctx.WithSystemRuntime` 注入当前 `ProcessID` 和结构化 IPC 实现，供 `sys.ipc` 工具使用。
+4. 调用 `Agent.RunStream` 执行进程退出条件。
+5. 写 `.5hagent/reports/<pid>.md` 和 `.5hagent/agents/<pid>/logs/`，并回填 `AgentProcess.ReportPath/WorkLogPath`。
+
+`runtime.NewTaskFileEventSource` 属于 runtime 适配层，不在 `internal/systemd` 主包里。它复用已有 `TaskList`，把 `.5hagent/task.md` 的变化转换成 `task.created` 事件；payload 使用 `systemd.TaskCreatedPayload`，其中 `ProcessSpec` 由调用方提供的 `TaskSpecBuilder` 生成，`task_id/task_title/file_event` 保留给调度审计。
+
+`5hagent daemon` 是当前最小接通入口：启动时先把已有 `pending/in_progress` 任务投递一次，然后用 `TaskFileEventSource` 监听文件变化；`--poll` 控制 task 文件和 timer 的轮询间隔。
 
 ### Headless 工作日志
 
@@ -108,12 +125,15 @@ Runtime 将 `.env` 中的配置拆成两个方向：
 
 | 配置 | 传入位置 | 用途 |
 | --- | --- | --- |
-| `LLM_PROVIDER` / `LLM_<PROVIDER>_*` | `llm.NewClient` | 创建 Claude 或 OpenAI-compatible 模型 |
+| `LLM_SUPPLIER` / `LLM_<SUPPLIER>_*` | `llm.NewClient` | 选择一套供应商 LLM 配置 |
+| `LLM_<SUPPLIER>_FORMAT` | `llm.NewClient` | 选择供应商使用的 `claude` 或 `openai` 接口格式 |
+| `LLM_PROVIDER` / `LLM_<PROVIDER>_*` | `llm.NewClient` | 兼容旧版 Claude 或 OpenAI-compatible 配置 |
 | `AGENT_NAME` | `agent.Config.Name` | Agent 名称 |
 | `AGENT_MAX_TOTAL_TOKENS` | `agent.Config.MaxTotalTokens` | 整场会话 token budget |
 | `AGENT_REPEAT_TOOL_LIMIT` | `agent.Config.RepeatToolLimit` | 相同工具调用重复 warn 阈值 |
 | `AGENT_CONTEXT_AUTO_COMPRESS` | `agent.Config.ContextAutoCompress` | 是否在 `RunStream` 中自动触发压缩 |
 | `--debug` | `agent.Config.Debug` | Runtime logger 和 Agent debug 输出 |
+| `--llm-supplier` / `--llm-format` / `--llm-model` | `utils.LoadConfigWithOptions` | 临时切换当前供应商、接口格式或模型，不改写 `.env` |
 | `run --quiet` | `RunOptions.WorkLog=false` | 关闭终端工作日志，保留项目内 work log 文件 |
 
 ## 副作用

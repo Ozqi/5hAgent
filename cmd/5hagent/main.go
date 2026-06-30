@@ -1,25 +1,33 @@
 // main.go - 5hAgent 程序入口
 // 功能：提供 TUI 交互入口和无头 runtime 入口，两者共享 internal/runtime 初始化链路。
 // 调用方：用户通过 5hagent、5hagent run 启动；测试可直接复用 internal/runtime。
-// 全局状态：debugMode/sessionID/continueLast/runTaskID/runReportDir 保存 CLI flag 解析结果。
+// 全局状态：debugMode/sessionID/continueLast/llmSupplier 等保存 CLI flag 解析结果。
 package main
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/lzq/5hAgent/internal/cli"
 	agentrt "github.com/lzq/5hAgent/internal/runtime"
+	"github.com/lzq/5hAgent/internal/systemd"
 	"github.com/spf13/cobra"
 )
 
 var debugMode bool
 var sessionID string
 var continueLast bool
+var llmSupplier string
+var llmFormat string
+var llmModel string
 var runTaskID string
 var runReportDir string
 var runQuiet bool
+var daemonPoll time.Duration
+var daemonMaxRetry int
+var daemonStalledAfter time.Duration
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -31,6 +39,9 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&debugMode, "debug", false, "Enable debug mode with verbose logging")
 	rootCmd.PersistentFlags().StringVar(&sessionID, "session", "", "Resume from existing session ID")
 	rootCmd.PersistentFlags().BoolVarP(&continueLast, "continue", "c", false, "Resume from the last session")
+	rootCmd.PersistentFlags().StringVar(&llmSupplier, "llm-supplier", "", "LLM supplier name from ~/.5hAgent/.env")
+	rootCmd.PersistentFlags().StringVar(&llmFormat, "llm-format", "", "Temporarily select LLM API format: claude or openai")
+	rootCmd.PersistentFlags().StringVar(&llmModel, "llm-model", "", "Temporarily override the selected LLM model")
 
 	runCmd := &cobra.Command{
 		Use:   "run",
@@ -43,6 +54,17 @@ func main() {
 	runCmd.Flags().BoolVar(&runQuiet, "quiet", false, "Suppress headless work log output; only print report path and errors")
 	rootCmd.AddCommand(runCmd)
 
+	daemonCmd := &cobra.Command{
+		Use:   "daemon",
+		Short: "Run the Agent Systemd task supervisor",
+		Long:  "Run the Agent Systemd loop for .5hagent/task.md. Existing and changed pending/in_progress tasks are started as Agent processes.",
+		Run:   runDaemon,
+	}
+	daemonCmd.Flags().DurationVar(&daemonPoll, "poll", time.Second, "Polling interval for .5hagent/task.md")
+	daemonCmd.Flags().IntVar(&daemonMaxRetry, "max-retry", 1, "Maximum decision retry count for the same failed source")
+	daemonCmd.Flags().DurationVar(&daemonStalledAfter, "stalled-after", 30*time.Minute, "Stop a running AgentProcess after this idle duration; <=0 disables stalled checks")
+	rootCmd.AddCommand(daemonCmd)
+
 	if err := rootCmd.Execute(); err != nil {
 		cli.PrintError(err)
 		os.Exit(1)
@@ -53,7 +75,7 @@ func main() {
 // 步骤：初始化 Runtime -> 将 Runtime 对象交给 TUI -> 退出时关闭 MCP 和日志。
 func runTUI(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
-	rt, err := agentrt.New(ctx, agentrt.Options{Debug: debugMode, SessionID: sessionID, ContinueLast: continueLast})
+	rt, err := agentrt.New(ctx, runtimeOptions(false))
 	if err != nil {
 		cli.PrintError(err)
 		os.Exit(1)
@@ -70,7 +92,7 @@ func runTUI(cmd *cobra.Command, args []string) {
 // 交互边界：输入来自 .5hagent/task.md，输出写入 .5hagent/reports/<task-id>.md。
 func runHeadless(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
-	rt, err := agentrt.New(ctx, agentrt.Options{Debug: debugMode, SessionID: sessionID, ContinueLast: continueLast})
+	rt, err := agentrt.New(ctx, runtimeOptions(false))
 	if err != nil {
 		cli.PrintError(err)
 		os.Exit(1)
@@ -84,5 +106,40 @@ func runHeadless(cmd *cobra.Command, args []string) {
 	if err != nil {
 		cli.PrintError(err)
 		os.Exit(1)
+	}
+}
+
+// runDaemon 启动 Agent Systemd 最小调度循环。
+// 交互边界：监听当前项目 .5hagent/task.md，把 in_progress/pending 任务交给 Runtime.RunProcess。
+func runDaemon(cmd *cobra.Command, args []string) {
+	ctx := context.Background()
+	rt, err := agentrt.NewInMemory(ctx, runtimeOptions(true))
+	if err != nil {
+		cli.PrintError(err)
+		os.Exit(1)
+	}
+	defer rt.Close()
+
+	sys := systemd.New(systemd.WithMaxRetry(daemonMaxRetry), systemd.WithStalledAfter(daemonStalledAfter))
+	sys.StartTimer(ctx, daemonPoll)
+	sys.StartSource(ctx, agentrt.NewTaskFileEventSource(rt.TaskList, daemonPoll, rt.TaskProcessSpec))
+	if err := rt.EmitCurrentTask(sys); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: %v\n", err)
+	}
+	if err := sys.Run(ctx, rt, rt); err != nil && err != context.Canceled {
+		cli.PrintError(err)
+		os.Exit(1)
+	}
+}
+
+func runtimeOptions(memory bool) agentrt.Options {
+	return agentrt.Options{
+		Debug:         debugMode,
+		SessionID:     sessionID,
+		ContinueLast:  continueLast,
+		MemoryContext: memory,
+		LLMSupplier:   llmSupplier,
+		LLMFormat:     llmFormat,
+		LLMModel:      llmModel,
 	}
 }

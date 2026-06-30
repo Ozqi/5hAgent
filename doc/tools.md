@@ -158,7 +158,7 @@ func (r *Registry) RegisterContextTool(llm model.ToolCallingChatModel, promptDir
 - `send` 必须带 `to`，且 `summary/artifact` 至少一个非空
 - `recv` 只接收当前 Agent process 的消息
 - 不共享 context，只传短消息或 artifact 路径
-- 工具执行依赖 Agent Systemd 注入 `ProcessID/IPC`
+- 工具执行依赖 runtime 注入 `ProcessID/IPC`，IPC 消息协议是 `internal/ipctypes.Message`
 
 Project 路径边界：
 

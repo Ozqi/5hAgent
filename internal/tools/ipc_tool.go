@@ -11,6 +11,7 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	agentctx "github.com/lzq/5hAgent/internal/context"
+	"github.com/lzq/5hAgent/internal/ipctypes"
 )
 
 const (
@@ -64,12 +65,12 @@ func (t *IPCTool) InvokableRun(ctx context.Context, args string, opts ...tool.Op
 		if input.To == "" {
 			return "", fmt.Errorf("send requires to")
 		}
-		if err := rt.IPC.SendIPC(rt.ProcessID, input.To, input.Summary, input.Artifact); err != nil {
+		if err := rt.IPC.Send(ipctypes.Message{From: rt.ProcessID, To: input.To, Summary: input.Summary, Artifact: input.Artifact}); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf(`{"ok":true,"action":"send","from":%q,"to":%q}`, rt.ProcessID, input.To), nil
 	case "recv":
-		messages, err := rt.IPC.RecvIPC(rt.ProcessID)
+		messages, err := rt.IPC.Recv(rt.ProcessID)
 		if err != nil {
 			return "", err
 		}

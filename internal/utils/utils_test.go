@@ -74,6 +74,126 @@ func TestLoadConfigReadsOpenAIProviderConfig(t *testing.T) {
 	}
 }
 
+func TestLoadConfigReadsSelectedSupplier(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	writeConfig(t, home, strings.Join([]string{
+		"LLM_SUPPLIER=openrouter",
+		"LLM_OPENROUTER_FORMAT=openai",
+		"LLM_OPENROUTER_API_KEY=provider-key",
+		"LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
+		"LLM_OPENROUTER_MODEL=openrouter/owl-alpha",
+		"LLM_OPENROUTER_MAX_TOKENS=2048",
+		"LLM_ANTHROPIC_FORMAT=claude",
+		"LLM_ANTHROPIC_API_KEY=anthropic-key",
+		"LLM_ANTHROPIC_MODEL=claude-test",
+	}, "\n"))
+
+	config, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if config.LLM.Supplier != "openrouter" {
+		t.Fatalf("Supplier = %q, want openrouter", config.LLM.Supplier)
+	}
+	if config.LLM.Provider != "openai" {
+		t.Fatalf("Provider = %q, want openai format", config.LLM.Provider)
+	}
+	if config.LLM.APIKey != "provider-key" {
+		t.Fatalf("APIKey = %q, want provider-key", config.LLM.APIKey)
+	}
+	if config.LLM.BaseURL != "https://openrouter.ai/api/v1" {
+		t.Fatalf("BaseURL = %q", config.LLM.BaseURL)
+	}
+	if config.LLM.Model != "openrouter/owl-alpha" {
+		t.Fatalf("Model = %q", config.LLM.Model)
+	}
+	if config.LLM.MaxTokens != 2048 {
+		t.Fatalf("MaxTokens = %d, want 2048", config.LLM.MaxTokens)
+	}
+}
+
+func TestLoadConfigOptionsOverrideSupplier(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	writeConfig(t, home, strings.Join([]string{
+		"LLM_SUPPLIER=openrouter",
+		"LLM_OPENROUTER_FORMAT=openai",
+		"LLM_OPENROUTER_API_KEY=router-key",
+		"LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
+		"LLM_OPENROUTER_MODEL=openrouter/owl-alpha",
+		"LLM_ANTHROPIC_FORMAT=claude",
+		"LLM_ANTHROPIC_API_KEY=anthropic-key",
+		"LLM_ANTHROPIC_BASE_URL=https://api.anthropic.com",
+		"LLM_ANTHROPIC_MODEL=claude-test",
+		"LLM_ANTHROPIC_THINKING_BUDGET_TOKENS=1024",
+	}, "\n"))
+
+	config, err := LoadConfigWithOptions(LoadConfigOptions{LLMSupplier: "anthropic"})
+	if err != nil {
+		t.Fatalf("LoadConfigWithOptions() error = %v", err)
+	}
+	if config.LLM.Supplier != "anthropic" {
+		t.Fatalf("Supplier = %q, want anthropic", config.LLM.Supplier)
+	}
+	if config.LLM.Provider != "claude" {
+		t.Fatalf("Provider = %q, want claude format", config.LLM.Provider)
+	}
+	if config.LLM.APIKey != "anthropic-key" {
+		t.Fatalf("APIKey = %q, want anthropic-key", config.LLM.APIKey)
+	}
+	if config.LLM.ThinkingBudgetTokens != 1024 {
+		t.Fatalf("ThinkingBudgetTokens = %d, want 1024", config.LLM.ThinkingBudgetTokens)
+	}
+}
+
+func TestLoadConfigOptionsOverrideFormatAndModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	writeConfig(t, home, strings.Join([]string{
+		"LLM_SUPPLIER=openrouter",
+		"LLM_OPENROUTER_FORMAT=openai",
+		"LLM_OPENROUTER_API_KEY=router-key",
+		"LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
+		"LLM_OPENROUTER_MODEL=openrouter/owl-alpha",
+	}, "\n"))
+
+	config, err := LoadConfigWithOptions(LoadConfigOptions{LLMFormat: "openai", LLMModel: "openrouter/auto"})
+	if err != nil {
+		t.Fatalf("LoadConfigWithOptions() error = %v", err)
+	}
+	if config.LLM.Supplier != "openrouter" {
+		t.Fatalf("Supplier = %q, want openrouter", config.LLM.Supplier)
+	}
+	if config.LLM.Provider != "openai" {
+		t.Fatalf("Provider = %q, want openai format", config.LLM.Provider)
+	}
+	if config.LLM.Model != "openrouter/auto" {
+		t.Fatalf("Model = %q", config.LLM.Model)
+	}
+	if config.LLM.BaseURL != "https://openrouter.ai/api/v1" {
+		t.Fatalf("BaseURL = %q", config.LLM.BaseURL)
+	}
+}
+
+func TestLoadConfigRejectsSupplierWithoutFormat(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	writeConfig(t, home, "LLM_SUPPLIER=broken\nLLM_BROKEN_MODEL=qwen3:14b\n")
+
+	_, err := LoadConfig()
+	if err == nil {
+		t.Fatal("LoadConfig() error = nil, want supplier format error")
+	}
+	if !strings.Contains(err.Error(), "LLM_BROKEN_FORMAT") {
+		t.Fatalf("LoadConfig() error = %v, want supplier format key", err)
+	}
+}
+
 func TestLoadConfigRejectsMissingProviderSpecificKeys(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -147,7 +267,7 @@ func TestLoadConfigRejectsUnsupportedProvider(t *testing.T) {
 	if err == nil {
 		t.Fatal("LoadConfig() error = nil, want provider error")
 	}
-	if !strings.Contains(err.Error(), "unsupported LLM_PROVIDER") {
+	if !strings.Contains(err.Error(), "unsupported LLM format") {
 		t.Fatalf("LoadConfig() error = %v, want unsupported provider", err)
 	}
 }

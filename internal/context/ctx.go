@@ -14,6 +14,7 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"github.com/lzq/5hAgent/internal/ipctypes"
 	"github.com/lzq/5hAgent/internal/utils"
 )
 
@@ -43,8 +44,8 @@ type toolRuntimeKey struct{}
 
 // IPC 是 Agent Systemd 暴露给系统工具的最小进程通信接口。
 type IPC interface {
-	SendIPC(from string, to string, summary string, artifact string) error
-	RecvIPC(pid string) ([]string, error)
+	Send(msg ipctypes.Message) error
+	Recv(pid string) ([]ipctypes.Message, error)
 }
 
 type ToolRuntime struct {
@@ -54,6 +55,7 @@ type ToolRuntime struct {
 	IPC       IPC
 }
 
+// WithToolRuntime 以 merge 模式注入消息上下文，可与 WithSystemRuntime 任意顺序组合。
 func WithToolRuntime(ctx context.Context, mgr *Manager, msgCtx *Context) context.Context {
 	rt, _ := ctx.Value(toolRuntimeKey{}).(ToolRuntime)
 	rt.Manager = mgr
@@ -61,8 +63,14 @@ func WithToolRuntime(ctx context.Context, mgr *Manager, msgCtx *Context) context
 	return context.WithValue(ctx, toolRuntimeKey{}, rt)
 }
 
+// WithSystemRuntime 以 merge 模式注入进程身份和 IPC，可与 WithToolRuntime 任意顺序组合。
 func WithSystemRuntime(ctx context.Context, mgr *Manager, msgCtx *Context, processID string, ipc IPC) context.Context {
-	return context.WithValue(ctx, toolRuntimeKey{}, ToolRuntime{Manager: mgr, Context: msgCtx, ProcessID: processID, IPC: ipc})
+	rt, _ := ctx.Value(toolRuntimeKey{}).(ToolRuntime)
+	rt.Manager = mgr
+	rt.Context = msgCtx
+	rt.ProcessID = processID
+	rt.IPC = ipc
+	return context.WithValue(ctx, toolRuntimeKey{}, rt)
 }
 
 func ToolRuntimeFrom(ctx context.Context) (ToolRuntime, bool) {

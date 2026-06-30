@@ -26,25 +26,33 @@ bash install.sh
 curl -fsSL https://raw.githubusercontent.com/Ozqi/5hAgent/master/install.sh | bash
 ```
 
-3. 配置 LLM：`~/.5hAgent/.env`，不同 provider 的配置可以同时保留，`LLM_PROVIDER` 决定当前使用谁：
+3. 配置 LLM：`~/.5hAgent/.env`，可以按供应商保存多套配置，`LLM_SUPPLIER` 决定默认使用哪套：
 
 ```env
-LLM_PROVIDER=claude
+LLM_SUPPLIER=openrouter
 
-LLM_CLAUDE_API_KEY=your_api_key
-LLM_CLAUDE_BASE_URL=https://api.anthropic.com
-LLM_CLAUDE_MODEL=claude-sonnet-4-6
-LLM_CLAUDE_MAX_TOKENS=4096
-LLM_CLAUDE_THINKING_BUDGET_TOKENS=0
+LLM_OPENROUTER_FORMAT=openai
+LLM_OPENROUTER_API_KEY=your_api_key
+LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+LLM_OPENROUTER_MODEL=openrouter/owl-alpha
+LLM_OPENROUTER_MAX_TOKENS=4096
 
-LLM_OPENAI_API_KEY=dummy
-LLM_OPENAI_BASE_URL=http://localhost:11434/v1
-LLM_OPENAI_MODEL=qwen3:14b
-LLM_OPENAI_MAX_TOKENS=4096
-LLM_OPENAI_THINKING_BUDGET_TOKENS=0
+LLM_ANTHROPIC_FORMAT=claude
+LLM_ANTHROPIC_API_KEY=your_api_key
+LLM_ANTHROPIC_BASE_URL=https://api.anthropic.com
+LLM_ANTHROPIC_MODEL=claude-sonnet-4-6
+LLM_ANTHROPIC_MAX_TOKENS=4096
+LLM_ANTHROPIC_THINKING_BUDGET_TOKENS=0
 
 AGENT_NAME=5hAgent
 AGENT_CONTEXT_AUTO_COMPRESS=true
+```
+
+这里的 `FORMAT=openai|claude` 表示接口协议，不是供应商名。旧版 `LLM_PROVIDER` + `LLM_CLAUDE_*` / `LLM_OPENAI_*` 配置仍然兼容。临时切换时可以不改 `.env`：
+
+```bash
+5hagent --llm-supplier anthropic run
+5hagent --llm-format openai --llm-model openrouter/owl-alpha run
 ```
 
 ### 使用本地 Ollama
@@ -57,19 +65,20 @@ ollama pull qwen3:14b
 ollama serve
 ```
 
-5hAgent 只区分两种接口风格：`claude` 和 `openai`。Ollama 通过 OpenAI-compatible `/v1` 接口接入，切到本地 Ollama 时只改当前 provider：
+5hAgent 只区分两种接口格式：`claude` 和 `openai`。Ollama 通过 OpenAI-compatible `/v1` 接口接入，可以保存成 `ollama` 供应商配置：
 
 ```env
-LLM_PROVIDER=openai
-LLM_OPENAI_BASE_URL=http://localhost:11434/v1
-LLM_OPENAI_MODEL=qwen3:14b
-LLM_OPENAI_API_KEY=dummy
+LLM_SUPPLIER=ollama
+LLM_OLLAMA_FORMAT=openai
+LLM_OLLAMA_BASE_URL=http://localhost:11434/v1
+LLM_OLLAMA_MODEL=qwen3:14b
+LLM_OLLAMA_API_KEY=dummy
 ```
 
-Ollama 当前使用哪个模型由 `LLM_OPENAI_MODEL` 决定。例如使用 HuggingFace GGUF：
+Ollama 当前使用哪个模型由当前供应商配置的 `MODEL` 决定。例如使用 HuggingFace GGUF：
 
 ```env
-LLM_OPENAI_MODEL=hf.co/bartowski/Qwen_Qwen3.6-27B-GGUF:Q3_K_M
+LLM_OLLAMA_MODEL=hf.co/bartowski/Qwen_Qwen3.6-27B-GGUF:Q3_K_M
 ```
 
 Ollama 本地模型不校验 API key，`dummy` 即可。建议先用 `5hagent run` 执行一个只读任务验证 chat、工具调用和报告落盘。
@@ -104,6 +113,22 @@ EOF
 5hagent run --task baseline-demo
 # 脚本场景只保留 report 路径和错误
 5hagent run --quiet
+```
+
+实验性的 Agent Systemd 入口可以持续监听 `.5hagent/task.md`，把当前或变更后的 `pending/in_progress` 任务作为 AgentProcess 执行：
+
+```bash
+5hagent daemon
+# 调整 task.md 轮询间隔
+5hagent daemon --poll 2s
+# 调整失败重试和 stalled 检测
+5hagent daemon --max-retry 2 --stalled-after 10m
+```
+
+daemon 会输出 process start/completed/failed、task id 和 report path。AgentProcess 成功退出后，源任务会自动标记为 `completed`；失败时标记为 `failed`。进程报告使用 task/process/timestamp 命名，避免覆盖旧报告：
+
+```text
+.5hagent/reports/<task-id>.<process-id>.<timestamp>.md
 ```
 
 无头模式默认会在终端输出正常工作日志，包括 assistant 流式文本、工具调用和工具结果摘要。每次运行还会按 Agent 名称写一份 Markdown 工作日志，便于多个 Agent 并行或轮流运行时分开追踪：

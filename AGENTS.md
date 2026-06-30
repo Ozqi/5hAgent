@@ -25,6 +25,7 @@ cmd/5hagent/main.go
 
 - TUI：`5hagent` 初始化 runtime 后启动 Bubble Tea。
 - Headless：`5hagent run [--task <id>]` 读取项目目录 `.5hagent/task.md`，执行一个 `in_progress` 或 `pending` 任务，并写 `.5hagent/reports/<task-id>.md`。
+- Daemon：`5hagent daemon [--poll <duration>]` 启动最小 Agent Systemd 循环，监听 `.5hagent/task.md` 并把 `pending/in_progress` 任务作为 AgentProcess 执行。
 - Session：对话消息默认持久化到 `~/.5hAgent/sessions/*.jsonl`。
 
 ## 当前代码事实
@@ -56,8 +57,10 @@ cmd/5hagent/main.go
 
 ## 全局配置事实
 
-- LLM provider 由 `LLM_PROVIDER=claude|openai` 选择，语义是接口风格，不绑定具体模型品牌。
-- provider 配置分别放在 `LLM_CLAUDE_*` 和 `LLM_OPENAI_*`；本地 Ollama 通过 `LLM_PROVIDER=openai` + `LLM_OPENAI_BASE_URL=http://localhost:11434/v1` 接入。
+- LLM 配置优先用 `LLM_SUPPLIER=<name>` 选择真实供应商，字段放在 `LLM_<SUPPLIER>_*`；`<name>` 会转成大写下划线形式，例如 `openrouter` -> `LLM_OPENROUTER_*`。
+- `LLM_<SUPPLIER>_FORMAT=claude|openai` 表示接口格式，不是供应商；`LLM_PROVIDER=claude|openai` 和 `LLM_CLAUDE_*` / `LLM_OPENAI_*` 仍是兼容路径。
+- 本地 Ollama 作为供应商 `ollama` 配置，通过 `LLM_OLLAMA_FORMAT=openai` + `LLM_OLLAMA_BASE_URL=http://localhost:11434/v1` 接入。
+- CLI 可用 `--llm-supplier`、`--llm-format`、`--llm-model` 临时切换供应商、接口格式或模型，不改写 `~/.5hAgent/.env`。
 - Agent 配置包括 `AGENT_NAME`、`AGENT_MAX_TOTAL_TOKENS`、`AGENT_REPEAT_TOOL_LIMIT`、`AGENT_CONTEXT_AUTO_COMPRESS`。
 - Prompts 从 `~/.5hAgent/prompt/*.md` 加载；主 prompt 是 `main.md`，模型专用前缀是 `prefix.<provider>.<model-slug>.md`。
 - Skills 启动时从 `~/.5hAgent/skills/*/SKILL.md` 和项目 `.5hagent/skills/*/SKILL.md` 加载；项目同名 skill 覆盖全局 skill，Agent 生命周期内不热加载也不动态启停。
@@ -122,6 +125,26 @@ LLM 可见工具当前包括：
 当前执行策略：`RunStream` 中 LLM stream 读取和工具 worker 可以重叠；多个工具调用在单个 worker 内仍是串行执行。不要把当前实现描述成“只读工具并行”。
 
 `context.context` 支持 `inspect/pin/audit/compress`。它依赖 `Agent.RunStream()` 通过 `agentctx.WithToolRuntime(ctx, manager, messageCtx)` 注入当前上下文；脱离当前 Agent 上下文直接调用会失败。
+
+`sys.ipc` 依赖 Agent Systemd 进程模式下的 runtime 注入 `ProcessID` 和结构化 IPC；消息协议由 `internal/ipctypes.Message` 定义，字段限制为 `from/to/summary/artifact`，不能共享或读取其他进程 context。
+
+## Agent Systemd 当前边界
+
+- `internal/systemd` 是纯调度核心，只依赖标准库；不要在该包重新引入 `agentctx`、`skill`、`task` 等执行层或业务包。
+- `ProcessSpec` 只包含 `PromptSpec` 和 `ExitSpec`；Project、WorkDir、SessionID、工具白名单等执行期细节仍归 runtime 或工具层处理。
+- `PromptSpec.Skills` 只接收外部 spec/decision/builder 已给出的 `Name/Description`，systemd 不自动读取或填充 skill 列表。
+- `AgentSystemd.Run(ctx, runner, caller)` 是唯一调度循环入口；`caller == nil` 时只执行硬编码规则，`task.failed` 且需要升级判断时才调用 decision。
+- `ProcessRunner` 当前签名是 `RunProcess(ctx, proc, ipc)`；由 runtime 自己把 `ProcessID/IPC` 注入 `agentctx.WithSystemRuntime`。
+- `TaskFileEventSource` 属于 `internal/runtime/event_source_task.go` 适配层；`internal/systemd` 只保留通用 `EventSource` 和 `FileEventSource`。
+- `task.created` 使用 `TaskCreatedPayload{process_spec, task_id, task_title, file_event}`；`process.start/manual.request` payload 是纯 `ProcessSpec`，dispatch 严格解析并拒绝未知字段。
+- `timer.tick` 不进入 `seen` 去重表，避免长期运行时 `seen` 无界增长；进程结束类事件会清理相关 retry key。
+- `RunProcess` 结束后投递 `process.exited/process.failed`，事件 payload 应携带 report/worklog artifact 路径。
+- `task.created` 的 `task_id/task_title` 会进入 `AgentProcess.SourceTask`，不进入 `ProcessSpec`；runtime 用它写 process report、worklog，并在进程结束后把源 task 标记为 `completed/failed`。
+- daemon report 使用 `<task-id>.<process-id>.<timestamp>.md`，不要恢复成只用 `agent-<n>.md` 的覆盖式命名。
+- daemon stdout 需要保留 process start/completed/failed、task id 和 report path，方便长期运行时判断状态。
+- daemon 策略参数通过 `--max-retry` 和 `--stalled-after` 配置；当前不暴露 `maxConcurrency`，因为调度策略仍是串行多 AgentProcess。
+- `dispatch` 异步启动失败但尚未创建进程时，需要补发 `process.failed` 事件；已创建进程后的 runner 错误由 `RunProcess` 自己投递失败事件。
+- `cmd/5hagent/main.go` 的 `daemon` 子命令是当前最小运行期调用方；systemd 冒烟测试覆盖 process start/exited、高风险事件、异步失败事件和 retry 上限。
 
 ## 上下文和压缩
 
