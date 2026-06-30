@@ -39,6 +39,7 @@ type Options struct {
 	LLMSupplier   string
 	LLMFormat     string
 	LLMModel      string
+	ModelRef      string
 }
 
 // Runtime 持有一次 5hAgent 进程运行所需的核心对象。
@@ -96,6 +97,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		LLMSupplier: opts.LLMSupplier,
 		LLMFormat:   opts.LLMFormat,
 		LLMModel:    opts.LLMModel,
+		ModelRef:    opts.ModelRef,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("load configuration: %w", err)
@@ -159,6 +161,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		RepeatToolLimit:     appConfig.Agent.RepeatToolLimit,
 		ContextAutoCompress: appConfig.Agent.ContextAutoCompress,
 		Debug:               appConfig.Agent.Debug,
+		DisableStream:       !appConfig.LLM.Stream,
 		SystemPrompt:        systemPrompt,
 		ProjectDataDir:      projectDataDir,
 	})

@@ -5,7 +5,7 @@
 
 ## 摘要
 
-LLM 模块负责把 `~/.5hAgent/.env` 中当前 supplier 配置转换成 Eino 的 `model.ToolCallingChatModel`。推荐用 `LLM_SUPPLIER` 保存多套供应商配置；`LLM_<SUPPLIER>_FORMAT=openai|claude` 只表示接口格式。旧版 `LLM_PROVIDER` + `LLM_<PROVIDER>_*` 仍兼容。
+LLM 模块负责把 `~/.5hAgent/.env` 中当前模型配置转换成 Eino 的 `model.ToolCallingChatModel`。推荐用 `LLM_MODEL=supplier/model` 表示当前模型，并用 `LLM_<SUPPLIER>_FORMAT=openai|claude` 描述供应商接口格式。旧版 `LLM_SUPPLIER` 和 `LLM_PROVIDER` 配置仍兼容。
 
 ## 架构
 
@@ -13,7 +13,7 @@ LLM 模块负责把 `~/.5hAgent/.env` 中当前 supplier 配置转换成 Eino �
 flowchart LR
     Env[~/.5hAgent/.env] --> Load[utils.LoadConfigWithOptions]
     CLI[CLI override] --> Load
-    Load --> Pick[选择 LLM_SUPPLIER 或兼容 LLM_PROVIDER]
+    Load --> Pick[选择 LLM_MODEL 或兼容 LLM_SUPPLIER]
     Pick --> Active[当前 LLM 配置]
     Active --> Runtime[runtime.New]
     Runtime --> Config[llm.Config]
@@ -63,6 +63,7 @@ type LLMClient struct {
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
+| `LLM_MODEL` | 当前默认模型，格式为 `supplier/model` | - |
 | `LLM_SUPPLIER` | 当前默认供应商名 | - |
 | `LLM_<SUPPLIER>_FORMAT` | 当前供应商的接口格式，支持 `claude` / `openai` | 必填 |
 | `LLM_<SUPPLIER>_API_KEY` | 当前供应商的 API Key | Claude format 必填；OpenAI-compatible 按上游要求 |
@@ -70,6 +71,7 @@ type LLMClient struct {
 | `LLM_<SUPPLIER>_MODEL` | 当前供应商的模型名 | 必填 |
 | `LLM_<SUPPLIER>_MAX_TOKENS` | 当前供应商最大生成 token | `4096` |
 | `LLM_<SUPPLIER>_THINKING_BUDGET_TOKENS` | Claude extended thinking 预算 | `0` |
+| `LLM_<SUPPLIER>_STREAM` | 是否使用流式调用；`false` 时走非流式 `Generate` | `true` |
 
 ### Provider-specific 兼容环境变量
 
@@ -97,13 +99,14 @@ type LLMClient struct {
 ### 多供应商配置示例
 
 ```env
-LLM_SUPPLIER=openrouter
+LLM_MODEL=openrouter/owl-alpha
 
 LLM_OPENROUTER_FORMAT=openai
 LLM_OPENROUTER_API_KEY=your_api_key
 LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 LLM_OPENROUTER_MODEL=openrouter/owl-alpha
 LLM_OPENROUTER_MAX_TOKENS=4096
+LLM_OPENROUTER_STREAM=false
 
 LLM_ANTHROPIC_FORMAT=claude
 LLM_ANTHROPIC_API_KEY=your_api_key
@@ -116,6 +119,7 @@ LLM_ANTHROPIC_THINKING_BUDGET_TOKENS=0
 临时切到另一个供应商：
 
 ```bash
+5hagent --model openrouter/owl-alpha run
 5hagent --llm-supplier anthropic run
 ```
 

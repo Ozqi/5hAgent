@@ -114,6 +114,77 @@ func TestLoadConfigReadsSelectedSupplier(t *testing.T) {
 	}
 }
 
+func TestLoadConfigReadsModelRef(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	writeConfig(t, home, strings.Join([]string{
+		"LLM_MODEL=openrouter/owl-alpha",
+		"LLM_OPENROUTER_FORMAT=openai",
+		"LLM_OPENROUTER_API_KEY=router-key",
+		"LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
+		"LLM_OPENROUTER_STREAM=false",
+	}, "\n"))
+
+	config, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if config.LLM.Supplier != "openrouter" {
+		t.Fatalf("Supplier = %q, want openrouter", config.LLM.Supplier)
+	}
+	if config.LLM.Model != "openrouter/owl-alpha" {
+		t.Fatalf("Model = %q, want openrouter/owl-alpha", config.LLM.Model)
+	}
+	if config.LLM.Stream {
+		t.Fatal("Stream = true, want false")
+	}
+}
+
+func TestLoadConfigOptionsOverrideModelRef(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	writeConfig(t, home, strings.Join([]string{
+		"LLM_MODEL=anthropic/claude-test",
+		"LLM_OPENROUTER_FORMAT=openai",
+		"LLM_OPENROUTER_API_KEY=router-key",
+		"LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
+		"LLM_ANTHROPIC_FORMAT=claude",
+		"LLM_ANTHROPIC_API_KEY=anthropic-key",
+		"LLM_ANTHROPIC_MODEL=claude-test",
+	}, "\n"))
+
+	config, err := LoadConfigWithOptions(LoadConfigOptions{ModelRef: "openrouter/owl-alpha"})
+	if err != nil {
+		t.Fatalf("LoadConfigWithOptions() error = %v", err)
+	}
+	if config.LLM.Supplier != "openrouter" {
+		t.Fatalf("Supplier = %q, want openrouter", config.LLM.Supplier)
+	}
+	if config.LLM.Provider != "openai" {
+		t.Fatalf("Provider = %q, want openai", config.LLM.Provider)
+	}
+	if config.LLM.Model != "openrouter/owl-alpha" {
+		t.Fatalf("Model = %q, want openrouter/owl-alpha", config.LLM.Model)
+	}
+}
+
+func TestLoadConfigRejectsInvalidModelRef(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	writeConfig(t, home, "LLM_MODEL=owl-alpha\n")
+
+	_, err := LoadConfig()
+	if err == nil {
+		t.Fatal("LoadConfig() error = nil, want model ref error")
+	}
+	if !strings.Contains(err.Error(), "supplier/model") {
+		t.Fatalf("LoadConfig() error = %v, want supplier/model hint", err)
+	}
+}
+
 func TestLoadConfigOptionsOverrideSupplier(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -201,7 +272,6 @@ func TestLoadConfigRejectsMissingProviderSpecificKeys(t *testing.T) {
 	writeConfig(t, home, strings.Join([]string{
 		"LLM_PROVIDER=claude",
 		"LLM_API_KEY=legacy-key",
-		"LLM_MODEL=legacy-model",
 	}, "\n"))
 
 	_, err := LoadConfig()

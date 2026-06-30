@@ -116,6 +116,7 @@ type LLMConfig struct {
 	Model                string
 	MaxTokens            int
 	ThinkingBudgetTokens int
+	Stream               bool
 }
 
 // AgentConfig Agent 行为配置。
@@ -133,6 +134,7 @@ type LoadConfigOptions struct {
 	LLMSupplier string
 	LLMFormat   string
 	LLMModel    string
+	ModelRef    string
 }
 
 // 默认值常量。
@@ -169,7 +171,7 @@ func GetProjectDataDir() (string, error) {
 }
 
 // LoadConfig 从 ~/.5hAgent/.env 加载配置。
-// 步骤：读取 env 文件 -> 选择 LLM_SUPPLIER 或兼容 LLM_PROVIDER -> 加载当前 LLM 配置 -> 加载 Agent 配置 -> 校验。
+// 步骤：读取 env 文件 -> 选择 LLM_MODEL 或兼容 LLM_SUPPLIER -> 加载当前 LLM 配置 -> 加载 Agent 配置 -> 校验。
 func LoadConfig() (*AppConfig, error) {
 	return LoadConfigWithOptions(LoadConfigOptions{})
 }
@@ -213,7 +215,19 @@ func readEnvFile(path string) (map[string]string, error) {
 }
 
 func loadLLMConfig(env map[string]string, defaults LLMConfig, opts LoadConfigOptions) (LLMConfig, error) {
+	modelRef := strings.TrimSpace(opts.ModelRef)
+	if modelRef == "" {
+		modelRef = strings.TrimSpace(getEnvValue(env, "LLM_MODEL", ""))
+	}
+	refSupplier, refModel, err := parseModelRef(modelRef)
+	if err != nil {
+		return LLMConfig{}, err
+	}
+
 	supplier := strings.TrimSpace(opts.LLMSupplier)
+	if supplier == "" {
+		supplier = refSupplier
+	}
 	if supplier == "" {
 		supplier = strings.TrimSpace(getEnvValue(env, "LLM_SUPPLIER", ""))
 	}
@@ -222,10 +236,27 @@ func loadLLMConfig(env map[string]string, defaults LLMConfig, opts LoadConfigOpt
 		if err != nil {
 			return LLMConfig{}, err
 		}
+		if refModel != "" {
+			cfg.Model = refModel
+		}
 		return applyLLMOverrides(env, cfg, opts), nil
 	}
 	cfg := loadProviderLLMConfig(env, defaults)
+	if refModel != "" {
+		cfg.Model = refModel
+	}
 	return applyLLMOverrides(env, cfg, opts), nil
+}
+
+func parseModelRef(ref string) (supplier string, model string, err error) {
+	if ref == "" {
+		return "", "", nil
+	}
+	before, after, ok := strings.Cut(ref, "/")
+	if !ok || before == "" || after == "" {
+		return "", "", fmt.Errorf("LLM_MODEL must use supplier/model format, got %q", ref)
+	}
+	return before, ref, nil
 }
 
 func loadProviderLLMConfig(env map[string]string, defaults LLMConfig) LLMConfig {
@@ -254,6 +285,9 @@ func loadSupplierLLMConfig(env map[string]string, supplier string, defaults LLMC
 		if v, err := strconv.Atoi(budget); err == nil {
 			cfg.ThinkingBudgetTokens = v
 		}
+	}
+	if stream := getEnvValue(env, prefix+"_STREAM", ""); stream != "" {
+		cfg.Stream = strings.ToLower(stream) != "false"
 	}
 	return cfg, nil
 }
@@ -288,6 +322,9 @@ func loadProviderLLMConfigFor(env map[string]string, format string, defaults LLM
 		if v, err := strconv.Atoi(budget); err == nil {
 			cfg.ThinkingBudgetTokens = v
 		}
+	}
+	if stream := getProviderEnv(env, format, "STREAM", ""); stream != "" {
+		cfg.Stream = strings.ToLower(stream) != "false"
 	}
 	return cfg
 }
@@ -385,6 +422,7 @@ func defaultConfig() *AppConfig {
 			BaseURL:   DefaultBaseURL,
 			Model:     DefaultModel,
 			MaxTokens: DefaultMaxTokens,
+			Stream:    true,
 		},
 		Agent: AgentConfig{
 			Name:                DefaultAgentName,

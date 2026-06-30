@@ -26,16 +26,17 @@ bash install.sh
 curl -fsSL https://raw.githubusercontent.com/Ozqi/5hAgent/master/install.sh | bash
 ```
 
-3. 配置 LLM：`~/.5hAgent/.env`，可以按供应商保存多套配置，`LLM_SUPPLIER` 决定默认使用哪套：
+3. 配置 LLM：`~/.5hAgent/.env`，默认模型使用 `supplier/model` 格式；供应商详情仍按 `LLM_<SUPPLIER>_*` 保存：
 
 ```env
-LLM_SUPPLIER=openrouter
+LLM_MODEL=openrouter/owl-alpha
 
 LLM_OPENROUTER_FORMAT=openai
 LLM_OPENROUTER_API_KEY=your_api_key
 LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 LLM_OPENROUTER_MODEL=openrouter/owl-alpha
 LLM_OPENROUTER_MAX_TOKENS=4096
+LLM_OPENROUTER_STREAM=false
 
 LLM_ANTHROPIC_FORMAT=claude
 LLM_ANTHROPIC_API_KEY=your_api_key
@@ -51,6 +52,7 @@ AGENT_CONTEXT_AUTO_COMPRESS=true
 这里的 `FORMAT=openai|claude` 表示接口协议，不是供应商名。旧版 `LLM_PROVIDER` + `LLM_CLAUDE_*` / `LLM_OPENAI_*` 配置仍然兼容。临时切换时可以不改 `.env`：
 
 ```bash
+5hagent --model openrouter/owl-alpha run
 5hagent --llm-supplier anthropic run
 5hagent --llm-format openai --llm-model openrouter/owl-alpha run
 ```

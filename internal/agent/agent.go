@@ -53,6 +53,7 @@ type Config struct {
 	RepeatToolLimit     int    // 相同工具调用重复上限
 	Debug               bool   // 是否启用调试
 	ContextAutoCompress bool   // 是否自动触发上下文压缩
+	DisableStream       bool   // 是否禁用流式模型调用；部分兼容供应商需要关闭
 	SystemPrompt        string // 系统提示词
 	ProjectDataDir      string // 项目 .5hagent 数据目录；为空时使用当前工作目录
 }
@@ -306,9 +307,84 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 			logger.DebugTag("CTX", "Messages=%d", len(messages))
 		}
 
-		// b. 调用 LLM 流式生成响应（使用 Callback）
+		// b. 调用 LLM 生成响应（使用 Callback）
 		cb := a.callbacks
 		cb.OnModelStart(ctx, nil, &model.CallbackInput{Messages: messages})
+		if a.config.DisableStream {
+			msg, err := a.model.Generate(ctx, messages, opts...)
+			if err != nil {
+				cb.OnModelError(ctx, nil, err)
+				return "", fmt.Errorf("LLM generate failed: %w", err)
+			}
+			if msg == nil {
+				err := fmt.Errorf("LLM generate returned nil message")
+				cb.OnModelError(ctx, nil, err)
+				return "", err
+			}
+
+			var tokenUsage *model.TokenUsage
+			if msg.ResponseMeta != nil && msg.ResponseMeta.Usage != nil {
+				tokenUsage = &model.TokenUsage{
+					PromptTokens:     msg.ResponseMeta.Usage.PromptTokens,
+					CompletionTokens: msg.ResponseMeta.Usage.CompletionTokens,
+					TotalTokens:      msg.ResponseMeta.Usage.TotalTokens,
+				}
+			}
+			cb.OnModelEnd(ctx, nil, &model.CallbackOutput{Message: msg, TokenUsage: tokenUsage})
+
+			if msg.ReasoningContent != "" && reasoningCallback != nil {
+				reasoningCallback(msg.ReasoningContent)
+			}
+			if msg.Content != "" && onToken != nil {
+				onToken(msg.Content)
+			}
+
+			toolCalls := make([]schema.ToolCall, 0, len(msg.ToolCalls))
+			for _, tc := range msg.ToolCalls {
+				if tc.Function.Name == "" {
+					logger.WarnTag("TOOL", "Skipping incomplete tool call: id=%s name=%s", tc.ID, tc.Function.Name)
+					continue
+				}
+				toolCalls = append(toolCalls, tc)
+			}
+
+			finalMessage := &schema.Message{
+				Role:             schema.Assistant,
+				Content:          msg.Content,
+				ReasoningContent: msg.ReasoningContent,
+				ToolCalls:        toolCalls,
+				ResponseMeta:     msg.ResponseMeta,
+				Extra:            msg.Extra,
+			}
+
+			if len(finalMessage.ToolCalls) > 0 {
+				cb.LogToolCalls(finalMessage.ToolCalls)
+				if err := a.ctxManager.AddMessage(messageCtx, finalMessage); err != nil {
+					return "", fmt.Errorf("failed to add assistant message: %w", err)
+				}
+				for idx, tc := range finalMessage.ToolCalls {
+					result, execErr := a.exeToolCall(ctx, tc, idx, len(finalMessage.ToolCalls), false)
+					if execErr == nil {
+						if err := repeatGuard.Check([]schema.ToolCall{tc}); err != nil {
+							logger.WarnTag("TOOL", "%v", err)
+						}
+					}
+					if err := a.addToolResult(messageCtx, tc, result, execErr); err != nil {
+						return "", fmt.Errorf("tool execution failed: %w", err)
+					}
+				}
+				continue
+			}
+
+			if msg.Content != "" {
+				if err := a.ctxManager.AddMessage(messageCtx, finalMessage); err != nil {
+					return "", fmt.Errorf("failed to add assistant message: %w", err)
+				}
+			} else {
+				logger.Debug("Skipping empty assistant message")
+			}
+			return msg.Content, nil
+		}
 
 		streamCtx, streamCancel := context.WithCancel(ctx)
 		reader, err := a.model.Stream(streamCtx, messages, opts...)

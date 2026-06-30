@@ -22,6 +22,7 @@ var continueLast bool
 var llmSupplier string
 var llmFormat string
 var llmModel string
+var modelRef string
 var runTaskID string
 var runReportDir string
 var runQuiet bool
@@ -42,6 +43,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&llmSupplier, "llm-supplier", "", "LLM supplier name from ~/.5hAgent/.env")
 	rootCmd.PersistentFlags().StringVar(&llmFormat, "llm-format", "", "Temporarily select LLM API format: claude or openai")
 	rootCmd.PersistentFlags().StringVar(&llmModel, "llm-model", "", "Temporarily override the selected LLM model")
+	rootCmd.PersistentFlags().StringVarP(&modelRef, "model", "m", "", "Model ref in supplier/model format, for example openrouter/owl-alpha")
 
 	runCmd := &cobra.Command{
 		Use:   "run",
@@ -141,5 +143,6 @@ func runtimeOptions(memory bool) agentrt.Options {
 		LLMSupplier:   llmSupplier,
 		LLMFormat:     llmFormat,
 		LLMModel:      llmModel,
+		ModelRef:      modelRef,
 	}
 }
