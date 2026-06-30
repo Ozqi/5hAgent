@@ -53,7 +53,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-    // 用 Lip Gloss 拼出 sidebar、main pane、status panel、input。
+    // 用 Lip Gloss 拼出 conversation、input 上下状态区和 input。
     return ""
 }
 ```
@@ -71,7 +71,7 @@ func (m Model) View() string {
 
 ## Slash 命令提示
 
-当前 slash 命令提示是在输入框上方渲染一行浅色提示，相关函数位于 `internal/cli/tui.go`：
+当前 slash 命令提示是在输入框附近渲染浅色提示，相关函数位于 `internal/cli/tui.go`：
 
 - `slashCommandHints`
 - `slashHintMatches`
@@ -136,8 +136,8 @@ TUI 问题建议分三层排查：
 短期优先级：
 
 1. 继续补足 slash 命令提示和匹配测试。
-2. 保持聊天历史、工具事件、thinking 和输入框的简单三段结构。
-3. 对颜色和布局做截图验证，避免浅色提示在暗色背景下不可见。
+2. 删除左侧 sidebar 和右侧 status panel，把有用状态迁移到输入框上方和下方。
+3. 输入框改为偏亮灰色背景，对颜色和布局做截图验证。
 4. 模型切换先使用 CLI `--model/-m` 和配置；TUI 内模型选择等后续再接。
 
 中期可考虑：
@@ -145,7 +145,7 @@ TUI 问题建议分三层排查：
 1. 用 Bubbles `list` 做 `/models` 或 slash command picker。
 2. 用 Bubbles `spinner` 替换手写 spinner frame。
 3. 用 Glamour 统一 Markdown 主题。
-4. 把 status panel 的数据源保持为 snapshot，避免直接读 runtime 内部对象。
+4. 把输入框附近状态区的数据源保持为 snapshot，避免直接读 runtime 内部对象。
 
 ## 验证清单
 
@@ -164,7 +164,7 @@ TUI 问题建议分三层排查：
 
 - `NewAppModel`：初始化 viewport、textarea 和默认状态。
 - `Update`：处理窗口尺寸、按键、stream token、tool event、spinner。
-- `View`：拼接 sidebar、main pane、status panel 和 status bar。
+- `View`：拼接 conversation、输入框上下状态区和底部状态条。
 - `renderConversationEntry`：渲染用户、assistant、thinking、tool hint。
 - `renderSlashHint`：slash 命令浅色提示。
 - `submit` / `runAgent`：把用户输入转成 agent 执行。

@@ -291,21 +291,15 @@
 
 ## NewIdeaTODO
 
-- [x] MCP模块
-  - [x] MCP问题，notionMCP调用没返回。因为空参数调用被过滤掉了，导致ReAct退出了。
-  - [x] 未接入 `claude-context`，不先原生重写其 core。接入，但是embedding模型（gemini）没钱了。
-
 - [ ] 压缩模块测试和debug：压缩先依赖 `/compress` 手动触发，如果Task完成，自动触发压缩。
   1.  /compress测试就有问题
   2.  HistoryTask 待测试。
 - [ ] 上下文压缩新思路：直接把上下文暴露给 LLM，让 LLM 可以自主裁减上下文，通过 `context.xxx` 实现上下文的增删改查。
 
-- [x] TUI 换行有问题，可以换行但是好像有一部分被右侧的面板盖住了。
-- [x] toolinfo应该用更小的字体。（已有 compact 工具提示/结果展示，但终端字体大小控制未实现）
-- [x] 用-c参数重新进入会话时,TUI渲染有问题，没格式。
-- [x] feat：增加对md表格的渲染
-- [x] feat：TUI 没有claudecode那种thinking内容的打印, think内容在哪个字段? 怎么配置模型的思考深度? claudecode是怎么做的，我希望应该用浅色小字打印出来.（字段：`schema.Message.ReasoningContent`；配置：`LLM_THINKING_BUDGET_TOKENS`）
-- [ ] feat：TUI 右侧状态栏打印当前模型的token开销和输出速度，xx tokens/s，更新频率为每1秒一次。（部分：右侧已有 TOKENS 用量，未见 tokens/s 和 1 秒刷新）
+- [ ] TUI 布局重做：删除左侧 sidebar 和右侧状态栏，保留其中有用的 Agent 运行状态信息。
+  1.  状态信息集中展示在输入框上方和输入框下方。
+  2.  输入框改成偏亮的灰色背景，和对话区形成清晰层级。
+  3.  token 开销和输出速度（xx tokens/s）纳入输入框附近状态区，刷新频率按 1 秒设计。
 
 - [ ]增加ReAct结束判断：没有工具调用了也不能退出。而是检查task区里，有没有未完成的任务。
 - [ ] tool_use模块
