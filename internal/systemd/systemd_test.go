@@ -3,7 +3,6 @@ package systemd
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
@@ -33,28 +32,11 @@ func (r blockingRunner) RunProcess(ctx context.Context, proc *AgentProcess, ipc 
 	}
 }
 
-type fakeCaller struct {
-	out []byte
-}
-
-func (c fakeCaller) CallDecision(ctx context.Context, input []byte) ([]byte, error) {
-	return c.out, nil
-}
-
 func validSpec() ProcessSpec {
 	return ProcessSpec{
-		Prompt: PromptSpec{System: "run"},
-		Exit:   ExitSpec{Condition: "done"},
+		SystemPrompt:  "run",
+		ExitCondition: "done",
 	}
-}
-
-func eventPayload(t *testing.T, spec ProcessSpec) []byte {
-	t.Helper()
-	payload, err := json.Marshal(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return payload
 }
 
 func TestRunProcessEmitsExited(t *testing.T) {
@@ -72,17 +54,6 @@ func TestRunProcessEmitsExited(t *testing.T) {
 	}
 	if event.Type != "process.exited" || event.ProcessID != proc.ID {
 		t.Fatalf("event = %+v, want process.exited for %s", event, proc.ID)
-	}
-}
-
-func TestNewAppliesOptions(t *testing.T) {
-	sys := New(WithMaxRetry(3), WithStalledAfter(time.Second))
-	input := sys.decisionInput(Event{Type: "task.failed"})
-	if input.Policy.MaxRetries != 3 {
-		t.Fatalf("MaxRetries = %d, want 3", input.Policy.MaxRetries)
-	}
-	if input.Policy.StalledAfter != time.Second.String() {
-		t.Fatalf("StalledAfter = %s, want %s", input.Policy.StalledAfter, time.Second)
 	}
 }
 
@@ -108,28 +79,16 @@ func TestRunProcessRejectsConcurrentProcess(t *testing.T) {
 	}
 }
 
-func TestDispatchHighRiskDoesNotStart(t *testing.T) {
+func TestDispatchInvalidTaskSpecEmitsFailed(t *testing.T) {
 	sys := New()
-	err := sys.dispatch(context.Background(), fakeRunner{}, Event{
-		ID:      "risk",
-		Type:    "process.start",
-		Risk:    "high",
-		Payload: eventPayload(t, validSpec()),
-	})
+	payload, err := json.Marshal(TaskCreatedPayload{ProcessSpec: ProcessSpec{}, TaskID: "bad-task", TaskTitle: "Bad Task"})
 	if err != nil {
-		t.Fatalf("dispatch() error = %v", err)
+		t.Fatal(err)
 	}
-	if got := sys.ListProcesses(); len(got) != 0 {
-		t.Fatalf("processes = %d, want 0", len(got))
-	}
-}
-
-func TestDispatchInvalidSpecEmitsFailed(t *testing.T) {
-	sys := New()
-	err := sys.dispatch(context.Background(), fakeRunner{}, Event{
+	err = sys.dispatch(context.Background(), fakeRunner{}, Event{
 		ID:      "bad",
-		Type:    "process.start",
-		Payload: eventPayload(t, ProcessSpec{}),
+		Type:    "task.created",
+		Payload: payload,
 	})
 	if err != nil {
 		t.Fatalf("dispatch() error = %v", err)
@@ -180,64 +139,23 @@ func TestIPCRejectsInvalidMessage(t *testing.T) {
 	}
 }
 
-func TestRunRetriesFailedTaskOnce(t *testing.T) {
-	sys := New()
-	decision, err := json.Marshal(DecisionResult{Action: DecisionRetry, Spec: validSpec()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() {
-		sys.Emit(Event{ID: "fail-1", Type: "task.failed", Source: "task-a"})
-		sys.Emit(Event{ID: "fail-2", Type: "task.failed", Source: "task-a"})
-		time.Sleep(20 * time.Millisecond)
-		cancel()
-	}()
-	err = sys.Run(ctx, fakeRunner{}, fakeCaller{out: decision})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Run() error = %v, want context.Canceled", err)
-	}
-	if got := len(sys.ListProcesses()); got != 1 {
-		t.Fatalf("processes = %d, want 1 retry process", got)
-	}
-}
-
-func TestParseDecisionRejectsInvalidJSON(t *testing.T) {
-	if _, err := ParseDecision([]byte(`{"action":"start_agent","process_spec":{"prompt":{},"exit":{}}}`)); err == nil {
-		t.Fatal("ParseDecision() error = nil, want invalid spec error")
-	}
-	if _, err := ParseDecision([]byte(`{"action":"stop_agent"}`)); err == nil {
-		t.Fatal("ParseDecision() error = nil, want missing stop target error")
-	}
-	if _, err := ParseDecision([]byte(`{"action":"start_agent","process_spec":{"prompt":{"system":"run","skills":[{"description":"missing name"}]},"exit":{"condition":"done"}}}`)); err == nil {
-		t.Fatal("ParseDecision() error = nil, want missing skill name error")
-	}
-	if _, err := ParseDecision([]byte(`{"action":"unknown"}`)); err == nil {
-		t.Fatal("ParseDecision() error = nil, want invalid action error")
-	}
-	if _, err := ParseDecision([]byte(`{"action":"wait","extra":true}`)); err == nil {
-		t.Fatal("ParseDecision() error = nil, want unknown field error")
-	}
-}
-
 func TestTaskCreatedPayloadStrictSchema(t *testing.T) {
 	spec := validSpec()
 	payload, err := json.Marshal(TaskCreatedPayload{ProcessSpec: spec, TaskID: "task-1", TaskTitle: "Task"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := processSpecFromEvent(Event{Type: "task.created", Payload: payload})
+	got, _, err := processStartFromEvent(Event{Type: "task.created", Payload: payload})
 	if err != nil {
-		t.Fatalf("processSpecFromEvent() error = %v", err)
+		t.Fatalf("processStartFromEvent() error = %v", err)
 	}
-	if got.Prompt.System != spec.Prompt.System {
+	if got.SystemPrompt != spec.SystemPrompt {
 		t.Fatalf("spec = %+v, want %+v", got, spec)
 	}
 
-	badPayload := []byte(`{"process_spec":{"prompt":{"system":"run"},"exit":{"condition":"done"}},"unknown":true}`)
-	if _, err := processSpecFromEvent(Event{Type: "task.created", Payload: badPayload}); err == nil {
-		t.Fatal("processSpecFromEvent() error = nil, want unknown field error")
+	badPayload := []byte(`{"process_spec":{"system_prompt":"run","exit_condition":"done"},"unknown":true}`)
+	if _, _, err := processStartFromEvent(Event{Type: "task.created", Payload: badPayload}); err == nil {
+		t.Fatal("processStartFromEvent() error = nil, want unknown field error")
 	}
 }
 
@@ -251,38 +169,10 @@ func TestTaskCreatedPayloadKeepsSourceTrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("processStartFromEvent() error = %v", err)
 	}
-	if got.Prompt.System != spec.Prompt.System {
+	if got.SystemPrompt != spec.SystemPrompt {
 		t.Fatalf("spec = %+v, want %+v", got, spec)
 	}
 	if source.ID != "task-1" || source.Title != "Task" || source.EventID != "event-1" {
 		t.Fatalf("source = %+v, want task trace", source)
-	}
-}
-
-func TestTimerTickDoesNotEnterSeen(t *testing.T) {
-	sys := New()
-	sys.Emit(Event{ID: "tick-1", Type: "timer.tick"})
-	sys.Emit(Event{ID: "tick-1", Type: "timer.tick"})
-	if sys.seen["tick-1"] {
-		t.Fatal("timer.tick should not be recorded in seen")
-	}
-	if len(sys.events) != 2 {
-		t.Fatalf("events = %d, want duplicate timer ticks queued", len(sys.events))
-	}
-}
-
-func TestProcessEndClearsRetryKeys(t *testing.T) {
-	sys := New()
-	sys.retries["task-a"] = 1
-	sys.retries["agent-1"] = 1
-	sys.processes["agent-1"] = &AgentProcess{ID: "agent-1", State: ProcessRunning}
-
-	sys.applyEvent(Event{Type: "process.exited", Source: "task-a", ProcessID: "agent-1"})
-
-	if _, ok := sys.retries["task-a"]; ok {
-		t.Fatal("retry key task-a was not cleared")
-	}
-	if _, ok := sys.retries["agent-1"]; ok {
-		t.Fatal("retry key agent-1 was not cleared")
 	}
 }

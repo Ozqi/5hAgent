@@ -22,6 +22,10 @@ import (
 	"github.com/lzq/5hAgent/internal/utils"
 )
 
+// =============================================================================
+// Agent 配置和核心状态
+// =============================================================================
+
 // Agent AI Agent 核心结构体
 // 负责协调 LLM、工具、上下文管理器
 type Agent struct {
@@ -128,6 +132,10 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 	}, nil
 }
 
+// =============================================================================
+// Runtime 注入点：context manager、模型、工具和事件 sink
+// =============================================================================
+
 // SetCtxManager 设置上下文管理器（用于 session 持久化）
 func (a *Agent) SetCtxManager(manager *agentctx.Manager) {
 	a.ctxManager = manager
@@ -148,6 +156,10 @@ func (a *Agent) GetCtxManager() *agentctx.Manager {
 
 // TokenCallback 流式输出的回调函数类型
 type TokenCallback func(token string)
+
+// =============================================================================
+// ReAct 辅助状态：重复工具防护和响应元数据合并
+// =============================================================================
 
 // toolRepeatGuard 工具重复调用防护结构
 // 限制同一工具（含相同参数）被重复调用的次数，防止死循环
@@ -253,6 +265,10 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 	return a.RunStreamWithOptions(ctx, messageCtx, input, onToken, nil, onReasoning...)
 }
 
+// =============================================================================
+// ReAct 主循环：注入上下文 -> 调模型 -> 执行工具 -> 回写消息
+// =============================================================================
+
 // RunStreamWithOptions 运行 Agent，并为本次模型调用追加临时 model options。
 // 参数：opts 只影响当前 RunStream 调用，不改变 Agent 持有的模型和工具列表。
 // 调用层级：runtime.RunProcess/RunTaskOnce -> RunStreamWithOptions -> model.Stream。
@@ -310,6 +326,8 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 		// b. 调用 LLM 生成响应（使用 Callback）
 		cb := a.callbacks
 		cb.OnModelStart(ctx, nil, &model.CallbackInput{Messages: messages})
+
+		// 非流式路径：兼容不稳定的 OpenAI-compatible 供应商，语义仍和流式路径一致。
 		if a.config.DisableStream {
 			msg, err := a.model.Generate(ctx, messages, opts...)
 			if err != nil {
@@ -386,6 +404,7 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 			return msg.Content, nil
 		}
 
+		// 流式路径：边读 chunk 边收集可执行 ToolCall，工具执行和模型读取可重叠。
 		streamCtx, streamCancel := context.WithCancel(ctx)
 		reader, err := a.model.Stream(streamCtx, messages, opts...)
 		if err != nil {
@@ -573,6 +592,10 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 		return content, nil
 	}
 }
+
+// =============================================================================
+// 只读访问器和运行时替换点
+// =============================================================================
 
 // GetSkillManager 获取技能管理器
 func (a *Agent) GetSkillManager() *skill.Manager {

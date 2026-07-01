@@ -45,7 +45,7 @@ func (m *captureModel) WithTools(tools []*schema.ToolInfo) (einomodel.ToolCallin
 	return m, nil
 }
 
-func TestRunProcessInjectsPromptSpec(t *testing.T) {
+func TestRunProcessInjectsSystemPrompt(t *testing.T) {
 	model := &captureModel{}
 	ag, err := agent.NewAgent(model, nil, &agent.Config{
 		Name:                "test-agent",
@@ -68,27 +68,18 @@ func TestRunProcessInjectsPromptSpec(t *testing.T) {
 	err = rt.RunProcess(context.Background(), &systemd.AgentProcess{
 		ID: "agent-test",
 		Spec: systemd.ProcessSpec{
-			Prompt: systemd.PromptSpec{
-				System: "process system",
-				Skills: []systemd.SkillRef{{
-					Name:        "debugging",
-					Description: "debug carefully",
-				}},
-			},
-			Exit: systemd.ExitSpec{Condition: "finish"},
+			SystemPrompt:  "process system",
+			ExitCondition: "finish",
 		},
 	}, nil)
 	if err != nil {
 		t.Fatalf("RunProcess() error = %v", err)
 	}
-	if len(model.messages) < 3 {
-		t.Fatalf("messages = %d, want system prompt, skill prompt, user input", len(model.messages))
+	if len(model.messages) < 2 {
+		t.Fatalf("messages = %d, want system prompt and user input", len(model.messages))
 	}
 	if model.messages[0].Role != schema.System || model.messages[0].Content != "process system" {
 		t.Fatalf("first message = %+v, want process system", model.messages[0])
-	}
-	if model.messages[1].Role != schema.System || !strings.Contains(model.messages[1].Content, "# Skill: debugging") || !strings.Contains(model.messages[1].Content, "debug carefully") {
-		t.Fatalf("skill message = %+v, want skill summary", model.messages[1])
 	}
 }
 
@@ -126,8 +117,8 @@ func TestRunProcessUpdatesSourceTaskAndReportTrace(t *testing.T) {
 		Name:       "agent-test",
 		SourceTask: systemd.SourceTask{ID: "task-a", Title: "Task A", EventID: "event-a"},
 		Spec: systemd.ProcessSpec{
-			Prompt: systemd.PromptSpec{System: "process system"},
-			Exit:   systemd.ExitSpec{Condition: "finish"},
+			SystemPrompt:  "process system",
+			ExitCondition: "finish",
 		},
 	}
 	if err := rt.RunProcess(context.Background(), proc, nil); err != nil {
@@ -181,11 +172,11 @@ func TestRunProcessForbidsToolsWhenTaskSaysNoTools(t *testing.T) {
 		t.Fatalf("NewAgent() error = %v", err)
 	}
 	rt := &Runtime{
-		Agent:         ag,
-		TaskList:      list,
-		CtxManager:    agentctx.NewMemoryManagerWithStore(t.TempDir()),
-		ProjectDir:    projectDir,
-		decisionModel: plainModel,
+		Agent:      ag,
+		TaskList:   list,
+		CtxManager: agentctx.NewMemoryManagerWithStore(t.TempDir()),
+		ProjectDir: projectDir,
+		plainModel: plainModel,
 	}
 	ag.SetCtxManager(rt.CtxManager)
 	proc := &systemd.AgentProcess{
@@ -193,8 +184,8 @@ func TestRunProcessForbidsToolsWhenTaskSaysNoTools(t *testing.T) {
 		Name:       "agent-test",
 		SourceTask: systemd.SourceTask{ID: "task-a", Title: "Task A", EventID: "event-a"},
 		Spec: systemd.ProcessSpec{
-			Prompt: systemd.PromptSpec{System: "process system"},
-			Exit:   systemd.ExitSpec{Condition: "finish"},
+			SystemPrompt:  "process system",
+			ExitCondition: "finish",
 		},
 	}
 	if err := rt.RunProcess(context.Background(), proc, nil); err != nil {
@@ -242,7 +233,7 @@ func TestTaskFileEventSourceSkipsCompletedTask(t *testing.T) {
 		t.Fatalf("UpdateTaskStatus(task-a) error = %v", err)
 	}
 	source := NewTaskFileEventSource(list, time.Millisecond, func(t *task.Task) (systemd.ProcessSpec, error) {
-		return systemd.ProcessSpec{Prompt: systemd.PromptSpec{System: t.ID}, Exit: systemd.ExitSpec{Condition: "done"}}, nil
+		return systemd.ProcessSpec{SystemPrompt: t.ID, ExitCondition: "done"}, nil
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -262,7 +253,7 @@ func TestTaskFileEventSourceSkipsCompletedTask(t *testing.T) {
 	if payload.TaskID != "task-b" || payload.TaskTitle != "Task B" {
 		t.Fatalf("payload task = %s/%s, want task-b/Task B", payload.TaskID, payload.TaskTitle)
 	}
-	if payload.ProcessSpec.Prompt.System != "task-b" {
-		t.Fatalf("prompt = %q, want task-b", payload.ProcessSpec.Prompt.System)
+	if payload.ProcessSpec.SystemPrompt != "task-b" {
+		t.Fatalf("prompt = %q, want task-b", payload.ProcessSpec.SystemPrompt)
 	}
 }

@@ -98,6 +98,12 @@ Use systematic checks.
 	if got := GetToolByName("skill"); got == nil {
 		t.Fatalf("skill tool was not exposed by registry")
 	}
+	if got := GetToolByName("sys.session"); got != nil {
+		t.Fatalf("sys.session should not be exposed by registry")
+	}
+	if got := GetToolByName("sys.ipc"); got == nil {
+		t.Fatalf("sys.ipc tool was not exposed by registry")
+	}
 	if err := RegisterMCPTools("demo", mcpClient, []mcp.ToolSpec{{
 		Name:        "lookup",
 		Description: "lookup data",

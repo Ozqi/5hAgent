@@ -123,8 +123,6 @@ EOF
 5hagent daemon
 # 调整 task.md 轮询间隔
 5hagent daemon --poll 2s
-# 调整失败重试和 stalled 检测
-5hagent daemon --max-retry 2 --stalled-after 10m
 ```
 
 daemon 会输出 process start/completed/failed、task id 和 report path。AgentProcess 成功退出后，源任务会自动标记为 `completed`；失败时标记为 `failed`。进程报告使用 task/process/timestamp 命名，避免覆盖旧报告：

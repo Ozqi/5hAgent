@@ -217,7 +217,7 @@ func (m *Manager) GetSessionTitle(ctx *Context) string {
 
 // BindSession 将内存 Context 显式绑定到持久化 Session。
 // 参数：ctx 是当前内存上下文；sessionID 为空时创建新 session。
-// 调用层级：sys.session.create 工具 -> BindSession -> Store.GetOrCreate/ReplaceMessages。
+// 调用层级：runtime/TUI/headless 内部入口 -> BindSession -> Store.GetOrCreate/ReplaceMessages。
 // 步骤：获取或创建 session -> 绑定到 ctx -> 把当前 messages 写入 session。
 func (m *Manager) BindSession(ctx *Context, sessionID string) (string, error) {
 	if ctx == nil {
@@ -239,7 +239,7 @@ func (m *Manager) BindSession(ctx *Context, sessionID string) (string, error) {
 
 // SaveSession 将当前 Context 写入已绑定的 Session。
 // 参数：ctx 必须已经通过 BindSession 或 CreateContext 绑定 Session。
-// 调用层级：sys.session.save 工具 -> SaveSession -> Store.ReplaceMessages。
+// 调用层级：runtime/TUI/headless 内部入口 -> SaveSession -> Store.ReplaceMessages。
 // 步骤：校验绑定 -> 重写 session messages。
 func (m *Manager) SaveSession(ctx *Context) error {
 	if ctx == nil {
@@ -256,7 +256,7 @@ func (m *Manager) SaveSession(ctx *Context) error {
 
 // DropSession 解除 Context 和 Session 的绑定。
 // 参数：ctx 是当前上下文。
-// 调用层级：sys.session.drop 工具 -> DropSession。
+// 调用层级：runtime/TUI/headless 内部入口 -> DropSession。
 // 步骤：只清空内存绑定，不删除 session 文件，不清空 messages。
 func (m *Manager) DropSession(ctx *Context) error {
 	if ctx == nil {

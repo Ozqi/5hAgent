@@ -25,7 +25,7 @@ type TaskFileEventSource struct {
 }
 
 // NewTaskFileEventSource 创建 task.md 事件源。
-// 参数：list 是已有任务列表；builder 由上层决定如何把 task 转成 PromptSpec/ExitSpec。
+// 参数：list 是已有任务列表；builder 由上层决定如何把 task 转成 ProcessSpec。
 // 调用层级：runtime/systemd 启动入口 -> NewTaskFileEventSource -> AgentSystemd.StartSource。
 // 步骤：复用 FileEventSource 监听文件变化；变化后选 in_progress/pending 任务并生成 task.created。
 func NewTaskFileEventSource(list *task.TaskList, interval time.Duration, builder TaskSpecBuilder) *TaskFileEventSource {
@@ -71,7 +71,6 @@ func (w *TaskFileEventSource) Next(ctx context.Context) (systemd.Event, error) {
 			ProcessSpec: spec,
 			TaskID:      selected.ID,
 			TaskTitle:   selected.Title,
-			FileEvent:   fileEvent,
 		})
 		if err != nil {
 			return systemd.Event{}, fmt.Errorf("marshal task event payload: %w", err)

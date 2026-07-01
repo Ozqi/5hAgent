@@ -20,14 +20,14 @@ flowchart LR
 | 层级 | 目标 | 入口 | 是否依赖 LLM |
 | --- | --- | --- | --- |
 | L0 合约测试 | 锁住 systemd 状态机和 payload 规则 | `go test ./internal/systemd` | 否 |
-| L1 runtime 适配 | 验证 PromptSpec/SkillRef 注入和 context runtime | `go test ./internal/runtime` | 否 |
+| L1 runtime 适配 | 验证 ProcessSpec.SystemPrompt 注入和 context runtime | `go test ./internal/runtime` | 否 |
 | L2 构建集成 | 确认 CLI 和包依赖可编译 | `go test ./...` / `go build` | 否 |
 | L3 daemon 冒烟 | 真实 daemon 启动 AgentProcess | `/Users/bytedance/Proj/5hWorkSpace` | 是 |
 | L4 智能效果 | 验证模型是否按任务、工具和退出条件行动 | 固定任务集 | 是 |
 
 ## 固定验证命令
 
-在 `/Users/bytedance/Proj/5hAgent` 执行：
+在当前 5hAgent 仓库根目录执行：
 
 ```bash
 go test ./internal/systemd ./internal/runtime ./internal/context ./internal/tools ./internal/agent
@@ -87,18 +87,12 @@ scripts/archive_systemd_smoke.sh --apply
 `internal/systemd/systemd_test.go` 至少覆盖：
 
 - `RunProcess` 成功后产生 `process.exited`。
-- high risk 事件不会启动进程。
 - invalid `ProcessSpec` 会产生 `process.failed`。
 - `task.created` 使用 `TaskCreatedPayload` 严格 schema，拒绝 unknown field。
-- `timer.tick` 不进入 `seen`，避免长期运行内存增长。
-- `process.exited/process.failed/process.stopped` 清理 retry key。
-- `task.failed` 经 decision 只按 `maxRetry` 重试。
-- `ParseDecision` 拒绝非法 action、非法 spec、空 skill name。
-- `ParseDecision` 拒绝 unknown field，避免 LM 返回额外字段偷偷影响控制流。
 
 测试原则：
 
-- 优先 fake runner / fake caller。
+- 优先 fake runner。
 - 不断言 ANSI、padding、文件 mtime 这类易碎格式。
 - 每个测试只锁一个语义，不写大而全的集成测试。
 
@@ -106,8 +100,7 @@ scripts/archive_systemd_smoke.sh --apply
 
 `internal/runtime` 测试至少覆盖：
 
-- `Runtime.RunProcess` 将 `PromptSpec.System` 注入 process context。
-- `SkillRef{Name, Description}` 以 system message 形式注入。
+- `Runtime.RunProcess` 将 `ProcessSpec.SystemPrompt` 注入 process context。
 - `WithSystemRuntime` 和 `WithToolRuntime` 可任意顺序合并，不覆盖彼此字段。
 - `TaskProcessSpec` 不把 task id 塞进 `ProcessSpec`。
 - `NewTaskFileEventSource` 只把 task 信息放进 `TaskCreatedPayload`。
@@ -130,7 +123,7 @@ scripts/archive_systemd_smoke.sh --apply
 
 ```bash
 cd /Users/bytedance/Proj/5hWorkSpace
-/Users/bytedance/Proj/5hAgent/5hagent daemon --poll 1s
+/path/to/current/5hAgent/5hagent daemon --poll 1s
 ```
 
 当前通过标准：
@@ -174,7 +167,6 @@ cd /Users/bytedance/Proj/5hWorkSpace
 | `systemd-text-smoke` | 只回复固定中文，不调用工具 | 不应出现工具调用；输出应匹配任务 |
 | `systemd-readonly-tool-smoke` | 必须调用 `base.list_dir` 列出 workspace | worklog 出现工具调用；报告描述真实条目 |
 | `systemd-no-tool-smoke` | 明确禁止工具调用 | 不应调用工具；如调用需记录 provider/prompt 问题 |
-| `systemd-fail-retry-smoke` | fake runner 返回失败，decision 返回 retry | 只重试一次；超过上限不再启动 |
 | `systemd-ipc-smoke` | 两个 AgentProcess 通过 `sys.ipc` 传短消息 | 只传 `summary/artifact`，不共享 context |
 
 智能效果判定：
@@ -273,21 +265,6 @@ tool_event_sink_isolation
 
 未实现前，文档和 CLI 只能声称“串行多 AgentProcess”。
 
-## 策略参数验收
-
-当前 daemon 暴露的策略参数：
-
-```bash
-5hagent daemon --max-retry 2 --stalled-after 10m
-```
-
-验收标准：
-
-- `systemd.New(systemd.WithMaxRetry(n))` 会进入 `DecisionInput.Policy.MaxRetries`。
-- `systemd.New(systemd.WithStalledAfter(d))` 会进入 `DecisionInput.Policy.StalledAfter`。
-- `5hagent daemon --help` 显示 `--max-retry` 和 `--stalled-after`。
-- 当前不暴露 `maxConcurrency`；并发多 Agent 需要先修改串行策略测试和资源隔离设计。
-
 ## IPC 验收
 
 IPC 测试要验证：
@@ -297,26 +274,12 @@ IPC 测试要验证：
 - `summary` 和 `artifact` 至少有一个非空。
 - `recv` 拉取后 mailbox 清空。
 - IPC 不读写对方 context。
-- `LastActiveAt` 是否由 IPC 更新必须有明确测试；当前代码有 TODO，后续若改成 `ipc.message` 事件链，需要同步更新测试。
+- IPC 当前不维护活跃度语义；后续若改成 `ipc.message` 事件链，需要同步更新测试。
 
 当前已有合约测试：
 
 - `TestIPCMessageRoundTrip`：验证 send/recv 和 mailbox 清空。
 - `TestIPCRejectsInvalidMessage`：验证缺少 target、target 不存在、空消息会被拒绝。
-
-## Decision 验收
-
-当前已有合约测试：
-
-- `TestRunRetriesFailedTaskOnce`：同一 task failed source 只触发一次 retry。
-- `TestParseDecisionRejectsInvalidJSON`：拒绝非法 spec、缺少 stop target、空 skill name、非法 action 和 unknown field。
-
-后续如果扩展 decision action，必须同步更新：
-
-- `DecisionAction` 枚举。
-- `ParseDecision` 校验。
-- `doc/agent-systemd.md` 的 action 说明。
-- 本文测试清单。
 
 ## 失败记录模板
 

@@ -27,8 +27,6 @@ var runTaskID string
 var runReportDir string
 var runQuiet bool
 var daemonPoll time.Duration
-var daemonMaxRetry int
-var daemonStalledAfter time.Duration
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -63,8 +61,6 @@ func main() {
 		Run:   runDaemon,
 	}
 	daemonCmd.Flags().DurationVar(&daemonPoll, "poll", time.Second, "Polling interval for .5hagent/task.md")
-	daemonCmd.Flags().IntVar(&daemonMaxRetry, "max-retry", 1, "Maximum decision retry count for the same failed source")
-	daemonCmd.Flags().DurationVar(&daemonStalledAfter, "stalled-after", 30*time.Minute, "Stop a running AgentProcess after this idle duration; <=0 disables stalled checks")
 	rootCmd.AddCommand(daemonCmd)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -122,13 +118,12 @@ func runDaemon(cmd *cobra.Command, args []string) {
 	}
 	defer rt.Close()
 
-	sys := systemd.New(systemd.WithMaxRetry(daemonMaxRetry), systemd.WithStalledAfter(daemonStalledAfter))
-	sys.StartTimer(ctx, daemonPoll)
+	sys := systemd.New()
 	sys.StartSource(ctx, agentrt.NewTaskFileEventSource(rt.TaskList, daemonPoll, rt.TaskProcessSpec))
 	if err := rt.EmitCurrentTask(sys); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: %v\n", err)
 	}
-	if err := sys.Run(ctx, rt, rt); err != nil && err != context.Canceled {
+	if err := sys.Run(ctx, rt); err != nil && err != context.Canceled {
 		cli.PrintError(err)
 		os.Exit(1)
 	}
