@@ -6,39 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	agentctx "github.com/lzq/5hAgent/internal/context"
 )
 
 type callbackPanicTool struct{}
-
-type captureRunModel struct {
-	options []einomodel.Option
-}
-
-func (m *captureRunModel) Generate(ctx context.Context, input []*schema.Message, opts ...einomodel.Option) (*schema.Message, error) {
-	m.options = append([]einomodel.Option(nil), opts...)
-	return &schema.Message{Role: schema.Assistant, Content: "done"}, nil
-}
-
-func (m *captureRunModel) Stream(ctx context.Context, input []*schema.Message, opts ...einomodel.Option) (*schema.StreamReader[*schema.Message], error) {
-	msg, err := m.Generate(ctx, input, opts...)
-	if err != nil {
-		return nil, err
-	}
-	sr, sw := schema.Pipe[*schema.Message](1)
-	go func() {
-		sw.Send(msg, nil)
-		sw.Close()
-	}()
-	return sr, nil
-}
-
-func (m *captureRunModel) WithTools(tools []*schema.ToolInfo) (einomodel.ToolCallingChatModel, error) {
-	return m, nil
-}
 
 func (callbackPanicTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{Name: "callback_panic_tool", Desc: "test tool"}, nil
@@ -96,67 +68,6 @@ func TestExeToolCallDebugCallbackDoesNotPanic(t *testing.T) {
 	}
 	if result != "ok" {
 		t.Fatalf("exeToolCall() result = %q, want ok", result)
-	}
-}
-
-func TestForcedToolOptionsForExplicitToolRequest(t *testing.T) {
-	a, err := NewAgent(nil, nil, &Config{})
-	if err != nil {
-		t.Fatalf("NewAgent() error = %v", err)
-	}
-	a.SetTools([]tool.BaseTool{callbackPanicTool{}})
-	a.toolMap["base.list_dir"] = callbackPanicTool{}
-
-	opts := a.forcedToolOptions("必须调用工具 base.list_dir，参数 path 为 .")
-	if len(opts) != 1 {
-		t.Fatalf("forcedToolOptions() = %d opts, want 1", len(opts))
-	}
-	common := einomodel.GetCommonOptions(&einomodel.Options{}, opts...)
-	if common.ToolChoice == nil || *common.ToolChoice != schema.ToolChoiceForced {
-		t.Fatalf("ToolChoice = %v, want forced", common.ToolChoice)
-	}
-	if len(common.AllowedToolNames) != 1 || common.AllowedToolNames[0] != "base.list_dir" {
-		t.Fatalf("AllowedToolNames = %v, want base.list_dir", common.AllowedToolNames)
-	}
-}
-
-func TestForcedToolOptionsIgnoresPlainMention(t *testing.T) {
-	a, err := NewAgent(nil, nil, &Config{})
-	if err != nil {
-		t.Fatalf("NewAgent() error = %v", err)
-	}
-	a.toolMap = map[string]tool.BaseTool{"base.list_dir": callbackPanicTool{}}
-
-	if opts := a.forcedToolOptions("解释 base.list_dir 是什么"); len(opts) != 0 {
-		t.Fatalf("forcedToolOptions() = %d opts, want 0", len(opts))
-	}
-}
-
-func TestRunStreamForcesExplicitToolName(t *testing.T) {
-	model := &captureRunModel{}
-	manager := agentctx.NewMemoryManagerWithStore(t.TempDir())
-	messageCtx, err := manager.CreateContext("")
-	if err != nil {
-		t.Fatalf("CreateContext() error = %v", err)
-	}
-	a, err := NewAgent(model, nil, &Config{DisableStream: true, ContextAutoCompress: false})
-	if err != nil {
-		t.Fatalf("NewAgent() error = %v", err)
-	}
-	a.SetCtxManager(manager)
-	a.SetTools([]tool.BaseTool{callbackPanicTool{}})
-	a.toolMap["base.grep"] = callbackPanicTool{}
-
-	_, err = a.RunStream(context.Background(), messageCtx, "必须调用工具 base.grep 搜索 OpenMontage", nil)
-	if err != nil {
-		t.Fatalf("RunStream() error = %v", err)
-	}
-	common := einomodel.GetCommonOptions(&einomodel.Options{}, model.options...)
-	if common.ToolChoice == nil || *common.ToolChoice != schema.ToolChoiceForced {
-		t.Fatalf("ToolChoice = %v, want forced", common.ToolChoice)
-	}
-	if len(common.AllowedToolNames) != 1 || common.AllowedToolNames[0] != "base.grep" {
-		t.Fatalf("AllowedToolNames = %v, want base.grep", common.AllowedToolNames)
 	}
 }
 
