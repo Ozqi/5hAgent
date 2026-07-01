@@ -83,6 +83,7 @@ type AppModel struct {
 	skillMgr   *skill.Manager
 	ctxManager *agentctx.Manager
 	messageCtx *agentctx.Context
+	runTasks   RunTasksFunc
 	ctx        context.Context
 
 	width  int
@@ -127,6 +128,14 @@ type spinnerTickMsg struct{}
 type debugToolResultMsg struct {
 	event logger.ToolEvent
 }
+
+type runTasksDoneMsg struct {
+	summary string
+	err     error
+}
+
+// RunTasksFunc 是 TUI /run 命令调用 runtime 连续执行 task.md 的薄接口。
+type RunTasksFunc func(context.Context, func(logger.ToolEvent)) (string, error)
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
@@ -182,9 +191,10 @@ var slashCommandHints = []slashCommandHint{
 	{Name: "/compress", Usage: "/compress [compact|truncate]", Desc: "context"},
 	{Name: "/mcp", Usage: "/mcp <list|add|remove|enable|disable>", Desc: "mcp servers"},
 	{Name: "/session", Usage: "/session <new|list|switch|save|drop>", Desc: "sessions"},
+	{Name: "/run", Usage: "/run", Desc: "run task.md until no pending tasks"},
 }
 
-func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string) *AppModel {
+func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string, runTasks RunTasksFunc) *AppModel {
 	vp := viewport.New(0, 0)
 	// viewport 自身支持滚轮，但还需要 LaunchTUI 开启 Bubble Tea mouse mode。
 	vp.MouseWheelEnabled = true
@@ -219,6 +229,7 @@ func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, promptD
 		skillMgr:         skillMgr,
 		ctxManager:       ctxManager,
 		messageCtx:       messageCtx,
+		runTasks:         runTasks,
 		ctx:              ctx,
 		viewport:         vp,
 		input:            input,
@@ -318,6 +329,22 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case debugToolResultMsg:
 		m.applyToolEvent(msg.event)
 		m.currentStatus = "idle"
+		m.refreshView()
+		return m, nil
+	case runTasksDoneMsg:
+		m.busy = false
+		m.currentAssistant = -1
+		if msg.err != nil {
+			m.currentStatus = "error"
+			content := msg.err.Error()
+			if strings.TrimSpace(msg.summary) != "" {
+				content = strings.TrimSpace(msg.summary) + "\n\n" + content
+			}
+			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: "/run", Content: content})
+		} else {
+			m.currentStatus = "idle"
+			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: "/run", Content: msg.summary})
+		}
 		m.refreshView()
 		return m, nil
 	case toolEventMsg:
@@ -478,6 +505,10 @@ func (m *AppModel) submit() tea.Cmd {
 		return nil
 	}
 
+	if fields := strings.Fields(text); len(fields) > 0 && fields[0] == "/run" {
+		return m.handleRunCommand(text)
+	}
+
 	if strings.HasPrefix(text, "/") {
 		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "unknown slash command"})
 		m.refreshView()
@@ -513,6 +544,35 @@ func (m *AppModel) handleDebugCommand(text string) tea.Cmd {
 	m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: "unknown debug command"})
 	m.refreshView()
 	return nil
+}
+
+// handleRunCommand 启动 task.md 连续执行模式。
+// 调用层级：submit -> handleRunCommand -> runtime.RunTasksUntilDone。
+// 主要步骤：校验命令参数；标记 TUI busy；后台执行 runtime 回调；完成后显示汇总。
+func (m *AppModel) handleRunCommand(text string) tea.Cmd {
+	fields := strings.Fields(text)
+	if len(fields) > 1 {
+		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "usage: /run"})
+		m.refreshView()
+		return nil
+	}
+	if m.runTasks == nil {
+		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "/run is not available in this runtime"})
+		m.refreshView()
+		return nil
+	}
+	m.busy = true
+	m.currentStatus = "running tasks"
+	m.currentAssistant = -1
+	m.refreshView()
+	return tea.Batch(tickSpinner(), func() tea.Msg {
+		summary, err := m.runTasks(m.ctx, func(event logger.ToolEvent) {
+			if m.program != nil {
+				m.program.Send(toolEventMsg{event: event})
+			}
+		})
+		return runTasksDoneMsg{summary: summary, err: err}
+	})
 }
 
 func (m *AppModel) runAgent(input string) {
@@ -1419,17 +1479,17 @@ func tickSpinner() tea.Cmd {
 	})
 }
 
-func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string) error {
+func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string, runTasks RunTasksFunc) error {
 	launchMu.Lock()
 	defer launchMu.Unlock()
-	model := NewAppModel(ctx, ag, modelName, promptDir, taskList, skillMgr, ctxManager, messageCtx, sessionID)
+	model := NewAppModel(ctx, ag, modelName, promptDir, taskList, skillMgr, ctxManager, messageCtx, sessionID, runTasks)
 	// WithMouseCellMotion 开启点击、释放和滚轮事件；viewport.Update 负责具体滚动。
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	model.program = p
-	ag.SetToolEventSink(func(event logger.ToolEvent) {
+	prevSink := ag.SetToolEventSink(func(event logger.ToolEvent) {
 		p.Send(toolEventMsg{event: event})
 	})
-	defer ag.SetToolEventSink(nil)
+	defer ag.SetToolEventSink(prevSink)
 	_, err := p.Run()
 	return err
 }

@@ -134,8 +134,10 @@ type statusSnapshot struct {
 |------|------|
 | `/skill <args>` | 技能管理 |
 | `/task <args>` | 任务管理 |
+| `/run` | 连续执行 `.5hagent/task.md` 中的 `in_progress` / `pending` 任务，直到没有可运行任务 |
 | `/compress` | 上下文压缩 |
 | `/mcp <args>` | MCP 服务器管理 |
+| `/session <args>` | 会话管理 |
 
 ## 快捷键
 
@@ -152,11 +154,12 @@ type statusSnapshot struct {
 
 | 函数 | 说明 |
 |------|------|
-| `LaunchTUI(ctx, ag, model, taskList, skillMgr, ctxManager, messageCtx)` | 启动 TUI |
+| `LaunchTUI(ctx, ag, model, taskList, skillMgr, ctxManager, messageCtx, runTasks)` | 启动 TUI |
 | `NewAppModel(...)` | 创建模型 |
 | `Update(msg)` | 处理消息 |
 | `View()` | 渲染界面 |
 | `submit()` | 提交输入 |
+| `handleRunCommand()` | 处理 `/run` 并调用 runtime 连续执行任务 |
 | `runAgent()` | 运行 Agent |
 | `snapshot()` | 生成状态快照 |
 | `renderTopStatus()` | 渲染输入框上方高频运行状态 |

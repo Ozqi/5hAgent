@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lzq/5hAgent/internal/cli"
+	"github.com/lzq/5hAgent/internal/logger"
 	agentrt "github.com/lzq/5hAgent/internal/runtime"
 	"github.com/lzq/5hAgent/internal/systemd"
 	"github.com/spf13/cobra"
@@ -19,7 +20,6 @@ import (
 var debugMode bool
 var sessionID string
 var continueLast bool
-var llmSupplier string
 var llmFormat string
 var llmModel string
 var modelRef string
@@ -40,10 +40,9 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&debugMode, "debug", false, "Enable debug mode with verbose logging")
 	rootCmd.PersistentFlags().StringVar(&sessionID, "session", "", "Resume from existing session ID")
 	rootCmd.PersistentFlags().BoolVarP(&continueLast, "continue", "c", false, "Resume from the last session")
-	rootCmd.PersistentFlags().StringVar(&llmSupplier, "llm-supplier", "", "LLM supplier name from ~/.5hAgent/.env")
 	rootCmd.PersistentFlags().StringVar(&llmFormat, "llm-format", "", "Temporarily select LLM API format: claude or openai")
 	rootCmd.PersistentFlags().StringVar(&llmModel, "llm-model", "", "Temporarily override the selected LLM model")
-	rootCmd.PersistentFlags().StringVarP(&modelRef, "model", "m", "", "Model ref in supplier/upstream-model format, for example openrouter/openrouter/owl-alpha")
+	rootCmd.PersistentFlags().StringVarP(&modelRef, "model", "m", "", "Model ref in provider/model format, for example openrouter/openrouter/owl-alpha")
 
 	runCmd := &cobra.Command{
 		Use:   "run",
@@ -84,7 +83,14 @@ func runTUI(cmd *cobra.Command, args []string) {
 	}
 	defer rt.Close()
 
-	if err := cli.LaunchTUI(ctx, rt.Agent, rt.ModelName, rt.PromptDir, rt.TaskList, rt.Agent.GetSkillManager(), rt.CtxManager, rt.MessageCtx, rt.SessionID); err != nil {
+	runTasks := func(ctx context.Context, sink func(logger.ToolEvent)) (string, error) {
+		result, err := rt.RunTasksUntilDone(ctx, agentrt.RunOptions{WorkLog: true, ToolEventSink: sink})
+		if result == nil {
+			return "", err
+		}
+		return result.Summary(), err
+	}
+	if err := cli.LaunchTUI(ctx, rt.Agent, rt.ModelName, rt.PromptDir, rt.TaskList, rt.Agent.GetSkillManager(), rt.CtxManager, rt.MessageCtx, rt.SessionID, runTasks); err != nil {
 		cli.PrintError(fmt.Errorf("tui error: %w", err))
 		os.Exit(1)
 	}
@@ -140,7 +146,6 @@ func runtimeOptions(memory bool) agentrt.Options {
 		SessionID:     sessionID,
 		ContinueLast:  continueLast,
 		MemoryContext: memory,
-		LLMSupplier:   llmSupplier,
 		LLMFormat:     llmFormat,
 		LLMModel:      llmModel,
 		ModelRef:      modelRef,

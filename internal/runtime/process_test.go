@@ -215,6 +215,60 @@ func TestRunProcessForbidsToolsWhenTaskSaysNoTools(t *testing.T) {
 	}
 }
 
+func TestRunTasksUntilDoneRunsPendingTasks(t *testing.T) {
+	model := &captureModel{}
+	projectDir := t.TempDir()
+	list, err := task.NewTaskList(filepath.Join(projectDir, ".5hagent", "task.md"))
+	if err != nil {
+		t.Fatalf("NewTaskList() error = %v", err)
+	}
+	for _, id := range []string{"task-a", "task-b"} {
+		if _, err := list.CreateTask(id, "Task "+id, "finish "+id); err != nil {
+			t.Fatalf("CreateTask(%s) error = %v", id, err)
+		}
+	}
+	ag, err := agent.NewAgent(model, nil, &agent.Config{
+		Name:                "test-agent",
+		MaxTotalTokens:      1000000,
+		RepeatToolLimit:     5,
+		ContextAutoCompress: false,
+		SystemPrompt:        "",
+		DisableStream:       true,
+		ProjectDataDir:      filepath.Join(projectDir, ".5hagent"),
+	})
+	if err != nil {
+		t.Fatalf("NewAgent() error = %v", err)
+	}
+	rt := &Runtime{
+		Agent:      ag,
+		TaskList:   list,
+		CtxManager: agentctx.NewMemoryManagerWithStore(t.TempDir()),
+		ProjectDir: projectDir,
+	}
+	ag.SetCtxManager(rt.CtxManager)
+
+	report, err := rt.RunTasksUntilDone(context.Background(), RunOptions{WorkLog: false})
+	if err != nil {
+		t.Fatalf("RunTasksUntilDone() error = %v", err)
+	}
+	if len(report.Reports) != 2 {
+		t.Fatalf("reports = %d, want 2", len(report.Reports))
+	}
+	for _, id := range []string{"task-a", "task-b"} {
+		updated, err := list.GetTask(id)
+		if err != nil {
+			t.Fatalf("GetTask(%s) error = %v", id, err)
+		}
+		if updated.Status != task.StatusCompleted {
+			t.Fatalf("%s status = %s, want completed", id, updated.Status)
+		}
+	}
+	summary := report.Summary()
+	if !strings.Contains(summary, "Run completed: 2 task(s)") || !strings.Contains(summary, "[task-a]") || !strings.Contains(summary, "[task-b]") {
+		t.Fatalf("summary missing tasks:\n%s", summary)
+	}
+}
+
 func TestProcessReportNameDoesNotOverwrite(t *testing.T) {
 	first := processReportName(&processReport{ProcessID: "agent-1", Source: systemd.SourceTask{ID: "task-a"}})
 	second := processReportName(&processReport{ProcessID: "agent-1", Source: systemd.SourceTask{ID: "task-a"}})

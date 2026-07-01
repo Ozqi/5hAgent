@@ -445,7 +445,7 @@ Agent Systemd 的实现必须继续保持本项目的极简代码风格。第一
 
 已完成 Agent Systemd 的最小调度链路：进程表、内存事件队列、timer 事件源、外部事件源接口、单文件轮询 watcher、task 文件事件源、`PromptSpec/ExitSpec`、`runtime.NewInMemory`、runtime runner、decision caller、`sys.session`、`sys.ipc`、runtime 级 tools registry、`ProjectDir`、base tools workspace root、进程 report/worklog artifact、Agent 实例级工具事件 sink 和 `5hagent daemon` 最小入口。
 
-当前状态应表述为“串行 AgentProcess daemon 可用”，不要表述为“完备并发多 Agent 调度框架”。2026-06-30 真实复测确认：daemon 可以启动 `agent-1`，并在同一 daemon 生命周期内继续启动 `agent-2`；当前仍是串行多 AgentProcess，不是并发多 Agent。daemon task 状态闭环、task trace 持久化、report 不覆盖、IPC 基础闭环、decision retry、策略参数化和智能效果基准均按 [agent-systemd-test.md](agent-systemd-test.md) 验收。
+当前状态应表述为“串行 AgentProcess daemon 可用”，不要表述为“完备并发多 Agent 调度框架”。2026-06-30 真实复测确认：daemon 可以启动 `agent-1`，并在同一 daemon 生命周期内继续启动 `agent-2`；当前仍是串行多 AgentProcess，不是并发多 Agent。日常调试入口见 [agent-systemd-test.md](agent-systemd-test.md)。
 
 ## 完成审计
 
@@ -480,19 +480,13 @@ Agent Systemd 的实现必须继续保持本项目的极简代码风格。第一
 - r4 已落地：`daemon` 子命令接通最小运行期路径；`internal/systemd/systemd_test.go` 覆盖基础调度闭环。
 - r4 已落地：`internal/runtime/process_test.go` 用 fake LLM 覆盖 `Runtime.RunProcess` 的 PromptSpec 注入。
 - r5 已落地：按当前工作树重新验证指定命令，并补充 strict schema、timer 去重、retry 清理的定向测试。
-- r6 已落地：daemon 任务状态闭环、task trace 写入 process report、report 命名不覆盖、daemon stdout 可观测性、串行策略测试、IPC 基础闭环测试、decision retry/strict JSON 测试、L4 智能效果基准和 `--max-retry` / `--stalled-after` 策略参数。
+- r6 已落地：daemon 任务状态闭环、task trace 写入 process report、report 命名不覆盖、daemon stdout 可观测性、串行策略测试、IPC 基础闭环测试、decision retry/strict JSON 测试和 `--max-retry` / `--stalled-after` 策略参数。
 - 保留 TODO：IPC 收信更新 `LastActiveAt` 是否改为 `ipc.message` 事件链；并发多 Agent 需先设计资源隔离；测试 workspace 产物归档规范仍需落地。
 
-验证命令：
+可选自检命令：
 
 ```bash
-go test ./internal/systemd ./internal/runtime ./internal/context ./internal/tools ./internal/agent
-go build -o 5hagent cmd/5hagent/main.go
+go test ./...
+go build -o /private/tmp/5hagent-check cmd/5hagent/main.go
 git diff --check
 ```
-
-全仓验证状态：
-
-- `go test ./...` 通过。
-- `go build -o 5hagent cmd/5hagent/main.go` 通过。
-- `git diff --check` 通过。

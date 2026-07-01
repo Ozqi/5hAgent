@@ -133,12 +133,14 @@ func (a *Agent) SetCtxManager(manager *agentctx.Manager) {
 	a.ctxManager = manager
 }
 
-// SetToolEventSink 设置当前 Agent 的工具事件接收器。
+// SetToolEventSink 设置当前 Agent 的工具事件接收器，并返回旧接收器。
 // 参数：sink 接收 tool call/result/error/status 事件；nil 表示回退到 logger 默认输出。
 // 调用层级：TUI/headless/runtime -> SetToolEventSink -> exeToolCall/addToolResult。
 // 步骤：只替换当前 Agent 实例字段，不改包级 logger sink。
-func (a *Agent) SetToolEventSink(sink func(logger.ToolEvent)) {
+func (a *Agent) SetToolEventSink(sink func(logger.ToolEvent)) func(logger.ToolEvent) {
+	prev := a.toolEventSink
 	a.toolEventSink = sink
+	return prev
 }
 
 // GetCtxManager 获取上下文管理器
@@ -262,6 +264,8 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 	if len(onReasoning) > 0 {
 		reasoningCallback = onReasoning[0]
 	}
+	opts = append([]model.Option{}, opts...)
+	opts = append(opts, a.forcedToolOptions(input)...)
 
 	// 1. 注入SystemPrompt和Skills（首次对话时）
 	if err := a.ensureConversationSetup(messageCtx); err != nil {
@@ -572,6 +576,35 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 
 		return content, nil
 	}
+}
+
+// forcedToolOptions 把用户显式点名工具转换成协议级 tool_choice。
+// 调用层级：RunStreamWithOptions -> forcedToolOptions -> model.Stream/Generate。
+// 主要步骤：只在输入含强制调用语义时扫描现有工具名；命中唯一完整工具名则强制该工具。
+func (a *Agent) forcedToolOptions(input string) []model.Option {
+	if a == nil || len(a.toolMap) == 0 || !asksForTool(input) {
+		return nil
+	}
+	var matched []string
+	for name := range a.toolMap {
+		if strings.Contains(input, name) {
+			matched = append(matched, name)
+		}
+	}
+	if len(matched) != 1 {
+		return nil
+	}
+	return []model.Option{model.WithToolChoice(schema.ToolChoiceForced, matched[0])}
+}
+
+func asksForTool(input string) bool {
+	lower := strings.ToLower(input)
+	return strings.Contains(lower, "must call") ||
+		strings.Contains(lower, "use tool") ||
+		strings.Contains(input, "必须调用") ||
+		strings.Contains(input, "请调用") ||
+		strings.Contains(input, "使用工具") ||
+		strings.Contains(input, "调用工具")
 }
 
 // GetSkillManager 获取技能管理器

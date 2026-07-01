@@ -5,7 +5,7 @@
 
 ## 摘要
 
-LLM 模块负责把 `~/.5hAgent/.env` 中当前模型配置转换成 Eino 的 `model.ToolCallingChatModel`。推荐用 `LLM_MODEL=supplier/upstream-model` 表示当前模型，并用 `LLM_<SUPPLIER>_FORMAT=openai|claude` 描述供应商接口格式。旧版 `LLM_SUPPLIER` 和 `LLM_PROVIDER` 配置仍兼容。
+LLM 模块负责把 `~/.5hAgent/.env` 中当前模型配置转换成 Eino 的 `model.ToolCallingChatModel`。当前配置只认一条主线：`LLM_MODEL=provider/model` 选择 provider 和模型名，`LLM_<PROVIDER>_*` 保存该 provider 的 API 地址、密钥和接口格式。
 
 ## 架构
 
@@ -13,7 +13,7 @@ LLM 模块负责把 `~/.5hAgent/.env` 中当前模型配置转换成 Eino 的 `m
 flowchart LR
     Env[~/.5hAgent/.env] --> Load[utils.LoadConfigWithOptions]
     CLI[CLI override] --> Load
-    Load --> Pick[选择 LLM_MODEL 或兼容 LLM_SUPPLIER]
+    Load --> Pick[解析 LLM_MODEL provider/model]
     Pick --> Active[当前 LLM 配置]
     Active --> Runtime[runtime.New]
     Runtime --> Config[llm.Config]
@@ -28,7 +28,7 @@ flowchart LR
 ## 位置
 
 - [`internal/llm/client.go`](../internal/llm/client.go)：按接口格式创建 Eino 模型。
-- [`internal/utils/utils.go`](../internal/utils/utils.go)：读取 supplier 或兼容 provider-specific 配置并校验当前生效配置。
+- [`internal/utils/utils.go`](../internal/utils/utils.go)：读取 `LLM_MODEL` 和当前 provider 配置并校验当前生效配置。
 - [`internal/runtime/runtime.go`](../internal/runtime/runtime.go)：把当前配置传给 `llm.NewClient`，绑定工具后注入 Agent。
 
 ## 核心类型
@@ -57,37 +57,19 @@ type LLMClient struct {
 
 ## 配置方式
 
-### Supplier 环境变量
+### Provider 环境变量
 
-推荐按真实供应商保存多套配置。Supplier 名会转成大写下划线形式：`openrouter` 对应 `LLM_OPENROUTER_*`，`moonshot-ai` 对应 `LLM_MOONSHOT_AI_*`。
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `LLM_MODEL` | 当前默认模型，格式为 `supplier/upstream-model`，第一段选择供应商，剩余部分作为上游模型名 | - |
-| `LLM_SUPPLIER` | 当前默认供应商名 | - |
-| `LLM_<SUPPLIER>_FORMAT` | 当前供应商的接口格式，支持 `claude` / `openai` | 必填 |
-| `LLM_<SUPPLIER>_API_KEY` | 当前供应商的 API Key | Claude format 必填；OpenAI-compatible 按上游要求 |
-| `LLM_<SUPPLIER>_BASE_URL` | 当前供应商的 Base URL | format 默认值 |
-| `LLM_<SUPPLIER>_MODEL` | 当前供应商的模型名 | 必填 |
-| `LLM_<SUPPLIER>_MAX_TOKENS` | 当前供应商最大生成 token | `4096` |
-| `LLM_<SUPPLIER>_THINKING_BUDGET_TOKENS` | Claude extended thinking 预算 | `0` |
-| `LLM_<SUPPLIER>_STREAM` | 是否使用流式调用；`false` 时走非流式 `Generate` | `true` |
-
-### Provider-specific 兼容环境变量
+Provider 名会转成大写下划线形式：`openrouter` 对应 `LLM_OPENROUTER_*`，`moonshot-ai` 对应 `LLM_MOONSHOT_AI_*`。
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `LLM_PROVIDER` | 当前接口格式，支持 `claude` / `openai` | `claude` |
-| `LLM_CLAUDE_API_KEY` | Claude API Key | - |
-| `LLM_CLAUDE_BASE_URL` | Claude Base URL | `https://api.anthropic.com` |
-| `LLM_CLAUDE_MODEL` | Claude 模型名 | `claude-sonnet-4-6` |
-| `LLM_CLAUDE_MAX_TOKENS` | Claude 最大输出 token | `4096` |
-| `LLM_CLAUDE_THINKING_BUDGET_TOKENS` | Claude extended thinking 预算 | `0` |
-| `LLM_OPENAI_API_KEY` | OpenAI-compatible API Key；本地 Ollama 可填 `dummy` | - |
-| `LLM_OPENAI_BASE_URL` | OpenAI-compatible Base URL | `https://api.openai.com/v1` |
-| `LLM_OPENAI_MODEL` | OpenAI-compatible 模型名，可填任意上游支持的模型 | 必填 |
-| `LLM_OPENAI_MAX_TOKENS` | OpenAI-compatible 最大生成 token | `4096` |
-| `LLM_OPENAI_THINKING_BUDGET_TOKENS` | 保留字段；OpenAI provider 忽略 | `0` |
+| `LLM_MODEL` | 当前模型，格式为 `provider/model`；第一段选择 provider 配置块，剩余部分作为上游模型名 | 必填 |
+| `LLM_<PROVIDER>_FORMAT` | 当前 provider 的接口格式，支持 `claude` / `openai` | 必填 |
+| `LLM_<PROVIDER>_API_KEY` | 当前 provider 的 API Key | Claude format 必填；OpenAI-compatible 按上游要求 |
+| `LLM_<PROVIDER>_BASE_URL` | 当前 provider 的 Base URL | format 默认值 |
+| `LLM_<PROVIDER>_MAX_TOKENS` | 当前 provider 最大生成 token | `4096` |
+| `LLM_<PROVIDER>_THINKING_BUDGET_TOKENS` | Claude extended thinking 预算 | `0` |
+| `LLM_<PROVIDER>_STREAM` | 是否使用流式调用；`false` 时走非流式 `Generate` | `true` |
 
 ### 接口格式对比
 
@@ -96,7 +78,7 @@ type LLMClient struct {
 | `claude` | 必填 | `https://api.anthropic.com` | `claude-sonnet-4-6` | 支持 |
 | `openai` | 远端按需；本地可 dummy | `http://localhost:11434/v1` | `qwen3:14b` | 忽略 |
 
-### 多供应商配置示例
+### 多 Provider 配置示例
 
 ```env
 LLM_MODEL=openrouter/openrouter/owl-alpha
@@ -104,44 +86,35 @@ LLM_MODEL=openrouter/openrouter/owl-alpha
 LLM_OPENROUTER_FORMAT=openai
 LLM_OPENROUTER_API_KEY=your_api_key
 LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-LLM_OPENROUTER_MODEL=openrouter/owl-alpha
 LLM_OPENROUTER_MAX_TOKENS=4096
 LLM_OPENROUTER_STREAM=false
 
 LLM_ANTHROPIC_FORMAT=claude
 LLM_ANTHROPIC_API_KEY=your_api_key
 LLM_ANTHROPIC_BASE_URL=https://api.anthropic.com
-LLM_ANTHROPIC_MODEL=claude-sonnet-4-6
 LLM_ANTHROPIC_MAX_TOKENS=4096
 LLM_ANTHROPIC_THINKING_BUDGET_TOKENS=0
 ```
 
-临时切到另一个供应商：
+临时切到另一个 provider/model：
 
 ```bash
 5hagent --model openrouter/openrouter/owl-alpha run
-5hagent --llm-supplier anthropic run
 ```
 
-也可以绕过默认配置，只临时切接口格式或模型：
+也可以只临时覆盖当前 provider 的接口格式或模型名：
 
 ```bash
 5hagent --llm-format openai --llm-model openrouter/owl-alpha run
 ```
 
-旧版 provider-specific 配置仍可直接使用：
+Ollama 作为普通 provider：
 
 ```env
-LLM_PROVIDER=openai
-LLM_OPENAI_BASE_URL=http://localhost:11434/v1
-LLM_OPENAI_MODEL=qwen3:14b
-LLM_OPENAI_API_KEY=dummy
-```
-
-换 Ollama 模型只改：
-
-```env
-LLM_OPENAI_MODEL=hf.co/bartowski/Qwen_Qwen3.6-27B-GGUF:Q3_K_M
+LLM_MODEL=ollama/qwen3:14b
+LLM_OLLAMA_FORMAT=openai
+LLM_OLLAMA_BASE_URL=http://localhost:11434/v1
+LLM_OLLAMA_API_KEY=dummy
 ```
 
 ## 创建流程
@@ -150,9 +123,9 @@ LLM_OPENAI_MODEL=hf.co/bartowski/Qwen_Qwen3.6-27B-GGUF:Q3_K_M
 
 ```go
 appConfig, err := utils.LoadConfigWithOptions(utils.LoadConfigOptions{
-    LLMSupplier: opts.LLMSupplier,
     LLMFormat:   opts.LLMFormat,
     LLMModel:    opts.LLMModel,
+    ModelRef:    opts.ModelRef,
 })
 client, err := llm.NewClient(ctx, &llm.Config{
     Provider:             appConfig.LLM.Provider,

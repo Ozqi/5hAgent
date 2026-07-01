@@ -45,11 +45,11 @@ type Config struct {
 来源：`utils.LoadConfig()` 从 `~/.5hAgent/.env` 读取当前 provider 的配置，例如：
 
 ```env
-LLM_PROVIDER=openai
-LLM_OPENAI_BASE_URL=http://localhost:11434/v1
-LLM_OPENAI_MODEL=hf.co/bartowski/Qwen_Qwen3.6-27B-GGUF:Q3_K_M
-LLM_OPENAI_API_KEY=dummy
-LLM_OPENAI_MAX_TOKENS=4096
+LLM_MODEL=ollama/hf.co/bartowski/Qwen_Qwen3.6-27B-GGUF:Q3_K_M
+LLM_OLLAMA_FORMAT=openai
+LLM_OLLAMA_BASE_URL=http://localhost:11434/v1
+LLM_OLLAMA_API_KEY=dummy
+LLM_OLLAMA_MAX_TOKENS=4096
 ```
 
 ### `schema.Message`：Eino 统一消息结构

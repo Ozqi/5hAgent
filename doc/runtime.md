@@ -45,6 +45,7 @@ flowchart TD
 | --- | --- | --- | --- |
 | `runtime.New` | [`runtime.go`](../internal/runtime/runtime.go) | 初始化共享运行时 | `utils.LoadConfig` -> `task.NewTaskList` -> `agent.NewAgent` -> `tools.NewRegistry().Init` |
 | `Runtime.RunTaskOnce` | [`runtime.go`](../internal/runtime/runtime.go) | 执行一个文件任务并写报告 | `selectTask` -> `Agent.RunStream` -> `TaskList.UpdateTaskStatus` -> `writeReport` |
+| `Runtime.RunTasksUntilDone` | [`runtime.go`](../internal/runtime/runtime.go) | 连续执行 task.md 中的可运行任务 | `selectTask` -> `RunTaskOnce` -> 重新读取 task.md |
 | `Runtime.RunProcess` | [`runtime.go`](../internal/runtime/runtime.go) | 作为 Agent Systemd runner 执行单个 AgentProcess | 注入 `PromptSpec` -> `WithSystemRuntime` -> `Agent.RunStream` -> `writeProcessReport` |
 | `NewTaskFileEventSource` | [`event_source_task.go`](../internal/runtime/event_source_task.go) | 把 task 文件变化转换成 `task.created` 事件 | `FileEventSource.Next` -> `TaskList.ListTasksByStatus` -> `TaskSpecBuilder` |
 | `runTUI` | [`main.go`](../cmd/5hagent/main.go) | 启动 TUI 前端 | `runtime.New` -> `cli.LaunchTUI` |
@@ -79,6 +80,8 @@ flowchart TD
 5. Agent 根据任务描述运行 ReAct 循环。
 6. 成功写为 `completed`，失败写为 `failed`。
 7. Markdown 报告写入 `.5hagent/reports/<task-id>.md`。
+
+TUI 中的 `/run` 会调用 `Runtime.RunTasksUntilDone`。它不创建新的 daemon 或调度器，只是在每个 ReAct 循环结束、`RunTaskOnce` 已写回任务状态后重新检查 `.5hagent/task.md`，继续执行下一个 `in_progress` / `pending` 任务；没有可运行任务时退出。
 
 `taskPrompt()` 会把任务真源路径、任务 ID、标题、状态和描述写进用户消息，便于 LLM 先读取必要文件再执行。
 
@@ -125,15 +128,15 @@ Runtime 将 `.env` 中的配置拆成两个方向：
 
 | 配置 | 传入位置 | 用途 |
 | --- | --- | --- |
-| `LLM_SUPPLIER` / `LLM_<SUPPLIER>_*` | `llm.NewClient` | 选择一套供应商 LLM 配置 |
-| `LLM_<SUPPLIER>_FORMAT` | `llm.NewClient` | 选择供应商使用的 `claude` 或 `openai` 接口格式 |
-| `LLM_PROVIDER` / `LLM_<PROVIDER>_*` | `llm.NewClient` | 兼容旧版 Claude 或 OpenAI-compatible 配置 |
+| `LLM_MODEL=provider/model` | `utils.LoadConfigWithOptions` | 选择 provider 配置块和上游模型名 |
+| `LLM_<PROVIDER>_FORMAT` | `llm.NewClient` | 选择 provider 使用的 `claude` 或 `openai` 接口格式 |
+| `LLM_<PROVIDER>_API_KEY` / `BASE_URL` | `llm.NewClient` | 当前 provider 的访问凭据和 API 地址 |
 | `AGENT_NAME` | `agent.Config.Name` | Agent 名称 |
 | `AGENT_MAX_TOTAL_TOKENS` | `agent.Config.MaxTotalTokens` | 整场会话 token budget |
 | `AGENT_REPEAT_TOOL_LIMIT` | `agent.Config.RepeatToolLimit` | 相同工具调用重复 warn 阈值 |
 | `AGENT_CONTEXT_AUTO_COMPRESS` | `agent.Config.ContextAutoCompress` | 是否在 `RunStream` 中自动触发压缩 |
 | `--debug` | `agent.Config.Debug` | Runtime logger 和 Agent debug 输出 |
-| `--llm-supplier` / `--llm-format` / `--llm-model` | `utils.LoadConfigWithOptions` | 临时切换当前供应商、接口格式或模型，不改写 `.env` |
+| `--model` / `--llm-format` / `--llm-model` | `utils.LoadConfigWithOptions` | 临时切换当前 provider/model、接口格式或模型，不改写 `.env` |
 | `run --quiet` | `RunOptions.WorkLog=false` | 关闭终端工作日志，保留项目内 work log 文件 |
 
 ## 副作用

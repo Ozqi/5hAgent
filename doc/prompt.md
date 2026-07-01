@@ -56,12 +56,12 @@ prefix.<provider>.<model-slug>.md
 示例：
 
 ```text
-LLM_PROVIDER=openai
-LLM_OPENAI_MODEL=qwen3:14b
+LLM_MODEL=ollama/qwen3:14b
+LLM_OLLAMA_FORMAT=openai
 => prefix.openai.qwen3-14b.md
 
-LLM_PROVIDER=openai
-LLM_OPENAI_MODEL=hf.co/bartowski/Qwen_Qwen3.6-27B-GGUF:Q3_K_M
+LLM_MODEL=ollama/hf.co/bartowski/Qwen_Qwen3.6-27B-GGUF:Q3_K_M
+LLM_OLLAMA_FORMAT=openai
 => prefix.openai.hf-co-bartowski-qwen-qwen3-6-27b-gguf-q3-k-m.md
 ```
 

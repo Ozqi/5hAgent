@@ -58,10 +58,10 @@ cmd/5hagent/main.go
 
 ## 全局配置事实
 
-- LLM 配置优先用 `LLM_SUPPLIER=<name>` 选择真实供应商，字段放在 `LLM_<SUPPLIER>_*`；`<name>` 会转成大写下划线形式，例如 `openrouter` -> `LLM_OPENROUTER_*`。
-- `LLM_<SUPPLIER>_FORMAT=claude|openai` 表示接口格式，不是供应商；`LLM_PROVIDER=claude|openai` 和 `LLM_CLAUDE_*` / `LLM_OPENAI_*` 仍是兼容路径。
-- 本地 Ollama 作为供应商 `ollama` 配置，通过 `LLM_OLLAMA_FORMAT=openai` + `LLM_OLLAMA_BASE_URL=http://localhost:11434/v1` 接入。
-- CLI 可用 `--llm-supplier`、`--llm-format`、`--llm-model` 临时切换供应商、接口格式或模型，不改写 `~/.5hAgent/.env`。
+- LLM 当前模型只用 `LLM_MODEL=provider/model` 选择；`provider` 对应 `LLM_<PROVIDER>_*` 配置块，`model` 原样发送给上游 API。
+- `LLM_<PROVIDER>_FORMAT=claude|openai` 表示接口协议，不是 provider 名；API 地址、密钥、token、stream 都绑定在对应 provider 块。
+- 本地 Ollama 作为 provider `ollama` 配置，通过 `LLM_MODEL=ollama/<model>` + `LLM_OLLAMA_FORMAT=openai` + `LLM_OLLAMA_BASE_URL=http://localhost:11434/v1` 接入。
+- CLI 可用 `--model provider/model` 临时切换完整模型引用；`--llm-format`、`--llm-model` 只临时覆盖当前 provider 的接口格式或模型名。
 - Agent 配置包括 `AGENT_NAME`、`AGENT_MAX_TOTAL_TOKENS`、`AGENT_REPEAT_TOOL_LIMIT`、`AGENT_CONTEXT_AUTO_COMPRESS`。
 - Prompts 从 `~/.5hAgent/prompt/*.md` 加载；主 prompt 是 `main.md`，模型专用前缀是 `prefix.<provider>.<model-slug>.md`。
 - Skills 启动时从 `~/.5hAgent/skills/*/SKILL.md` 和项目 `.5hagent/skills/*/SKILL.md` 加载；项目同名 skill 覆盖全局 skill，Agent 生命周期内不热加载也不动态启停。

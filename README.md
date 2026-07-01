@@ -26,35 +26,27 @@ bash install.sh
 curl -fsSL https://raw.githubusercontent.com/Ozqi/5hAgent/master/install.sh | bash
 ```
 
-3. 配置 LLM：`~/.5hAgent/.env`，默认模型使用 `supplier/upstream-model` 格式；第一段只用于选择供应商，后面的部分才会作为模型名传给上游 API。供应商详情仍按 `LLM_<SUPPLIER>_*` 保存：
+3. 配置 LLM：`~/.5hAgent/.env`，当前模型使用 `provider/model` 格式；第一段选择 provider 配置块，后面的部分原样作为模型名传给上游 API。Provider 详情按 `LLM_<PROVIDER>_*` 保存：
 
 ```env
-LLM_MODEL=openrouter/openrouter/owl-alpha
+LLM_MODEL=mira/claude-opus-4-6
 
-LLM_OPENROUTER_FORMAT=openai
-LLM_OPENROUTER_API_KEY=your_api_key
-LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-LLM_OPENROUTER_MODEL=openrouter/owl-alpha
-LLM_OPENROUTER_MAX_TOKENS=4096
-LLM_OPENROUTER_STREAM=false
-
-LLM_ANTHROPIC_FORMAT=claude
-LLM_ANTHROPIC_API_KEY=your_api_key
-LLM_ANTHROPIC_BASE_URL=https://api.anthropic.com
-LLM_ANTHROPIC_MODEL=claude-sonnet-4-6
-LLM_ANTHROPIC_MAX_TOKENS=4096
-LLM_ANTHROPIC_THINKING_BUDGET_TOKENS=0
+LLM_MIRA_FORMAT=claude
+LLM_MIRA_API_KEY=local
+LLM_MIRA_BASE_URL=http://127.0.0.1:8787
+LLM_MIRA_MAX_TOKENS=4096
+LLM_MIRA_THINKING_BUDGET_TOKENS=0
+LLM_MIRA_STREAM=true
 
 AGENT_NAME=5hAgent
 AGENT_CONTEXT_AUTO_COMPRESS=true
 ```
 
-这里的 `FORMAT=openai|claude` 表示接口协议，不是供应商名。旧版 `LLM_PROVIDER` + `LLM_CLAUDE_*` / `LLM_OPENAI_*` 配置仍然兼容。临时切换时可以不改 `.env`：
+这里的 `FORMAT=openai|claude` 表示接口协议，不是 provider 名。临时切换时可以不改 `.env`：
 
 ```bash
 5hagent --model openrouter/openrouter/owl-alpha run
-5hagent --llm-supplier anthropic run
-5hagent --llm-format openai --llm-model openrouter/owl-alpha run
+5hagent --llm-model claude-opus-4-6 run
 ```
 
 ### 使用本地 Ollama
@@ -70,17 +62,16 @@ ollama serve
 5hAgent 只区分两种接口格式：`claude` 和 `openai`。Ollama 通过 OpenAI-compatible `/v1` 接口接入，可以保存成 `ollama` 供应商配置：
 
 ```env
-LLM_SUPPLIER=ollama
+LLM_MODEL=ollama/qwen3:14b
 LLM_OLLAMA_FORMAT=openai
 LLM_OLLAMA_BASE_URL=http://localhost:11434/v1
-LLM_OLLAMA_MODEL=qwen3:14b
 LLM_OLLAMA_API_KEY=dummy
 ```
 
-Ollama 当前使用哪个模型由当前供应商配置的 `MODEL` 决定。例如使用 HuggingFace GGUF：
+Ollama 当前使用哪个模型由 `LLM_MODEL` 的后半段决定。例如使用 HuggingFace GGUF：
 
 ```env
-LLM_OLLAMA_MODEL=hf.co/bartowski/Qwen_Qwen3.6-27B-GGUF:Q3_K_M
+LLM_MODEL=ollama/hf.co/bartowski/Qwen_Qwen3.6-27B-GGUF:Q3_K_M
 ```
 
 Ollama 本地模型不校验 API key，`dummy` 即可。建议先用 `5hagent run` 执行一个只读任务验证 chat、工具调用和报告落盘。
@@ -116,6 +107,8 @@ EOF
 # 脚本场景只保留 report 路径和错误
 5hagent run --quiet
 ```
+
+在 TUI 里可以显式输入 `/run`，让当前 runtime 连续执行 `.5hagent/task.md` 中的 `in_progress` / `pending` 任务，直到没有可运行任务为止。每个任务仍会写入 `.5hagent/reports/` 和 `.5hagent/agents/<agent>/logs/`。
 
 实验性的 Agent Systemd 入口可以持续监听 `.5hagent/task.md`，把当前或变更后的 `pending/in_progress` 任务作为 AgentProcess 执行：
 

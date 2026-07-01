@@ -7,31 +7,38 @@ import (
 	"testing"
 )
 
-func TestLoadConfigReadsClaudeProviderConfig(t *testing.T) {
+func TestLoadConfigReadsProviderModelRef(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	writeConfig(t, home, strings.Join([]string{
-		"LLM_PROVIDER=claude",
-		"LLM_CLAUDE_API_KEY=provider-key",
-		"LLM_CLAUDE_BASE_URL=https://api.anthropic.com",
-		"LLM_CLAUDE_MODEL=claude-test",
-		"LLM_CLAUDE_MAX_TOKENS=8192",
-		"LLM_CLAUDE_THINKING_BUDGET_TOKENS=1024",
+		"LLM_MODEL=mira/claude-opus-4-6",
+		"LLM_MIRA_FORMAT=claude",
+		"LLM_MIRA_API_KEY=provider-key",
+		"LLM_MIRA_BASE_URL=http://127.0.0.1:8787",
+		"LLM_MIRA_MAX_TOKENS=8192",
+		"LLM_MIRA_THINKING_BUDGET_TOKENS=1024",
+		"LLM_MIRA_STREAM=false",
 	}, "\n"))
 
 	config, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
+	if config.LLM.Supplier != "mira" {
+		t.Fatalf("Supplier = %q, want mira", config.LLM.Supplier)
+	}
 	if config.LLM.Provider != "claude" {
-		t.Fatalf("Provider = %q, want claude", config.LLM.Provider)
+		t.Fatalf("Provider = %q, want claude format", config.LLM.Provider)
 	}
 	if config.LLM.APIKey != "provider-key" {
 		t.Fatalf("APIKey = %q, want provider-key", config.LLM.APIKey)
 	}
-	if config.LLM.Model != "claude-test" {
-		t.Fatalf("Model = %q, want claude-test", config.LLM.Model)
+	if config.LLM.BaseURL != "http://127.0.0.1:8787" {
+		t.Fatalf("BaseURL = %q", config.LLM.BaseURL)
+	}
+	if config.LLM.Model != "claude-opus-4-6" {
+		t.Fatalf("Model = %q, want claude-opus-4-6", config.LLM.Model)
 	}
 	if config.LLM.MaxTokens != 8192 {
 		t.Fatalf("MaxTokens = %d, want 8192", config.LLM.MaxTokens)
@@ -39,29 +46,35 @@ func TestLoadConfigReadsClaudeProviderConfig(t *testing.T) {
 	if config.LLM.ThinkingBudgetTokens != 1024 {
 		t.Fatalf("ThinkingBudgetTokens = %d, want 1024", config.LLM.ThinkingBudgetTokens)
 	}
+	if config.LLM.Stream {
+		t.Fatal("Stream = true, want false")
+	}
 }
 
-func TestLoadConfigReadsOpenAIProviderConfig(t *testing.T) {
+func TestLoadConfigReadsOpenAICompatibleProvider(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	writeConfig(t, home, strings.Join([]string{
-		"LLM_PROVIDER=openai",
-		"LLM_OPENAI_API_KEY=provider-key",
-		"LLM_OPENAI_BASE_URL=http://localhost:11434/v1",
-		"LLM_OPENAI_MODEL=qwen3:14b",
-		"LLM_OPENAI_MAX_TOKENS=2048",
+		"LLM_MODEL=ollama/qwen3:14b",
+		"LLM_OLLAMA_FORMAT=openai",
+		"LLM_OLLAMA_API_KEY=dummy",
+		"LLM_OLLAMA_BASE_URL=http://localhost:11434/v1",
+		"LLM_OLLAMA_MAX_TOKENS=2048",
 	}, "\n"))
 
 	config, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if config.LLM.Provider != "openai" {
-		t.Fatalf("Provider = %q, want openai", config.LLM.Provider)
+	if config.LLM.Supplier != "ollama" {
+		t.Fatalf("Supplier = %q, want ollama", config.LLM.Supplier)
 	}
-	if config.LLM.APIKey != "provider-key" {
-		t.Fatalf("APIKey = %q, want provider-key", config.LLM.APIKey)
+	if config.LLM.Provider != "openai" {
+		t.Fatalf("Provider = %q, want openai format", config.LLM.Provider)
+	}
+	if config.LLM.APIKey != "dummy" {
+		t.Fatalf("APIKey = %q, want dummy", config.LLM.APIKey)
 	}
 	if config.LLM.BaseURL != "http://localhost:11434/v1" {
 		t.Fatalf("BaseURL = %q", config.LLM.BaseURL)
@@ -74,20 +87,17 @@ func TestLoadConfigReadsOpenAIProviderConfig(t *testing.T) {
 	}
 }
 
-func TestLoadConfigReadsSelectedSupplier(t *testing.T) {
+func TestLoadConfigUsesModelRefModelOverLegacyProviderModel(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	writeConfig(t, home, strings.Join([]string{
-		"LLM_SUPPLIER=openrouter",
+		"LLM_MODEL=openrouter/openrouter/owl-alpha",
 		"LLM_OPENROUTER_FORMAT=openai",
 		"LLM_OPENROUTER_API_KEY=provider-key",
 		"LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
-		"LLM_OPENROUTER_MODEL=openrouter/owl-alpha",
+		"LLM_OPENROUTER_MODEL=legacy-should-not-win",
 		"LLM_OPENROUTER_MAX_TOKENS=2048",
-		"LLM_ANTHROPIC_FORMAT=claude",
-		"LLM_ANTHROPIC_API_KEY=anthropic-key",
-		"LLM_ANTHROPIC_MODEL=claude-test",
 	}, "\n"))
 
 	config, err := LoadConfig()
@@ -100,44 +110,8 @@ func TestLoadConfigReadsSelectedSupplier(t *testing.T) {
 	if config.LLM.Provider != "openai" {
 		t.Fatalf("Provider = %q, want openai format", config.LLM.Provider)
 	}
-	if config.LLM.APIKey != "provider-key" {
-		t.Fatalf("APIKey = %q, want provider-key", config.LLM.APIKey)
-	}
-	if config.LLM.BaseURL != "https://openrouter.ai/api/v1" {
-		t.Fatalf("BaseURL = %q", config.LLM.BaseURL)
-	}
 	if config.LLM.Model != "openrouter/owl-alpha" {
 		t.Fatalf("Model = %q", config.LLM.Model)
-	}
-	if config.LLM.MaxTokens != 2048 {
-		t.Fatalf("MaxTokens = %d, want 2048", config.LLM.MaxTokens)
-	}
-}
-
-func TestLoadConfigReadsModelRef(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	writeConfig(t, home, strings.Join([]string{
-		"LLM_MODEL=openrouter/openrouter/owl-alpha",
-		"LLM_OPENROUTER_FORMAT=openai",
-		"LLM_OPENROUTER_API_KEY=router-key",
-		"LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
-		"LLM_OPENROUTER_STREAM=false",
-	}, "\n"))
-
-	config, err := LoadConfig()
-	if err != nil {
-		t.Fatalf("LoadConfig() error = %v", err)
-	}
-	if config.LLM.Supplier != "openrouter" {
-		t.Fatalf("Supplier = %q, want openrouter", config.LLM.Supplier)
-	}
-	if config.LLM.Model != "openrouter/owl-alpha" {
-		t.Fatalf("Model = %q, want openrouter/owl-alpha", config.LLM.Model)
-	}
-	if config.LLM.Stream {
-		t.Fatal("Stream = true, want false")
 	}
 }
 
@@ -152,7 +126,6 @@ func TestLoadConfigOptionsOverrideModelRef(t *testing.T) {
 		"LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
 		"LLM_ANTHROPIC_FORMAT=claude",
 		"LLM_ANTHROPIC_API_KEY=anthropic-key",
-		"LLM_ANTHROPIC_MODEL=claude-test",
 	}, "\n"))
 
 	config, err := LoadConfigWithOptions(LoadConfigOptions{ModelRef: "openrouter/openrouter/owl-alpha"})
@@ -185,51 +158,15 @@ func TestLoadConfigRejectsInvalidModelRef(t *testing.T) {
 	}
 }
 
-func TestLoadConfigOptionsOverrideSupplier(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	writeConfig(t, home, strings.Join([]string{
-		"LLM_SUPPLIER=openrouter",
-		"LLM_OPENROUTER_FORMAT=openai",
-		"LLM_OPENROUTER_API_KEY=router-key",
-		"LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
-		"LLM_OPENROUTER_MODEL=openrouter/owl-alpha",
-		"LLM_ANTHROPIC_FORMAT=claude",
-		"LLM_ANTHROPIC_API_KEY=anthropic-key",
-		"LLM_ANTHROPIC_BASE_URL=https://api.anthropic.com",
-		"LLM_ANTHROPIC_MODEL=claude-test",
-		"LLM_ANTHROPIC_THINKING_BUDGET_TOKENS=1024",
-	}, "\n"))
-
-	config, err := LoadConfigWithOptions(LoadConfigOptions{LLMSupplier: "anthropic"})
-	if err != nil {
-		t.Fatalf("LoadConfigWithOptions() error = %v", err)
-	}
-	if config.LLM.Supplier != "anthropic" {
-		t.Fatalf("Supplier = %q, want anthropic", config.LLM.Supplier)
-	}
-	if config.LLM.Provider != "claude" {
-		t.Fatalf("Provider = %q, want claude format", config.LLM.Provider)
-	}
-	if config.LLM.APIKey != "anthropic-key" {
-		t.Fatalf("APIKey = %q, want anthropic-key", config.LLM.APIKey)
-	}
-	if config.LLM.ThinkingBudgetTokens != 1024 {
-		t.Fatalf("ThinkingBudgetTokens = %d, want 1024", config.LLM.ThinkingBudgetTokens)
-	}
-}
-
 func TestLoadConfigOptionsOverrideFormatAndModel(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	writeConfig(t, home, strings.Join([]string{
-		"LLM_SUPPLIER=openrouter",
+		"LLM_MODEL=openrouter/openrouter/owl-alpha",
 		"LLM_OPENROUTER_FORMAT=openai",
 		"LLM_OPENROUTER_API_KEY=router-key",
 		"LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
-		"LLM_OPENROUTER_MODEL=openrouter/owl-alpha",
 	}, "\n"))
 
 	config, err := LoadConfigWithOptions(LoadConfigOptions{LLMFormat: "openai", LLMModel: "openrouter/auto"})
@@ -254,7 +191,7 @@ func TestLoadConfigRejectsSupplierWithoutFormat(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	writeConfig(t, home, "LLM_SUPPLIER=broken\nLLM_BROKEN_MODEL=qwen3:14b\n")
+	writeConfig(t, home, "LLM_MODEL=broken/qwen3:14b\n")
 
 	_, err := LoadConfig()
 	if err == nil {
@@ -270,8 +207,8 @@ func TestLoadConfigRejectsMissingProviderSpecificKeys(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	writeConfig(t, home, strings.Join([]string{
-		"LLM_PROVIDER=claude",
-		"LLM_API_KEY=legacy-key",
+		"LLM_MODEL=claude/claude-test",
+		"LLM_CLAUDE_FORMAT=claude",
 	}, "\n"))
 
 	_, err := LoadConfig()
@@ -288,10 +225,11 @@ func TestLoadConfigIgnoresInactiveProviderValidation(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	writeConfig(t, home, strings.Join([]string{
-		"LLM_PROVIDER=claude",
+		"LLM_MODEL=claude/claude-test",
+		"LLM_CLAUDE_FORMAT=claude",
 		"LLM_CLAUDE_API_KEY=test-key",
-		"LLM_CLAUDE_MODEL=claude-test",
-		"LLM_OPENAI_MODEL=",
+		"LLM_OPENAI_FORMAT=openai",
+		"LLM_OPENAI_BASE_URL=",
 	}, "\n"))
 
 	if _, err := LoadConfig(); err != nil {
@@ -299,24 +237,26 @@ func TestLoadConfigIgnoresInactiveProviderValidation(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRejectsOpenAIWithoutModel(t *testing.T) {
+func TestLoadConfigRejectsMissingModelRef(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	writeConfig(t, home, "LLM_PROVIDER=openai\nLLM_OPENAI_MODEL=\n")
+	writeConfig(t, home, "LLM_OPENAI_FORMAT=openai\n")
 
 	_, err := LoadConfig()
 	if err == nil {
 		t.Fatal("LoadConfig() error = nil, want model error")
 	}
-	if !strings.Contains(err.Error(), "LLM_OPENAI_MODEL") {
-		t.Fatalf("LoadConfig() error = %v, want LLM_OPENAI_MODEL", err)
+	if !strings.Contains(err.Error(), "LLM_MODEL") {
+		t.Fatalf("LoadConfig() error = %v, want LLM_MODEL", err)
 	}
 }
 
 func TestLoadConfigRejectsClaudeWithoutAPIKey(t *testing.T) {
 	config := defaultConfig()
+	config.LLM.Supplier = "claude"
 	config.LLM.Provider = "claude"
+	config.LLM.Model = "claude-test"
 	config.LLM.APIKey = ""
 
 	err := config.Validate()
@@ -347,9 +287,9 @@ func TestLoadConfigNormalizesProvider(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	writeConfig(t, home, strings.Join([]string{
-		"LLM_PROVIDER=OPENAI",
+		"LLM_MODEL=openai/qwen2.5-coder:7b",
+		"LLM_OPENAI_FORMAT=OPENAI",
 		"LLM_OPENAI_BASE_URL=http://localhost:11434/v1",
-		"LLM_OPENAI_MODEL=qwen2.5-coder:7b",
 	}, "\n"))
 
 	config, err := LoadConfig()

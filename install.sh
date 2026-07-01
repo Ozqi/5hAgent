@@ -15,89 +15,19 @@ ok()    { printf "\033[1;32m✔ %s\033[0m\n" "$*"; }
 warn()  { printf "\033[1;33m⚠ %s\033[0m\n" "$*"; }
 err()   { printf "\033[1;31m✘ %s\033[0m\n" "$*" >&2; exit 1; }
 
-env_get() {
-    local file="$1"
-    local key="$2"
-    awk -F= -v key="$key" '
-        $0 ~ "^[[:space:]]*" key "=" {
-            value = substr($0, index($0, "=") + 1)
-            print value
-            exit
-        }
-    ' "$file"
-}
-
 env_has_key() {
     local file="$1"
     local key="$2"
     grep -q "^[[:space:]]*$key=" "$file"
 }
 
-env_set_value() {
-    local file="$1"
-    local key="$2"
-    local value="$3"
-    if env_has_key "$file" "$key"; then
-        sed -i.bak "s|^[[:space:]]*$key=.*|$key=$value|" "$file"
-        rm -f "$file.bak"
-    else
-        printf "%s=%s\n" "$key" "$value" >> "$file"
-    fi
-}
-
 migrate_legacy_env() {
     local file="$1"
-    local provider old_base old_model old_tokens old_thinking old_key
-
-    provider=$(env_get "$file" "LLM_PROVIDER")
-    if [ "$provider" != "ollama" ] && ! env_has_key "$file" "LLM_OLLAMA_MODEL"; then
+    if ! env_has_key "$file" "LLM_PROVIDER" && ! env_has_key "$file" "LLM_SUPPLIER"; then
         return
     fi
-
     cp "$file" "$file.bak.$(date +%Y%m%d%H%M%S)"
-    sed -i.bak \
-        -e 's/切换到本地模型只改成 ollama/切换到本地模型只改成 openai/' \
-        -e 's/Ollama provider 配置/OpenAI-compatible provider 配置/' \
-        -e 's/LLM_PROVIDER=ollama/LLM_PROVIDER=openai/' \
-        "$file"
-    rm -f "$file.bak"
-
-    if [ "$provider" = "ollama" ]; then
-        env_set_value "$file" "LLM_PROVIDER" "openai"
-    fi
-
-    old_key=$(env_get "$file" "LLM_OLLAMA_API_KEY")
-    old_base=$(env_get "$file" "LLM_OLLAMA_BASE_URL")
-    old_model=$(env_get "$file" "LLM_OLLAMA_MODEL")
-    old_tokens=$(env_get "$file" "LLM_OLLAMA_MAX_TOKENS")
-    old_thinking=$(env_get "$file" "LLM_OLLAMA_THINKING_BUDGET_TOKENS")
-
-    if ! env_has_key "$file" "LLM_OPENAI_API_KEY"; then
-        [ -n "$old_key" ] || old_key="dummy"
-        env_set_value "$file" "LLM_OPENAI_API_KEY" "$old_key"
-    fi
-    if ! env_has_key "$file" "LLM_OPENAI_BASE_URL"; then
-        if [ "$old_base" = "http://localhost:11434" ]; then
-            old_base="http://localhost:11434/v1"
-        elif [ -z "$old_base" ]; then
-            old_base="http://localhost:11434/v1"
-        fi
-        env_set_value "$file" "LLM_OPENAI_BASE_URL" "$old_base"
-    fi
-    if ! env_has_key "$file" "LLM_OPENAI_MODEL"; then
-        [ -n "$old_model" ] || old_model="qwen3:14b"
-        env_set_value "$file" "LLM_OPENAI_MODEL" "$old_model"
-    fi
-    if ! env_has_key "$file" "LLM_OPENAI_MAX_TOKENS"; then
-        [ -n "$old_tokens" ] || old_tokens="4096"
-        env_set_value "$file" "LLM_OPENAI_MAX_TOKENS" "$old_tokens"
-    fi
-    if ! env_has_key "$file" "LLM_OPENAI_THINKING_BUDGET_TOKENS"; then
-        [ -n "$old_thinking" ] || old_thinking="0"
-        env_set_value "$file" "LLM_OPENAI_THINKING_BUDGET_TOKENS" "$old_thinking"
-    fi
-
-    ok "已迁移旧 Ollama 配置到 OpenAI-compatible: $file"
+    warn "检测到旧 LLM_PROVIDER/LLM_SUPPLIER 配置，已备份；请按 LLM_MODEL=provider/model 格式整理: $file"
 }
 
 # ── 1. 检查 Go ──
@@ -196,6 +126,5 @@ echo ""
 echo "如需使用本地 Ollama:"
 echo "  1. 安装 Ollama: https://ollama.com/download"
 echo "  2. 执行: ollama pull qwen3:14b"
-echo "  3. 将 $CONFIG_DIR/.env 中的 LLM_PROVIDER 改为 openai"
-echo "  4. 设置 LLM_OPENAI_BASE_URL=http://localhost:11434/v1"
-echo "  5. 如需换本地模型，只改 LLM_OPENAI_MODEL"
+echo "  3. 设置 LLM_MODEL=ollama/qwen3:14b"
+echo "  4. 配置 LLM_OLLAMA_FORMAT=openai 和 LLM_OLLAMA_BASE_URL=http://localhost:11434/v1"

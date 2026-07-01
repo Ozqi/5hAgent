@@ -129,12 +129,11 @@ type AgentConfig struct {
 }
 
 // LoadConfigOptions 描述运行期对 ~/.5hAgent/.env 的覆盖。
-// CLI 可用它临时切换 supplier/format/model，不改写用户保存的配置文件。
+// CLI 优先使用 ModelRef 完整切换 provider/model；LLMFormat/LLMModel 只覆盖当前 provider 的协议或模型。
 type LoadConfigOptions struct {
-	LLMSupplier string
-	LLMFormat   string
-	LLMModel    string
-	ModelRef    string
+	LLMFormat string
+	LLMModel  string
+	ModelRef  string
 }
 
 // 默认值常量。
@@ -171,13 +170,13 @@ func GetProjectDataDir() (string, error) {
 }
 
 // LoadConfig 从 ~/.5hAgent/.env 加载配置。
-// 步骤：读取 env 文件 -> 选择 LLM_MODEL 或兼容 LLM_SUPPLIER -> 加载当前 LLM 配置 -> 加载 Agent 配置 -> 校验。
+// 步骤：读取 env 文件 -> 解析 LLM_MODEL=provider/model -> 加载当前 provider 配置 -> 加载 Agent 配置 -> 校验。
 func LoadConfig() (*AppConfig, error) {
 	return LoadConfigWithOptions(LoadConfigOptions{})
 }
 
 // LoadConfigWithOptions 从 ~/.5hAgent/.env 加载配置，并应用运行期覆盖。
-// Supplier 配置使用 LLM_<SUPPLIER>_*，其中 FORMAT 才是 claude/openai 接口格式。
+// Provider 配置使用 LLM_<PROVIDER>_*；FORMAT 是 claude/openai 接口协议。
 func LoadConfigWithOptions(opts LoadConfigOptions) (*AppConfig, error) {
 	config := defaultConfig()
 
@@ -223,29 +222,15 @@ func loadLLMConfig(env map[string]string, defaults LLMConfig, opts LoadConfigOpt
 	if err != nil {
 		return LLMConfig{}, err
 	}
-
-	supplier := strings.TrimSpace(opts.LLMSupplier)
-	if supplier == "" {
-		supplier = refSupplier
+	if refSupplier == "" || refModel == "" {
+		return LLMConfig{}, fmt.Errorf("LLM_MODEL is required and must use provider/model format")
 	}
-	if supplier == "" {
-		supplier = strings.TrimSpace(getEnvValue(env, "LLM_SUPPLIER", ""))
+	cfg, err := loadProviderConfig(env, refSupplier, defaults)
+	if err != nil {
+		return LLMConfig{}, err
 	}
-	if supplier != "" {
-		cfg, err := loadSupplierLLMConfig(env, supplier, defaults)
-		if err != nil {
-			return LLMConfig{}, err
-		}
-		if refModel != "" {
-			cfg.Model = refModel
-		}
-		return applyLLMOverrides(env, cfg, opts), nil
-	}
-	cfg := loadProviderLLMConfig(env, defaults)
-	if refModel != "" {
-		cfg.Model = refModel
-	}
-	return applyLLMOverrides(env, cfg, opts), nil
+	cfg.Model = refModel
+	return applyLLMOverrides(cfg, opts), nil
 }
 
 func parseModelRef(ref string) (supplier string, model string, err error) {
@@ -259,23 +244,17 @@ func parseModelRef(ref string) (supplier string, model string, err error) {
 	return before, after, nil
 }
 
-func loadProviderLLMConfig(env map[string]string, defaults LLMConfig) LLMConfig {
-	format := strings.ToLower(getEnvValue(env, "LLM_PROVIDER", defaults.Provider))
-	return loadProviderLLMConfigFor(env, format, defaults)
-}
-
-func loadSupplierLLMConfig(env map[string]string, supplier string, defaults LLMConfig) (LLMConfig, error) {
+func loadProviderConfig(env map[string]string, supplier string, defaults LLMConfig) (LLMConfig, error) {
 	prefix := supplierEnvPrefix(supplier)
 	format := strings.ToLower(getEnvValue(env, prefix+"_FORMAT", ""))
 	if format == "" {
-		return LLMConfig{}, fmt.Errorf("%s_FORMAT is required for LLM supplier %q", prefix, supplier)
+		return LLMConfig{}, fmt.Errorf("%s_FORMAT is required for LLM provider %q", prefix, supplier)
 	}
 	cfg := providerDefaults(format, defaults)
 	cfg.Supplier = supplier
 	cfg.Provider = format
 	cfg.APIKey = getEnvValue(env, prefix+"_API_KEY", cfg.APIKey)
 	cfg.BaseURL = getEnvValue(env, prefix+"_BASE_URL", cfg.BaseURL)
-	cfg.Model = getEnvValue(env, prefix+"_MODEL", cfg.Model)
 	if maxTokens := getEnvValue(env, prefix+"_MAX_TOKENS", ""); maxTokens != "" {
 		if v, err := strconv.Atoi(maxTokens); err == nil {
 			cfg.MaxTokens = v
@@ -292,39 +271,13 @@ func loadSupplierLLMConfig(env map[string]string, supplier string, defaults LLMC
 	return cfg, nil
 }
 
-func applyLLMOverrides(env map[string]string, cfg LLMConfig, opts LoadConfigOptions) LLMConfig {
+func applyLLMOverrides(cfg LLMConfig, opts LoadConfigOptions) LLMConfig {
 	if format := strings.ToLower(strings.TrimSpace(opts.LLMFormat)); format != "" {
-		if cfg.Supplier != "" {
-			cfg.Provider = format
-			cfg = applyProviderDefaults(cfg, defaultConfig().LLM)
-		} else {
-			cfg = loadProviderLLMConfigFor(env, format, defaultConfig().LLM)
-		}
+		cfg.Provider = format
+		cfg = applyProviderDefaults(cfg, defaultConfig().LLM)
 	}
 	if model := strings.TrimSpace(opts.LLMModel); model != "" {
 		cfg.Model = model
-	}
-	return cfg
-}
-
-func loadProviderLLMConfigFor(env map[string]string, format string, defaults LLMConfig) LLMConfig {
-	cfg := providerDefaults(format, defaults)
-	cfg.Provider = format
-	cfg.APIKey = getProviderEnv(env, format, "API_KEY", cfg.APIKey)
-	cfg.BaseURL = getProviderEnv(env, format, "BASE_URL", cfg.BaseURL)
-	cfg.Model = getProviderEnv(env, format, "MODEL", cfg.Model)
-	if maxTokens := getProviderEnv(env, format, "MAX_TOKENS", ""); maxTokens != "" {
-		if v, err := strconv.Atoi(maxTokens); err == nil {
-			cfg.MaxTokens = v
-		}
-	}
-	if budget := getProviderEnv(env, format, "THINKING_BUDGET_TOKENS", ""); budget != "" {
-		if v, err := strconv.Atoi(budget); err == nil {
-			cfg.ThinkingBudgetTokens = v
-		}
-	}
-	if stream := getProviderEnv(env, format, "STREAM", ""); stream != "" {
-		cfg.Stream = strings.ToLower(stream) != "false"
 	}
 	return cfg
 }
@@ -352,17 +305,6 @@ func applyProviderDefaults(cfg LLMConfig, defaults LLMConfig) LLMConfig {
 		cfg.Model = withDefaults.Model
 	}
 	return cfg
-}
-
-func getProviderEnv(env map[string]string, provider, field, fallback string) string {
-	if provider == "" {
-		return fallback
-	}
-	return getEnvValue(env, providerEnvKey(provider, field), fallback)
-}
-
-func providerEnvKey(provider, field string) string {
-	return "LLM_" + strings.ToUpper(provider) + "_" + field
 }
 
 func supplierEnvPrefix(supplier string) string {
@@ -478,5 +420,5 @@ func llmEnvKey(config LLMConfig, field string) string {
 	if config.Supplier != "" {
 		return supplierEnvPrefix(config.Supplier) + "_" + field
 	}
-	return providerEnvKey(config.Provider, field)
+	return "LLM_" + strings.ToUpper(config.Provider) + "_" + field
 }

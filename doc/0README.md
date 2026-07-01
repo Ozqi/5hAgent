@@ -211,7 +211,7 @@ sequenceDiagram
 │   ├── llm.md                 # LLM 客户端
 │   ├── llm-call-flow.md       # 一次 LLM 调用和 Tool Call 数据流
 │   ├── agent-systemd.md       # Agent Systemd 顶层调度设计和当前边界
-│   ├── agent-systemd-test.md  # Agent Systemd TODO 和测试验收规范
+│   ├── agent-systemd-test.md  # Agent Systemd 调试入口
 │   ├── logger.md              # 日志模块
 │   ├── prompt.md              # prompt 文件加载
 │   └── task.md                # 任务管理
@@ -283,7 +283,7 @@ flowchart LR
 |------|------|------|
 | [runtime.md](runtime.md) | `internal/runtime` | 共享运行时初始化、TUI/无头入口、报告写入、工具绑定 |
 | [agent-systemd.md](agent-systemd.md) | Stage 6 设计 | Agent Systemd、PromptSpec/ExitSpec、内存 context、IPC、decision JSON 判断 |
-| [agent-systemd-test.md](agent-systemd-test.md) | 测试规范 | daemon、AgentProcess、task 状态闭环、多进程、IPC 和智能效果验收 |
+| [agent-systemd-test.md](agent-systemd-test.md) | 调试入口 | tmux TUI、headless、daemon 真实交互调试 |
 | [agent.md](agent.md) | `internal/agent` | ReAct 循环、stream 读取、tool call 收集、上下文写回 |
 | [tools.md](tools.md) | `internal/tools` / `internal/toolmeta` | 工具注册、工具 schema、执行策略、MCP 工具包装 |
 | [context.md](context.md) | `internal/context` | 消息上下文、session、压缩、`context.context` |

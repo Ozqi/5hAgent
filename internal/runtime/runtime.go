@@ -36,7 +36,6 @@ type Options struct {
 	ContinueLast  bool
 	MemoryContext bool
 	ProjectDir    string
-	LLMSupplier   string
 	LLMFormat     string
 	LLMModel      string
 	ModelRef      string
@@ -62,9 +61,10 @@ type Runtime struct {
 // RunOptions 描述一次文件任务执行。
 // TaskID 为空时按 in_progress -> pending 顺序选择一个任务；ReportDir 为空时写入 .5hagent/reports。
 type RunOptions struct {
-	TaskID    string
-	ReportDir string
-	WorkLog   bool // 是否在 headless 模式输出可读工作日志
+	TaskID        string
+	ReportDir     string
+	WorkLog       bool // 是否在 headless 模式输出可读工作日志
+	ToolEventSink func(logger.ToolEvent)
 }
 
 // RunReport 是无头执行写入报告文件前的结构化结果。
@@ -75,6 +75,37 @@ type RunReport struct {
 	Err        error
 	StartedAt  time.Time
 	EndedAt    time.Time
+}
+
+// RunAllReport 汇总一次连续任务执行的结果。
+type RunAllReport struct {
+	Reports   []*RunReport
+	StartedAt time.Time
+	EndedAt   time.Time
+}
+
+// Summary 返回适合 TUI slash 命令展示的短结果。
+func (r *RunAllReport) Summary() string {
+	if r == nil || len(r.Reports) == 0 {
+		return "No pending or in_progress tasks found"
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Run completed: %d task(s)\n", len(r.Reports)))
+	for _, report := range r.Reports {
+		if report == nil || report.Task == nil {
+			continue
+		}
+		status := string(report.Task.Status)
+		if report.Err != nil {
+			status = "failed"
+		}
+		sb.WriteString(fmt.Sprintf("  [%s] %s - %s", report.Task.ID, report.Task.Title, status))
+		if report.ReportPath != "" {
+			sb.WriteString(fmt.Sprintf(" (%s)", report.ReportPath))
+		}
+		sb.WriteByte('\n')
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 type processReport struct {
@@ -94,10 +125,9 @@ type processReport struct {
 // 副作用：创建 ~/.5hAgent、项目 .5hagent、日志文件，可能启动 MCP stdio 子进程。
 func New(ctx context.Context, opts Options) (*Runtime, error) {
 	appConfig, err := utils.LoadConfigWithOptions(utils.LoadConfigOptions{
-		LLMSupplier: opts.LLMSupplier,
-		LLMFormat:   opts.LLMFormat,
-		LLMModel:    opts.LLMModel,
-		ModelRef:    opts.ModelRef,
+		LLMFormat: opts.LLMFormat,
+		LLMModel:  opts.LLMModel,
+		ModelRef:  opts.ModelRef,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("load configuration: %w", err)
@@ -150,7 +180,11 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 
 	promptDir := filepath.Join(configDir, "prompt")
-	systemPrompt, err := utils.LoadSystemPrompt(promptDir, appConfig.LLM.Provider, appConfig.LLM.Model)
+	promptProvider := appConfig.LLM.Provider
+	if appConfig.LLM.Supplier != "" {
+		promptProvider = appConfig.LLM.Supplier
+	}
+	systemPrompt, err := utils.LoadSystemPrompt(promptDir, promptProvider, appConfig.LLM.Model)
 	if err != nil {
 		return nil, fmt.Errorf("load system prompt: %w", err)
 	}
@@ -264,10 +298,10 @@ func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess, ip
 	workLog := newHeadlessWorkLog(false, dataDir, proc.ID, started)
 	workLog.useGlobalSink = false
 	workLog.Start(logTask)
-	r.Agent.SetToolEventSink(func(event logger.ToolEvent) {
+	prevSink := r.Agent.SetToolEventSink(func(event logger.ToolEvent) {
 		workLog.printToolEvent(event)
 	})
-	defer r.Agent.SetToolEventSink(nil)
+	defer r.Agent.SetToolEventSink(prevSink)
 	input := fmt.Sprintf(`你正在以 Agent Systemd 进程模式运行。
 
 Exit Condition:
@@ -363,10 +397,13 @@ func (r *Runtime) RunTaskOnce(ctx context.Context, opts RunOptions) (*RunReport,
 	workLog := newHeadlessWorkLog(opts.WorkLog, projectDataDir, r.Agent.Name(), started)
 	workLog.useGlobalSink = false
 	workLog.Start(selected)
-	r.Agent.SetToolEventSink(func(event logger.ToolEvent) {
+	prevSink := r.Agent.SetToolEventSink(func(event logger.ToolEvent) {
 		workLog.printToolEvent(event)
+		if opts.ToolEventSink != nil {
+			opts.ToolEventSink(event)
+		}
 	})
-	defer r.Agent.SetToolEventSink(nil)
+	defer r.Agent.SetToolEventSink(prevSink)
 	defer workLog.Stop()
 	response, runErr := r.Agent.RunStream(ctx, messageCtx, input, workLog.OnToken, workLog.OnReasoning)
 	workLog.End(runErr)
@@ -392,6 +429,45 @@ func (r *Runtime) RunTaskOnce(ctx context.Context, opts RunOptions) (*RunReport,
 		return report, writeErr
 	}
 	return report, runErr
+}
+
+// RunTasksUntilDone 连续执行 task.md 中的 in_progress/pending 任务，直到没有可运行任务。
+// 调用层级：TUI /run -> Runtime.RunTasksUntilDone -> Runtime.RunTaskOnce -> Agent.RunStream。
+// 步骤：每轮选择一个任务执行；ReAct 退出后重新读取 task.md；遇到任务执行失败仍继续处理后续任务。
+func (r *Runtime) RunTasksUntilDone(ctx context.Context, opts RunOptions) (*RunAllReport, error) {
+	if opts.TaskID != "" {
+		report, err := r.RunTaskOnce(ctx, opts)
+		result := &RunAllReport{StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()}
+		if report != nil {
+			result.Reports = append(result.Reports, report)
+			result.StartedAt = report.StartedAt
+			result.EndedAt = report.EndedAt
+		}
+		return result, err
+	}
+
+	result := &RunAllReport{StartedAt: time.Now().UTC()}
+	var errs []string
+	for {
+		if err := ctx.Err(); err != nil {
+			result.EndedAt = time.Now().UTC()
+			return result, err
+		}
+		if _, err := r.selectTask(""); err != nil {
+			result.EndedAt = time.Now().UTC()
+			if len(errs) > 0 {
+				return result, fmt.Errorf("%s", strings.Join(errs, "; "))
+			}
+			return result, nil
+		}
+		report, err := r.RunTaskOnce(ctx, opts)
+		if report != nil {
+			result.Reports = append(result.Reports, report)
+		}
+		if err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
 }
 
 // TaskProcessSpec 把文件任务转换成 AgentProcess 启动规格。
