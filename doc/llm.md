@@ -5,7 +5,7 @@
 
 ## 摘要
 
-LLM 模块负责把 `~/.5hAgent/.env` 中当前模型配置转换成 Eino 的 `model.ToolCallingChatModel`。推荐用 `LLM_MODEL=supplier/model` 表示当前模型，并用 `LLM_<SUPPLIER>_FORMAT=openai|claude` 描述供应商接口格式。旧版 `LLM_SUPPLIER` 和 `LLM_PROVIDER` 配置仍兼容。
+LLM 模块负责把 `~/.5hAgent/.env` 中当前模型配置转换成 Eino 的 `model.ToolCallingChatModel`。推荐用 `LLM_MODEL=supplier/upstream-model` 表示当前模型，并用 `LLM_<SUPPLIER>_FORMAT=openai|claude` 描述供应商接口格式。旧版 `LLM_SUPPLIER` 和 `LLM_PROVIDER` 配置仍兼容。
 
 ## 架构
 
@@ -63,7 +63,7 @@ type LLMClient struct {
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `LLM_MODEL` | 当前默认模型，格式为 `supplier/model` | - |
+| `LLM_MODEL` | 当前默认模型，格式为 `supplier/upstream-model`，第一段选择供应商，剩余部分作为上游模型名 | - |
 | `LLM_SUPPLIER` | 当前默认供应商名 | - |
 | `LLM_<SUPPLIER>_FORMAT` | 当前供应商的接口格式，支持 `claude` / `openai` | 必填 |
 | `LLM_<SUPPLIER>_API_KEY` | 当前供应商的 API Key | Claude format 必填；OpenAI-compatible 按上游要求 |
@@ -99,7 +99,7 @@ type LLMClient struct {
 ### 多供应商配置示例
 
 ```env
-LLM_MODEL=openrouter/owl-alpha
+LLM_MODEL=openrouter/openrouter/owl-alpha
 
 LLM_OPENROUTER_FORMAT=openai
 LLM_OPENROUTER_API_KEY=your_api_key
@@ -119,7 +119,7 @@ LLM_ANTHROPIC_THINKING_BUDGET_TOKENS=0
 临时切到另一个供应商：
 
 ```bash
-5hagent --model openrouter/owl-alpha run
+5hagent --model openrouter/openrouter/owl-alpha run
 5hagent --llm-supplier anthropic run
 ```
 

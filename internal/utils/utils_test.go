@@ -119,7 +119,7 @@ func TestLoadConfigReadsModelRef(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	writeConfig(t, home, strings.Join([]string{
-		"LLM_MODEL=openrouter/owl-alpha",
+		"LLM_MODEL=openrouter/openrouter/owl-alpha",
 		"LLM_OPENROUTER_FORMAT=openai",
 		"LLM_OPENROUTER_API_KEY=router-key",
 		"LLM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
@@ -155,7 +155,7 @@ func TestLoadConfigOptionsOverrideModelRef(t *testing.T) {
 		"LLM_ANTHROPIC_MODEL=claude-test",
 	}, "\n"))
 
-	config, err := LoadConfigWithOptions(LoadConfigOptions{ModelRef: "openrouter/owl-alpha"})
+	config, err := LoadConfigWithOptions(LoadConfigOptions{ModelRef: "openrouter/openrouter/owl-alpha"})
 	if err != nil {
 		t.Fatalf("LoadConfigWithOptions() error = %v", err)
 	}

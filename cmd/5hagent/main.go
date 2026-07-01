@@ -43,7 +43,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&llmSupplier, "llm-supplier", "", "LLM supplier name from ~/.5hAgent/.env")
 	rootCmd.PersistentFlags().StringVar(&llmFormat, "llm-format", "", "Temporarily select LLM API format: claude or openai")
 	rootCmd.PersistentFlags().StringVar(&llmModel, "llm-model", "", "Temporarily override the selected LLM model")
-	rootCmd.PersistentFlags().StringVarP(&modelRef, "model", "m", "", "Model ref in supplier/model format, for example openrouter/owl-alpha")
+	rootCmd.PersistentFlags().StringVarP(&modelRef, "model", "m", "", "Model ref in supplier/upstream-model format, for example openrouter/openrouter/owl-alpha")
 
 	runCmd := &cobra.Command{
 		Use:   "run",

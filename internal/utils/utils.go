@@ -256,7 +256,7 @@ func parseModelRef(ref string) (supplier string, model string, err error) {
 	if !ok || before == "" || after == "" {
 		return "", "", fmt.Errorf("LLM_MODEL must use supplier/model format, got %q", ref)
 	}
-	return before, ref, nil
+	return before, after, nil
 }
 
 func loadProviderLLMConfig(env map[string]string, defaults LLMConfig) LLMConfig {
