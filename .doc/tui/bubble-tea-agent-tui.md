@@ -6,7 +6,6 @@
 
 - 主界面：[internal/cli/tui.go](/Users/bytedance/Proj/5hAgent/internal/cli/tui.go)
 - Markdown 渲染：[internal/cli/markdown_stream.go](/Users/bytedance/Proj/5hAgent/internal/cli/markdown_stream.go)
-- TUI 测试：[internal/cli/tui_test.go](/Users/bytedance/Proj/5hAgent/internal/cli/tui_test.go)
 - 模块说明：[doc/cli.md](/Users/bytedance/Proj/5hAgent/doc/cli.md)
 
 当前实现已经使用：
@@ -118,7 +117,7 @@ func (m Model) View() string {
 
 TUI 问题建议分三层排查：
 
-1. 纯文本结构：使用 `tmux capture-pane` 或测试里的 `stripANSI` 查看实际内容是否存在。
+1. 纯文本结构：使用 `tmux capture-pane` 查看实际内容是否存在。
 2. ANSI 宽度：用 `lipgloss.Width`、现有 wrap 测试验证中文、颜色和表格没有超宽。
 3. 真实视觉：用终端截图确认浅色提示、边框、光标、输入框背景和状态栏对比度。
 
@@ -126,8 +125,9 @@ TUI 问题建议分三层排查：
 
 - 用户直接发截图，适合判断颜色、层级、遮挡、对齐。
 - 本地运行 `5hagent` 后用 `tmux capture-pane` 捕获文本，适合判断渲染内容是否出现。
+- 鼠标滚轮可用 SGR mouse escape 验证：`tmux send-keys -t <session> Escape '[<64;10;10M'` 上滚，`'[<65;10;10M'` 下滚；不要发送字面量 `WheelUpPane`。
 - 在 macOS 上用 `screencapture` 截图，但可能受屏幕录制权限影响。
-- 对固定视图逻辑写单元测试，例如 `renderSlashHint`、`renderConversationEntry`。
+- 固定视图逻辑优先通过人工 TUI 操作和 capture 验证，必要时再补小范围单测。
 
 调试时不要只依赖截图：截图能发现视觉问题，但命令状态、焦点状态和消息顺序仍要回到 `Update` 事件流和测试里确认。
 
@@ -135,9 +135,9 @@ TUI 问题建议分三层排查：
 
 短期优先级：
 
-1. 继续补足 slash 命令提示和匹配测试。
-2. 删除左侧 sidebar 和右侧 status panel，把有用状态迁移到输入框上方和下方。
-3. 输入框改为偏亮灰色背景，对颜色和布局做截图验证。
+1. 继续打磨 slash 命令提示和匹配体验。
+2. 保持左侧 sidebar 和右侧 status panel 删除后的单列结构。
+3. 输入框保持参考 tmux 对话窗口的深灰低对比样式，对颜色和布局做截图验证。
 4. 模型切换先使用 CLI `--model/-m` 和配置；TUI 内模型选择等后续再接。
 
 中期可考虑：
@@ -155,8 +155,54 @@ TUI 问题建议分三层排查：
 - 相关 render 函数有不含 ANSI 的断言。
 - 中文、英文长词、ANSI 彩色字符串不会撑爆固定宽度。
 - slash 命令、工具事件、assistant token、thinking token 的 entry 顺序正确。
+- PgUp/PgDown 与 SGR mouse wheel 上下滚动历史记录时，`scroll xx%` 状态应随之变化。
+- 72 列以下进入紧凑状态行和紧凑 slash hint；50x18 应仍能看到提示、输入条、session 和 state。
+- 长中文输入停留在输入框内时至少显示两行，不能把 session/footer 挤出屏幕。
+- Markdown 标题、列表、代码块和表格在 60 列下不能撑破输入区或底栏；空输入框不能重复显示两行 prompt。
+- 空态内容紧贴输入区状态行上方，避免在提示和输入条之间留下无意义空行；输入 `/` 后输入条不应产生明显跳动。
+- diff 代码块的 `+` / `-` 行应使用参考窗口的绿/红低对比背景，普通代码行用主文本色，fence 弱化。
+- 工具错误态应显示为 `◆ Failed <tool>`，错误内容逐行 `└` 缩进，不能退回旧的 `TOOL_EXEC` 盒子。
+- 本地可用 `5HAGENT_TUI_DEBUG=1` 启动后输入 `/debug tool-running`，验证工具 running 态和完成态。
+- 未知 slash command 应显示为 `◆ Command /unknown` 错误，不进入 LLM，不增加 context messages。
+- slash hint 区域保持固定高度，输入 `/` 前后输入条、session/footer、底栏不能跳动。
 - 如果改启动 wiring，再运行 `go build -o 5hagent cmd/5hagent/main.go`。
 - 视觉改动尽量补一张真实终端截图或 tmux capture 记录。
+
+## tmux 验证矩阵
+
+本轮 TUI 重构用 tmux 实测过这些场景。后续改 TUI 时优先复用同一类场景，不要只看源码：
+
+| 场景 | 尺寸 | 输入/触发 | 观察点 |
+| --- | --- | --- | --- |
+| 空态 | 100x28 / 80x24 | 启动 TUI | 输入条、session、state、空提示 |
+| slash hint | 100x28 / 60x20 / 50x18 | `/` | hint 不撑破输入区，窄屏显示短命令 |
+| unknown slash | 80x24 | `/unknown` + Enter | 显示 command 错误，state 保持 idle |
+| 长输入 | 80x24 / 50x18 | 长中文不回车 | 输入框至少两行，footer 不被挤掉 |
+| 真实 tool call | 100x30 | 让模型调用 `base.read_file` | `◆ Ran`、结果缩进、最终回答 |
+| tool running | 100x30 | `5HAGENT_TUI_DEBUG=1` + `/debug tool-running` | running spinner、done 后回 idle |
+| tool error | 100x30 | 真实错误工具调用 | `◆ Failed`、错误逐行 `└` |
+| thinking | 100x30 | 含 `reasoning_content` 的 session | `◆ thinking`、正文弱化 |
+| 长历史 | 100x30 | 多轮历史 session | PgUp/PgDown、`scroll xx%` |
+| 鼠标滚轮 | 100x30 | SGR wheel escape | wheel up/down 后 `scroll xx%` 改变 |
+| Markdown | 100x32 / 60x24 | 标题、列表、代码块、表格 | 不撑破输入区，diff 行有红/绿背景 |
+| slash 长输出 | 100x30 | `/session list`、`/task list` | `◆ Command` 标题，长输出省略 |
+
+`/session list` 捕获必须先于矩阵脚本创建临时 sample session，避免 `tui-capture-*` 污染列表；`audit.txt` 会检查这一点。
+
+常用命令片段：
+
+```bash
+/Users/bytedance/.trae/skills/tui-development/scripts/tui_capture_matrix.sh
+# 生成 .traces/tui/<timestamp>/，并写 audit.txt 与 ansi-backgrounds.txt。
+# 默认自动检查 replacement char、重复空 prompt、明显超长裸行、旧亮色输入背景和黑色背景块。
+
+tmux new-session -d -s 5hagent-tui-check -x 100 -y 28 -c /Users/bytedance/Proj/5hWorkSpace '/Users/bytedance/Proj/5hAgent/5hagent'
+tmux capture-pane -t 5hagent-tui-check -p -S -80
+tmux send-keys -t 5hagent-tui-check '/'
+tmux send-keys -t 5hagent-tui-check Escape '[<64;10;10M'
+tmux send-keys -t 5hagent-tui-check Escape '[<65;10;10M'
+tmux kill-session -t 5hagent-tui-check 2>/dev/null || true
+```
 
 ## 参考代码路径
 

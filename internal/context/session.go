@@ -33,16 +33,17 @@ type Store struct {
 
 // sessionFileEntry JSONL 文件中的单条记录
 type sessionFileEntry struct {
-	Type       string            `json:"type,omitempty"`         // "session" 表示会话头
-	ID         string            `json:"id,omitempty"`           // 会话 ID
-	Title      string            `json:"title,omitempty"`        // 会话标题
-	CreatedAt  string            `json:"created_at,omitempty"`   // 创建时间
-	UpdatedAt  string            `json:"updated_at,omitempty"`   // 更新时间
-	Role       string            `json:"role,omitempty"`         // 消息角色
-	Content    string            `json:"content,omitempty"`      // 消息内容
-	ToolCalls  []schema.ToolCall `json:"tool_calls,omitempty"`   // assistant 发起的工具调用
-	ToolCallID string            `json:"tool_call_id,omitempty"` // tool result 对应的调用 ID
-	ToolName   string            `json:"tool_name,omitempty"`    // tool result 对应的工具名
+	Type       string            `json:"type,omitempty"`              // "session" 表示会话头
+	ID         string            `json:"id,omitempty"`                // 会话 ID
+	Title      string            `json:"title,omitempty"`             // 会话标题
+	CreatedAt  string            `json:"created_at,omitempty"`        // 创建时间
+	UpdatedAt  string            `json:"updated_at,omitempty"`        // 更新时间
+	Role       string            `json:"role,omitempty"`              // 消息角色
+	Content    string            `json:"content,omitempty"`           // 消息内容
+	Reasoning  string            `json:"reasoning_content,omitempty"` // assistant thinking/reasoning 内容
+	ToolCalls  []schema.ToolCall `json:"tool_calls,omitempty"`        // assistant 发起的工具调用
+	ToolCallID string            `json:"tool_call_id,omitempty"`      // tool result 对应的调用 ID
+	ToolName   string            `json:"tool_name,omitempty"`         // tool result 对应的工具名
 }
 
 // NewStore 创建或打开会话存储
@@ -250,6 +251,7 @@ func (s *Store) saveToFile(session *Session) error {
 		entry := sessionFileEntry{
 			Role:       string(msg.Role),
 			Content:    msg.Content,
+			Reasoning:  msg.ReasoningContent,
 			ToolCalls:  msg.ToolCalls,
 			ToolCallID: msg.ToolCallID,
 			ToolName:   msg.ToolName,
@@ -314,11 +316,12 @@ func (s *Store) parseMessages(data []byte) ([]*schema.Message, error) {
 
 func messageFromEntry(entry sessionFileEntry) *schema.Message {
 	return &schema.Message{
-		Role:       parseRole(entry.Role),
-		Content:    entry.Content,
-		ToolCalls:  entry.ToolCalls,
-		ToolCallID: entry.ToolCallID,
-		ToolName:   entry.ToolName,
+		Role:             parseRole(entry.Role),
+		Content:          entry.Content,
+		ReasoningContent: entry.Reasoning,
+		ToolCalls:        entry.ToolCalls,
+		ToolCallID:       entry.ToolCallID,
+		ToolName:         entry.ToolName,
 	}
 }
 
@@ -360,8 +363,9 @@ func generateSessionID() string {
 }
 
 func generateTitle(content string) string {
-	if len(content) <= 30 {
+	runes := []rune(content)
+	if len(runes) <= 30 {
 		return content
 	}
-	return content[:27] + "..."
+	return string(runes[:27]) + "..."
 }

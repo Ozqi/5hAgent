@@ -205,8 +205,12 @@ func renderCodeBlock(block string, color bool) string {
 	for i, line := range lines {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
 			lines[i] = logger.Gray(line)
+		} else if strings.HasPrefix(line, "+") {
+			lines[i] = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1")).Background(lipgloss.Color("#2a3832")).Render(line)
+		} else if strings.HasPrefix(line, "-") {
+			lines[i] = lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8")).Background(lipgloss.Color("#3a252a")).Render(line)
 		} else {
-			lines[i] = logger.Green(line)
+			lines[i] = lipgloss.NewStyle().Foreground(lipgloss.Color("#cdd6f4")).Render(line)
 		}
 	}
 	return strings.Join(lines, "\n")

@@ -22,6 +22,7 @@ __pycache__/
 # Workspace / local experiments
 workspace/
 .worktrees/
+.traces/
 compact/
 testspace/*
 !testspace/.gitignore

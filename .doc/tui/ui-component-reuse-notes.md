@@ -14,9 +14,9 @@
   - `statusSnapshot`
 - 布局层：
   - `View`
-  - `renderSidebar`
   - `renderMainPane`
-  - `renderStatusPanel`
+  - `renderTopStatus`
+  - `renderInputFooter`
   - `renderBottomStatusBar`
 - 内容块层：
   - `renderSlashHint`
@@ -26,7 +26,7 @@
   - `renderToolCompactEntry`
   - `renderToolUnknownEntry`
 
-这说明当前代码已经不是“一坨逻辑”，而是处在“函数级组件化”阶段。下一轮布局会删除左侧 sidebar 和右侧状态栏，但这些函数里的状态数据仍然有价值，应先迁移到输入框上方/下方的状态区，再删除旧布局。
+这说明当前代码已经不是“一坨逻辑”，而是处在“函数级组件化”阶段。左右栏已经删除，状态数据通过 `statusSnapshot` 汇总后显示在输入框上方/下方。
 
 ## 2. 适合复用的组件类型
 
@@ -117,9 +117,9 @@ TUI 和前端很像的一点是：渲染层不应该直接乱读 runtime 内部�
 
 这些是控制流，不是展示组件。它们更适合通过“消息类型明确、状态转换清楚”来维护，而不是组件化。
 
-### 3.3 即将废弃的布局结构
+### 3.3 已删除的布局结构
 
-sidebar 和右侧 status panel 会被移除，不要再围绕它们新增抽象。需要保留的是其中的数据：模型、状态、token、消息数、工具调用、技能和任务焦点。
+sidebar 和右侧 status panel 已经移除，不要再围绕它们新增抽象。需要保留的是其中的数据：模型、状态、token、消息数、工具调用、技能和任务焦点。
 
 ## 4. 适合本项目的组件化顺序
 
@@ -166,9 +166,9 @@ sidebar 和右侧 status panel 会被移除，不要再围绕它们新增抽象�
 
 但这一步不是当前前提。
 
-## 5. 下一轮布局目标
+## 5. 当前布局目标
 
-目标是让 TUI 回到单主列结构：
+TUI 当前回到单主列结构：
 
 - 上方是对话和工具/thinking 流。
 - 输入框上方显示当前 Agent 状态、模型、token、速度、最近工具和任务焦点。
@@ -211,7 +211,7 @@ sidebar 和右侧 status panel 会被移除，不要再围绕它们新增抽象�
 
 基于现在的 `tui.go`，我建议优先复用这些块：
 
-- `renderRow` 这一类状态行，但目标位置从右侧面板迁移到输入框附近
+- `renderTopStatus` / `renderInputFooter` 这一类输入框附近状态行
 - `renderMessageBlock` 这一类带 header 的内容块
 - 各类 entry 渲染函数的公共 header/body/prefix 逻辑
 - slash hint 的匹配与渲染规则
@@ -229,6 +229,7 @@ sidebar 和右侧 status panel 会被移除，不要再围绕它们新增抽象�
 - 布局受终端宽度变化影响更直接
 - ANSI 样式会影响宽度计算
 - 中文、emoji、代码块、表格更容易出现 wrap 偏差
+- 鼠标滚轮需要真实终端 mouse escape 才能验证；用 `tmux send-keys Escape '[<64;10;10M'` / `'[<65;10;10M'`，不要把 `WheelUpPane` 当输入发给 TUI。
 - 很多问题不是“组件没复用”，而是“宽度和文本测量不稳定”
 
 所以在 5hAgent 里，UI 复用的优先级通常是：

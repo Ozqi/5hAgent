@@ -23,13 +23,14 @@ flowchart TB
         error["assistantErrorMsg"]
         tool["toolEventMsg"]
         key["tea.KeyMsg"]
+        mouse["tea.MouseMsg"]
     end
 
     subgraph Render["渲染"]
         view["View()"]
-        sidebar["sidebar"]
-        main_pane["main_pane"]
-        status["status_panel"]
+        main_pane["conversation + input"]
+        top_status["input_top_status"]
+        bottom_status["input_bottom_status"]
         status_bar["status_bar"]
     end
 
@@ -39,9 +40,10 @@ flowchart TB
     update --> error
     update --> tool
     update --> key
-    view --> sidebar
+    update --> mouse
     view --> main_pane
-    view --> status
+    view --> top_status
+    view --> bottom_status
     view --> status_bar
 ```
 
@@ -54,24 +56,18 @@ flowchart TB
 ## 布局
 
 ```
-┌─────────────────────────────────────┬──────────┐
-│  NAVIGATOR                          │ STATUS   │
-│  CHATS                              │ STATE    │
-│  HISTORY                            │ TOKENS   │
-│  LOGS                               │ CONTEXT  │
-│  AGENTS                             │ TOOLS    │
-│                                     │ SKILLS   │
-├─────────────────────────────────────┤ TASKS    │
-│  5HAGENT / CHATS                   │          │
-│  model=... agent=... state=...      │          │
-│                                     │          │
-│  You: 用户输入                      │          │
-│  Agent: AI 响应 (Markdown)          │          │
-│  tool: 工具调用                     │          │
-│                                     │          │
-│  > 输入消息...                      │          │
-├─────────────────────────────────────┴──────────┤
-│ ^C EXIT  ENTER SEND  PGUP/PGDN SCROLL  STATE │
+┌─────────────────────────────────────────────────┐
+│                                                 │
+│  用户输入 / assistant 回复 / thinking / tool    │
+│  历史记录由 viewport 展示，支持键盘和鼠标滚轮滚动 │
+│                                                 │
+│ 5hAgent · model · state idle · tokens ...       │
+│ ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄ │
+│ > 输入消息...                                  │
+│ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ │
+│ session ... · msgs ... · tasks ... · scroll ... │
+├─────────────────────────────────────────────────┤
+│ ^C exit · enter send · pgup/pgdn scroll · state │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -98,6 +94,7 @@ type AppModel struct {
 type conversationEntry struct {
     Role     string // user/assistant/tool/system
     Content  string
+    SystemTitle string
     ToolName string
     ToolArgs string
     ToolKey  string
@@ -111,6 +108,7 @@ type statusSnapshot struct {
     CurrentState   string
     TokenUsed      int
     TokenLimit     int
+    ScrollPercent  int
     ContextMessages int
     ToolCallsTotal int
     EnabledSkills  []string
@@ -128,6 +126,7 @@ type statusSnapshot struct {
 | `assistantErrorMsg` | AI 执行错误 |
 | `toolEventMsg` | 工具调用事件 |
 | `spinnerTickMsg` | 动画 tick |
+| `tea.MouseMsg` | 鼠标事件，当前用于滚轮滚动历史记录 |
 
 ## 命令
 
@@ -147,6 +146,7 @@ type statusSnapshot struct {
 | `PgUp` / `Ctrl+B` | 上滚 |
 | `PgDown` / `Ctrl+F` | 下滚 |
 | `↑/↓` 或 `j/k` | 行滚动 |
+| 鼠标滚轮 | 上下滚动历史记录 |
 
 ## 关键函数
 
@@ -159,6 +159,8 @@ type statusSnapshot struct {
 | `submit()` | 提交输入 |
 | `runAgent()` | 运行 Agent |
 | `snapshot()` | 生成状态快照 |
+| `renderTopStatus()` | 渲染输入框上方高频运行状态 |
+| `renderInputFooter()` | 渲染输入框下方低频上下文状态 |
 
 ## Markdown 渲染
 
