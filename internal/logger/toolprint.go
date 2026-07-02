@@ -29,9 +29,13 @@ type toolResultSummary struct {
 }
 
 type ToolEvent struct {
-	Kind string
-	Name string
-	Text string
+	Kind       string
+	Name       string
+	Text       string
+	Args       string
+	Result     string
+	Error      string
+	Concurrent bool
 }
 
 var (
@@ -61,15 +65,15 @@ func NewToolPrinter() *ToolPrinter {
 // PrintToolCall 打印工具调用
 // 格式: ● ToolName(args...)
 func (p *ToolPrinter) PrintToolCall(name string, args string, concurrent bool) {
-	text := formatToolCallText(p.indent, name, args, concurrent)
+	text := formatToolCall(p.indent, name, args, concurrent)
 	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "call", Name: name, Text: text})
+		sink(ToolEvent{Kind: "call", Name: name, Text: text, Args: args, Concurrent: concurrent})
 		return
 	}
 	fmt.Print(text)
 }
 
-func formatToolCallText(indent string, name string, args string, concurrent bool) string {
+func formatToolCall(indent string, name string, args string, concurrent bool) string {
 	mode := ""
 	if concurrent {
 		mode = " [并发]"
@@ -94,7 +98,7 @@ func formatToolCallText(indent string, name string, args string, concurrent bool
 func (p *ToolPrinter) PrintToolResult(name string, args string, result string) {
 	text := formatToolResultText(p.indent, name, args, result)
 	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "result", Name: name, Text: text})
+		sink(ToolEvent{Kind: "result", Name: name, Text: text, Args: args, Result: result})
 		return
 	}
 	fmt.Print(text)
@@ -146,10 +150,29 @@ func formatToolResultText(indent string, name string, args string, result string
 // PrintToolError 打印工具执行错误
 // 格式: ⎿ ✗ error
 func (p *ToolPrinter) PrintToolError(name string, args string, err error) {
-	_ = summarizeToolCall(name, args)
-	text := fmt.Sprintf("%s⎿ %s %s\n", p.indent, Red("✗"), Red(summarizeToolError(name, err)))
+	summary := summarizeToolCall(name, args)
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%s⎿ %s %s\n", p.indent, Red("✗"), Red(summarizeToolError(name, err))))
+	if len(summary.Fields) > 0 {
+		for _, field := range summary.Fields {
+			b.WriteString(p.indent)
+			b.WriteString("  ")
+			b.WriteString(Gray(field))
+			b.WriteString("\n")
+		}
+	} else if strings.TrimSpace(args) != "" {
+		b.WriteString(p.indent)
+		b.WriteString("  ")
+		b.WriteString(Gray("args: " + TruncateString(args, 180)))
+		b.WriteString("\n")
+	}
+	text := b.String()
 	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "error", Name: name, Text: text})
+		errText := ""
+		if err != nil {
+			errText = err.Error()
+		}
+		sink(ToolEvent{Kind: "error", Name: name, Text: text, Args: args, Error: errText})
 		return
 	}
 	fmt.Print(text)

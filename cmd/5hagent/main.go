@@ -75,7 +75,7 @@ func runInteractive(cmd *cobra.Command, args []string) {
 		cli.PrintError(fmt.Errorf("failed to get project data directory: %w", err))
 		os.Exit(1)
 	}
-	taskListPath := filepath.Join(projectDataDir, "tasks.json")
+	taskListPath := filepath.Join(projectDataDir, "task.md")
 
 	taskList, err := task.NewTaskList(taskListPath)
 	if err != nil {
@@ -85,12 +85,12 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	logger.DebugTag("SYS", "Task list initialized at %s", taskListPath)
 
 	// *Session 持久化到 ~/.5hAgent（全局无关）
-	sessionDir, err := utils.GetConfigDir()
+	configDir, err := utils.GetConfigDir()
 	if err != nil {
 		cli.PrintError(fmt.Errorf("failed to get config directory: %w", err))
 		os.Exit(1)
 	}
-	sessionDir = filepath.Join(sessionDir, "sessions")
+	sessionDir := filepath.Join(configDir, "sessions")
 	ctxManager := agentctx.NewManager(sessionDir)
 
 	// 处理 --session / -c 参数
@@ -132,10 +132,11 @@ func runInteractive(cmd *cobra.Command, args []string) {
 
 	// *从配置创建 LLM 客户端
 	llmConfig := &llm.Config{
-		APIKey:    appConfig.LLM.APIKey,
-		BaseURL:   appConfig.LLM.BaseURL,
-		Model:     appConfig.LLM.Model,
-		MaxTokens: appConfig.LLM.MaxTokens,
+		APIKey:               appConfig.LLM.APIKey,
+		BaseURL:              appConfig.LLM.BaseURL,
+		Model:                appConfig.LLM.Model,
+		MaxTokens:            appConfig.LLM.MaxTokens,
+		ThinkingBudgetTokens: appConfig.LLM.ThinkingBudgetTokens,
 	}
 	client, err := llm.NewClient(ctx, llmConfig)
 	if err != nil {
@@ -145,7 +146,8 @@ func runInteractive(cmd *cobra.Command, args []string) {
 
 	logger.DebugTag("SYS", "Model=%s, BaseURL=%s", llmConfig.Model, llmConfig.BaseURL)
 
-	systemPrompt, err := utils.Load("prompt", "main")
+	promptDir := filepath.Join(configDir, "prompt")
+	systemPrompt, err := utils.Load(promptDir, "main")
 	if err != nil {
 		cli.PrintError(fmt.Errorf("failed to get system prompt: %w", err))
 		os.Exit(1)
@@ -237,7 +239,7 @@ func runInteractive(cmd *cobra.Command, args []string) {
 	ag.SetModel(modelWithTools)
 	ag.SetTools(allTools)
 
-	if err := cli.LaunchTUI(ctx, ag, llmConfig.Model, taskList, ag.GetSkillManager(), ctxManager, messageCtx, sessionID); err != nil {
+	if err := cli.LaunchTUI(ctx, ag, llmConfig.Model, promptDir, taskList, ag.GetSkillManager(), ctxManager, messageCtx, sessionID); err != nil {
 		cli.PrintError(fmt.Errorf("tui error: %w", err))
 		os.Exit(1)
 	}

@@ -17,9 +17,9 @@ flowchart TB
     end
 
     subgraph Dispatch["调度层"]
-        exec["exeTools()"]
-        par["exeToolsPar()"]
-        serial["串行执行"]
+        collect["toolCollector"]
+        queue["toolQueue/toolResultCh"]
+        worker["单 worker 执行"]
     end
 
     init --> base
@@ -28,8 +28,8 @@ flowchart TB
     init --> mcp
     init --> tm
 
-    exec --> par
-    exec --> serial
+    collect --> queue
+    queue --> worker
 ```
 
 ## 位置
@@ -51,6 +51,7 @@ flowchart TB
 | `base.exec_shell` | `exec_shell.go` | 写 | 执行 shell 命令 |
 | `task.task` | `task_tool.go` | 混合 | 统一任务管理入口 |
 | `skill.skill` | `skill_tool.go` | 写 | 启用或禁用技能 |
+| `mcp.list_tools` | `mcp_list_tools.go` | 只读 | 列出 MCP 服务器及工具 |
 | `mcp.<server>.<tool>` | `mcp_tool.go` | 取决于远端 | MCP Server 提供的工具 |
 
 ## InitRegistry
@@ -75,11 +76,11 @@ func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
     }
 
     // 注册 task 工具
-    registry = append(registry, NewTaskTool(taskList))
+    registry = append(registry, &TaskTool{taskList: taskList})
     toolmeta.Register(toolmeta.Meta{..., FullName: "task.task"})
 
     // 注册 skill 工具
-    registry = append(registry, NewSkillTool(skillMgr))
+    registry = append(registry, &SkillTool{mgr: skillMgr})
     toolmeta.Register(toolmeta.Meta{..., FullName: "skill.skill"})
 }
 ```
@@ -94,6 +95,27 @@ func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
 | `RegisterMCPTools(server, client, specs)` | 注册 MCP 工具 |
 
 ## 工具实现类型
+
+## LLM 工具描述规范
+
+所有发给 LLM 的工具描述应包含：
+
+- 明确说明“Always send JSON object arguments”
+- 列出必填字段和可选字段
+- 对枚举字段提供 `Enum`，例如 task action/status、skill action
+- 给出可直接模仿的 JSON 示例
+- 错误提示中写明实际收到的参数，便于 LLM 自我修正
+
+`task.task` 的关键约束：
+
+- `create` 必须带 `id/title/description`
+- “完成任务”不是 `finish/done/complete` action，而是 `{"action":"update","id":"...","status":"completed"}`
+- `action` 只允许 `create/update/get/list/delete/archive/reopen`
+
+`skill.skill` 的关键约束：
+
+- `skill` 必填，必须是精确 skill 名称
+- `action` 只能是 `enable/disable`，默认 `enable`
 
 ### EnhancedInvokableTool
 
@@ -146,6 +168,20 @@ func (t *TaskTool) InvokableRun(ctx context.Context, args string) (string, error
 }
 ```
 
+### MCP Tool Schema 转换
+
+MCP 工具来自外部 server，schema 由 `mcp.ToolSpec.InputSchema` 提供，再通过 `parseInputSchema()` 转换为 Eino `ParameterInfo`。
+
+当前转换兼容常见 OpenAPI JSON Schema 形态：
+
+- 顶层省略 `type` 但包含 `properties` 时按 `object` 处理
+- `type` 可以是字符串，也可以是数组，如 `["object", "null"]`
+- `integer` 映射为 Eino 的 `number`
+- `const` 映射为单值 `Enum`
+- 嵌套 object 会递归转换 `SubParams`
+
+这对 Notion 这类 OpenAPI MCP 很重要，否则 LLM 会看不到必填嵌套参数，首次调用容易漏参。
+
 ## 工具调用接口适配
 
 Agent 层统一调用（[tool_use.go:251-270](internal/agent/tool_use.go)）：
@@ -164,38 +200,24 @@ func (a *Agent) invokeTool(ctx, t, tc) (string, error) {
 }
 ```
 
-## 并发执行策略
+## 当前执行策略
 
-| 分类 | 工具 | 策略 |
-|------|------|------|
-| 只读 | `base.read_file`, `base.glob`, `base.grep`, `base.list_dir` | 并发 |
-| 写 | `base.write_file`, `base.edit`, `base.exec_shell` | 串行 |
-| 任务只读 | `task.task get/list` | 并发 |
-| 任务写 | `task.task create/update/delete/archive/reopen` | 串行 |
-| 技能 | `skill.skill` | 串行 |
-| MCP | 取决于远端定义 | 按 `ReadOnly` 标记 |
+当前源码没有按只读/写工具拆分并发执行队列。`RunStream` 会启动一个工具 worker goroutine，从 `toolQueue` 逐个取 `toolRequest` 调 `Agent.exeToolCall()`，因此多个工具调用在该 worker 内仍是串行执行。
 
-## 只读判断逻辑
+已经具备的并发是：LLM stream 读取与工具 worker 执行可以重叠。当流式响应中某个 ToolCall 的 `id/name/arguments` 已合并完整且参数是合法 JSON 时，会立即送入 `toolQueue`，无需等待 LLM 整个响应结束。
 
-```go
-func isReadOnly(tc schema.ToolCall) bool {
-    // 第一层：toolmeta 注册表
-    if toolmeta.IsReadOnly(tc.Function.Name) {
-        return true
-    }
-
-    // 第二层：task.task 根据 action 判断
-    if tc.Function.Name == "task.task" || tc.Function.Name == "task" {
-        var input struct{ Action string `json:"action"` }
-        if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err != nil {
-            return false
-        }
-        return input.Action == "get" || input.Action == "list"
-    }
-
-    return false
-}
+```text
+LLM stream reader
+  -> toolCollector 合并 ToolCall 分片
+  -> toolQueue
+  -> 单个 tool worker goroutine
+     -> Agent.exeToolCall
+     -> Agent.invokeTool
 ```
+
+`toolmeta.Meta.ReadOnly` 目前用于记录工具元数据和展示，不参与 `RunStream` 的并发调度。`task.task get/list` 也没有在当前执行路径中被单独判定为可并发。
+
+TUI 的 `[并发]` 标记只来自 `logger.PrintToolCall(name, args, concurrent)` 的 `concurrent` 参数。当前 `RunStream` 调用 `exeToolCall(..., false)`，所以按当前源码执行时不应显示 `[并发]`。
 
 ## 添加新工具
 
@@ -233,5 +255,6 @@ func NewExecShellTool() (tool.BaseTool, error) {
 - [task_tool.go](../internal/tools/task_tool.go)
 - [skill_tool.go](../internal/tools/skill_tool.go)
 - [mcp_tool.go](../internal/tools/mcp_tool.go)
+- [mcp_list_tools.go](../internal/tools/mcp_list_tools.go)
 - [tool_use.go](../internal/agent/tool_use.go)
 - [toolmeta.go](../internal/toolmeta/toolmeta.go)

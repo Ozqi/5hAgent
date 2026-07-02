@@ -11,6 +11,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -19,7 +20,6 @@ import (
 	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/skill"
 	"github.com/lzq/5hAgent/internal/utils"
-	
 )
 
 // Agent AI Agent 核心结构体
@@ -27,8 +27,8 @@ import (
 type Agent struct {
 	// 核心组件
 	model   model.ToolCallingChatModel // LLM 模型
-	tools   []tool.BaseTool           // 工具列表
-	toolMap map[string]tool.BaseTool  // 工具名称映射表
+	tools   []tool.BaseTool            // 工具列表
+	toolMap map[string]tool.BaseTool   // 工具名称映射表
 
 	// 配置
 	config *Config // Agent 配置
@@ -224,10 +224,16 @@ func mergeMeta(current *schema.ResponseMeta, incoming *schema.ResponseMeta) *sch
 //   - ctx: Go 标准上下文
 //   - messageCtx: 消息上下文
 //   - input: 用户输入
-//   - onToken: token 回调函数（每个 token 会调用一次）
+//   - onToken: 正文 token 回调函数（每个 token 会调用一次）
+//   - onReasoning: 可选 thinking/reasoning token 回调函数
 //
 // 返回: 完整响应内容和可能的错误
-func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, input string, onToken TokenCallback) (string, error) {
+func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, input string, onToken TokenCallback, onReasoning ...TokenCallback) (string, error) {
+	var reasoningCallback TokenCallback
+	if len(onReasoning) > 0 {
+		reasoningCallback = onReasoning[0]
+	}
+
 	// 1. 注入SystemPrompt和Skills（首次对话时）
 	if err := a.ensureConversationSetup(messageCtx); err != nil {
 		return "", err
@@ -275,13 +281,17 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		cb := a.callbacks
 		cb.OnModelStart(ctx, nil, &model.CallbackInput{Messages: messages})
 
-		reader, err := a.model.Stream(ctx, messages)
+		streamCtx, streamCancel := context.WithCancel(ctx)
+		reader, err := a.model.Stream(streamCtx, messages)
 		if err != nil {
+			streamCancel()
 			cb.OnModelError(ctx, nil, err)
 			return "", fmt.Errorf("LLM stream failed: %w", err)
 		}
 
 		var fullContent strings.Builder
+		var fullReasoning strings.Builder
+		var fullExtra map[string]any
 		chunkCount := 0
 		collector := newToolCollector()
 		var responseMeta *schema.ResponseMeta
@@ -293,6 +303,12 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		go func() {
 			for req := range toolQueue {
 				result, execErr := a.exeToolCall(ctx, req.tc, req.idx, req.idx+1, false)
+				// 只对成功的调用计数重复，失败的不计入
+				if execErr == nil {
+					if err := repeatGuard.Check([]schema.ToolCall{req.tc}); err != nil {
+						logger.WarnTag("TOOL", "%v", err)
+					}
+				}
 				toolResultCh <- execResult{idx: req.idx, tc: req.tc, result: result, err: execErr}
 			}
 			close(toolResultCh)
@@ -300,31 +316,46 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 		// 读取流式响应
 		for {
-			chunk, err := reader.Recv()
+			type recvResult struct {
+				chunk *schema.Message
+				err   error
+			}
+			recvCh := make(chan recvResult, 1)
+			go func() {
+				chunk, err := reader.Recv()
+				recvCh <- recvResult{chunk: chunk, err: err}
+			}()
+
+			var chunk *schema.Message
+			var err error
+			select {
+			case res := <-recvCh:
+				chunk, err = res.chunk, res.err
+			case <-time.After(90 * time.Second):
+				streamCancel()
+				reader.Close()
+				cb.OnModelError(ctx, nil, context.DeadlineExceeded)
+				return "", fmt.Errorf("LLM stream idle timeout: no text or tool call chunk received for 90s")
+			}
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
 				reader.Close()
+				streamCancel()
 				cb.OnModelError(ctx, nil, err)
 				return "", fmt.Errorf("stream read failed: %w", err)
 			}
 
 			chunkCount++
 			responseMeta = mergeMeta(responseMeta, chunk.ResponseMeta)
+			fullExtra = mergeMessageExtra(fullExtra, chunk.Extra)
 
 			// 处理 ToolCalls
 			if len(chunk.ToolCalls) > 0 {
 				cb.LogChunk(chunk, chunkCount)
 
 				for _, tc := range collector.Add(chunk.ToolCalls) {
-					if err := repeatGuard.Check([]schema.ToolCall{tc}); err != nil {
-						reader.Close()
-						close(toolQueue)
-						for range toolResultCh {
-						}
-						return "", err
-					}
 					idx := len(queuedCalls)
 					queuedCalls = append(queuedCalls, tc)
 					toolQueue <- toolRequest{idx: idx, tc: tc}
@@ -332,6 +363,13 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			}
 
 			// 处理内容
+			if chunk.ReasoningContent != "" {
+				fullReasoning.WriteString(chunk.ReasoningContent)
+				if reasoningCallback != nil {
+					reasoningCallback(chunk.ReasoningContent)
+				}
+			}
+
 			if chunk.Content != "" {
 				fullContent.WriteString(chunk.Content)
 				if onToken != nil {
@@ -340,17 +378,25 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			}
 		}
 		reader.Close()
+		streamCancel()
+
+		for _, tc := range collector.PendingRunnableCalls() {
+			idx := len(queuedCalls)
+			queuedCalls = append(queuedCalls, tc)
+			toolQueue <- toolRequest{idx: idx, tc: tc}
+		}
 		close(toolQueue)
 
 		content := fullContent.String()
-		
+		reasoningContent := fullReasoning.String()
+
 		// 转换 token usage 类型
 		var tokenUsage *model.TokenUsage
 		if responseMeta != nil && responseMeta.Usage != nil {
 			tokenUsage = &model.TokenUsage{
-				PromptTokens:       responseMeta.Usage.PromptTokens,
-				CompletionTokens:   responseMeta.Usage.CompletionTokens,
-				TotalTokens:        responseMeta.Usage.TotalTokens,
+				PromptTokens:     responseMeta.Usage.PromptTokens,
+				CompletionTokens: responseMeta.Usage.CompletionTokens,
+				TotalTokens:      responseMeta.Usage.TotalTokens,
 			}
 		}
 		cb.OnModelEnd(ctx, nil, &model.CallbackOutput{
@@ -358,29 +404,49 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			TokenUsage: tokenUsage,
 		})
 
-		toolCalls := collector.RunnableCalls()
+		toolCalls := make([]schema.ToolCall, len(queuedCalls))
+		copy(toolCalls, queuedCalls)
+
+		// 过滤掉空 ID 的调用（流式输出中不完整的调用），避免发给 LLM 造成格式错误
+		var validCalls []schema.ToolCall
+		for _, tc := range toolCalls {
+			if tc.ID == "" || tc.Function.Name == "" {
+				logger.WarnTag("TOOL", "Skipping incomplete tool call: id=%s name=%s", tc.ID, tc.Function.Name)
+				continue
+			}
+			validCalls = append(validCalls, tc)
+		}
+		toolCalls = validCalls
+
+		// 收集已执行的结果（按 queuedCalls 顺序）
 		toolResults := make([]execResult, len(queuedCalls))
 		for res := range toolResultCh {
 			toolResults[res.idx] = res
 		}
 
 		finalMessage := &schema.Message{
-			Role:         schema.Assistant,
-			Content:      content,
-			ToolCalls:    toolCalls,
-			ResponseMeta: responseMeta,
+			Role:             schema.Assistant,
+			Content:          content,
+			ReasoningContent: reasoningContent,
+			ToolCalls:        toolCalls,
+			ResponseMeta:     responseMeta,
+			Extra:            fullExtra,
 		}
 
 		// c. 检查是否有工具调用
 		if len(finalMessage.ToolCalls) > 0 {
 			cb.LogToolCalls(finalMessage.ToolCalls)
 
-			// 添加 assistant 消息
+			// 添加 assistant 消息（即使 content 为空，只要有效工具调用就要加入上下文）
 			if err := a.ctxManager.AddMessage(messageCtx, finalMessage); err != nil {
 				return "", fmt.Errorf("failed to add assistant message: %w", err)
 			}
 
 			for _, res := range toolResults {
+				// 只添加有效工具的结果（id 不为空）
+				if res.tc.ID == "" {
+					continue
+				}
 				if err := a.addToolResult(messageCtx, res.tc, res.result, res.err); err != nil {
 					return "", fmt.Errorf("tool execution failed: %w", err)
 				}

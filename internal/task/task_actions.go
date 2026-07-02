@@ -7,6 +7,7 @@ package task
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 type TaskActionRequest struct {
@@ -45,6 +46,8 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 		Path:   list.Path(),
 	}
 
+	req.Action = strings.ToLower(strings.TrimSpace(req.Action))
+	req.Status = strings.ToLower(strings.TrimSpace(req.Status))
 	switch req.Action {
 	case "create":
 		if req.ID == "" || req.Title == "" || req.Description == "" {
@@ -144,6 +147,9 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 		result.Message = fmt.Sprintf("task %q reopened", task.ID)
 		return result, nil
 	default:
-		return nil, fmt.Errorf("unknown action: %s", req.Action)
+		if req.Action == "" {
+			return nil, fmt.Errorf("missing action: expected one of create/update/get/list/delete/archive/reopen")
+		}
+		return nil, fmt.Errorf("unknown action %q: expected one of create/update/get/list/delete/archive/reopen", req.Action)
 	}
 }

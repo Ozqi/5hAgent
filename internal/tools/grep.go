@@ -2,6 +2,31 @@
 // 功能：调用 ripgrep（或 fallback grep）搜索，支持正则和文件类型过滤
 // 主要类型：GrepInput, GrepOutput, GrepMatch
 // 导出函数：NewGrepTool, parseRipgrepJSON, grepFallback
+//
+// ============================================================
+// 工具描述（供人类审阅）
+// ============================================================
+// Tool: grep
+// Desc: 在文件或目录中搜索正则表达式模式，返回匹配行（带文件路径、行号、列号、内容）。
+//
+//	优先使用 ripgrep (rg)，ripgrep 不可用时 fallback 到 grep。read_only 工具。
+//
+// Input Parameters:
+//   - pattern (string, required)  : 正则表达式搜索模式
+//   - path     (string, optional) : 搜索目录或文件，默认当前目录
+//   - type     (string, optional) : 按文件类型过滤，如 'go'、'py'、'js'
+//
+// Error Scenarios (LLM Hints):
+//   - pattern invalid             → 正则表达式语法错误；简化模式或转义特殊字符
+//   - path not found              → 搜索路径不存在；确认目录/文件名
+//   - no matches                  → 无匹配结果（正常情况，非错误）；尝试更宽松的模式
+//   - rg not found (fallback)    → 系统未安装 ripgrep，自动使用 grep（功能受限）
+//
+// Tips:
+//   - 正则特殊字符需要转义：. * + ? [ ] ( ) { } | \
+//   - 按类型过滤：`type: go` 只搜索 .go 文件
+//
+// ============================================================
 package tools
 
 import (
@@ -16,11 +41,27 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
+// --- LLM 描述常量（供 InferEnhancedTool 使用）---
+const (
+	grepToolName = "base.grep"
+	grepToolDesc = `Search file contents with a regular expression and return matching file path, line, column, and text. Always send JSON object arguments.
+- pattern: required regex pattern. Escape regex metacharacters when searching literal text.
+- path: optional directory or file. Default current workspace.
+- type: optional ripgrep file type such as go, py, js, md.
+Examples: {"pattern":"func NewAgent","path":"internal","type":"go"}; {"pattern":"claude-context","path":"doc"}`
+	grepToolErrors = `pattern invalid: 正则表达式语法错误；简化模式或转义特殊字符
+path not found: 搜索路径不存在；确认目录/文件名
+no matches: 无匹配结果（正常情况，非错误）；尝试更宽松的模式
+rg not found (fallback): 系统未安装 ripgrep，自动使用 grep（功能受限）`
+	grepToolTips = `正则特殊字符需要转义：. * + ? [ ] ( ) { } | \\
+按类型过滤：type: go 只搜索 .go 文件`
+)
+
 // GrepInput defines the input parameters for grep tool
 type GrepInput struct {
-	Pattern string `json:"pattern" jsonschema:"required,description=Search pattern (supports regex)"`
-	Path    string `json:"path,omitempty" jsonschema:"description=Directory or file to search in (default: current directory)"`
-	Type    string `json:"type,omitempty" jsonschema:"description=File type filter (e.g. 'go', 'py', 'js')"`
+	Pattern string `json:"pattern" jsonschema:"required,description=Required regex pattern to search for. Escape metacharacters for literal text."`
+	Path    string `json:"path,omitempty" jsonschema:"description=Optional directory or file to search in. Default: current workspace."`
+	Type    string `json:"type,omitempty" jsonschema:"description=Optional ripgrep file type filter, e.g. go, py, js, md."`
 }
 
 // GrepMatch represents a single match result
@@ -40,53 +81,42 @@ type GrepOutput struct {
 // NewGrepTool creates a new grep tool for code searching
 func NewGrepTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
-		"base.grep",
-		"Search for patterns in files using ripgrep. Supports regex patterns and file type filtering. Returns matching lines with file path, line number, and content.",
+		grepToolName,
+		grepToolDesc,
 		func(ctx context.Context, input GrepInput) (*schema.ToolResult, error) {
-			// Check if ripgrep is available
 			if _, err := exec.LookPath("rg"); err != nil {
-				// Fallback to grep if ripgrep not available
 				return grepFallback(ctx, input)
 			}
 
-			// Build ripgrep command
 			args := []string{
-				"--json",          // JSON output
-				"--no-heading",    // Don't group by file
-				"--line-number",   // Show line numbers
-				"--column",        // Show column numbers
-				"--smart-case",    // Smart case matching
-				"--max-count=100", // Limit matches per file
+				"--json",
+				"--no-heading",
+				"--line-number",
+				"--column",
+				"--smart-case",
+				"--max-count=100",
 			}
 
-			// Add type filter if specified
 			if input.Type != "" {
 				args = append(args, "--type", input.Type)
 			}
 
-			// Add pattern
 			args = append(args, input.Pattern)
 
-			// Add path
 			if input.Path != "" {
 				args = append(args, input.Path)
 			} else {
 				args = append(args, ".")
 			}
 
-			// Execute ripgrep
 			cmd := exec.CommandContext(ctx, "rg", args...)
 			output, err := cmd.CombinedOutput()
 
-			// ripgrep returns exit code 1 when no matches found
 			if err != nil && len(output) == 0 {
 				return JSONResult(GrepOutput{Matches: nil, Count: 0})
 			}
 
-			// Parse JSON output
 			matches := parseRipgrepJSON(string(output))
-
-			// Build output
 			result := GrepOutput{Matches: matches, Count: len(matches)}
 			return JSONResult(result)
 		},
@@ -108,7 +138,6 @@ func parseRipgrepJSON(output string) []GrepMatch {
 			continue
 		}
 
-		// Only process "match" type entries
 		if entry["type"] != "match" {
 			continue
 		}
@@ -152,12 +181,11 @@ func grepFallback(ctx context.Context, input GrepInput) (*schema.ToolResult, err
 		path = "."
 	}
 
-	// Build grep command
 	args := []string{
-		"-r",              // Recursive
-		"-n",              // Line numbers
-		"-H",              // Show filename
-		"--max-count=100", // Limit matches
+		"-r",
+		"-n",
+		"-H",
+		"--max-count=100",
 		input.Pattern,
 		path,
 	}
@@ -165,12 +193,10 @@ func grepFallback(ctx context.Context, input GrepInput) (*schema.ToolResult, err
 	cmd := exec.CommandContext(ctx, "grep", args...)
 	output, err := cmd.CombinedOutput()
 
-	// grep returns exit code 1 when no matches found
 	if err != nil && len(output) == 0 {
 		return JSONResult(GrepOutput{Matches: nil, Count: 0})
 	}
 
-	// Parse grep output (format: file:line:text)
 	var matches []GrepMatch
 	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
 		if line == "" {

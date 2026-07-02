@@ -14,7 +14,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/logger"
-	"github.com/lzq/5hAgent/internal/toolmeta"
+	"github.com/lzq/5hAgent/internal/tools"
 )
 
 // toolCallState 工具调用收集状态
@@ -45,9 +45,16 @@ func (c *toolCollector) Add(chunks []schema.ToolCall) []schema.ToolCall {
 	}
 
 	for _, tc := range chunks {
+		logger.DebugTag("COLL", "Add chunk: id=%s name=%s args=%q", tc.ID, tc.Function.Name, logger.TruncateString(tc.Function.Arguments, 100))
 		c.merge(tc)
 	}
 	return c.extractReady()
+}
+
+// PendingRunnableCalls returns complete calls that were not dispatched while streaming.
+// Empty arguments are normalized to {} for no-argument tools after the stream ends.
+func (c *toolCollector) PendingRunnableCalls() []schema.ToolCall {
+	return c.runnableCalls(false, true)
 }
 
 // merge 合并单个 ToolCall
@@ -82,14 +89,23 @@ func (c *toolCollector) merge(tc schema.ToolCall) {
 
 // extractReady 提取已完成的调用
 func (c *toolCollector) extractReady() []schema.ToolCall {
+	return c.runnableCalls(false, false)
+}
+
+func (c *toolCollector) runnableCalls(includeDispatched bool, allowEmptyArguments bool) []schema.ToolCall {
 	var ready []schema.ToolCall
 	for idx := range c.states {
 		state := c.states[idx]
-		if state.dispatched {
+		if state.dispatched && !includeDispatched {
 			continue
 		}
 		tc := state.tc
-		if tc.ID == "" || tc.Function.Name == "" || !isValidJSON(tc.Function.Arguments) {
+		// Streaming cannot distinguish "no arguments" from "arguments not arrived yet" until EOF.
+		if allowEmptyArguments && tc.Function.Arguments == "" {
+			tc.Function.Arguments = "{}"
+			state.tc.Function.Arguments = tc.Function.Arguments
+		}
+		if tc.ID == "" || tc.Function.Name == "" || tc.Function.Arguments == "" || !isValidJSON(tc.Function.Arguments) {
 			continue
 		}
 		state.dispatched = true
@@ -100,14 +116,7 @@ func (c *toolCollector) extractReady() []schema.ToolCall {
 
 // RunnableCalls 返回所有有效调用
 func (c *toolCollector) RunnableCalls() []schema.ToolCall {
-	var calls []schema.ToolCall
-	for _, state := range c.states {
-		tc := state.tc
-		if tc.ID != "" && tc.Function.Name != "" && isValidJSON(tc.Function.Arguments) {
-			calls = append(calls, tc)
-		}
-	}
-	return calls
+	return c.runnableCalls(true, true)
 }
 
 // execResult 工具执行结果
@@ -199,6 +208,10 @@ func (a *Agent) addToolResult(messageCtx *agentctx.Context, tc schema.ToolCall, 
 func formatToolErr(tc schema.ToolCall, execErr error) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("tool execution failed: %v", execErr))
+	if strings.TrimSpace(tc.Function.Arguments) != "" {
+		b.WriteString("\nTool arguments sent by model: ")
+		b.WriteString(tc.Function.Arguments)
+	}
 	if hint := toolHint(tc); hint != "" {
 		b.WriteString("\nSuggestion: ")
 		b.WriteString(hint)
@@ -209,7 +222,7 @@ func formatToolErr(tc schema.ToolCall, execErr error) string {
 // toolHint 根据工具名称返回操作提示
 func toolHint(tc schema.ToolCall) string {
 	name := tc.Function.Name
-	display := toolmeta.DisplayName(name)
+	display := tools.DisplayName(name)
 	if strings.HasPrefix(display, "base.") {
 		display = strings.TrimPrefix(display, "base.")
 	}
@@ -226,13 +239,14 @@ func toolHint(tc schema.ToolCall) string {
 	case "exec_shell":
 		return "check the shell command, quote paths with spaces, prefer commands inside workspace"
 	case "task":
-		return "use a valid task action: create, update, get, list, or delete"
+		return "use exact task action values only: create/update/get/list/delete/archive/reopen. To finish a task use {\"action\":\"update\",\"id\":\"...\",\"status\":\"completed\"}; create requires id/title/description"
 	case "skill":
 		return "use an existing skill name and set action to enable or disable"
 	}
 
-	if meta, ok := toolmeta.Lookup(name); ok && meta.Category == toolmeta.CategoryMCP {
-		return "check the remote tool arguments and server-specific requirements"
+	if meta, ok := tools.Lookup(name); ok && meta.Category == tools.CategoryMCP {
+		// MCP 错误已在 mcp_tool.go 返回具体信息，不添加通用提示干扰
+		return ""
 	}
 
 	return "review the tool schema and retry with corrected arguments"
@@ -261,6 +275,25 @@ func formatToolResult(toolResult *schema.ToolResult) string {
 	}
 
 	return strings.Join(parts, "\n")
+}
+
+func mergeMessageExtra(current map[string]any, incoming map[string]any) map[string]any {
+	if len(incoming) == 0 {
+		return current
+	}
+	if current == nil {
+		current = make(map[string]any, len(incoming))
+	}
+	for key, value := range incoming {
+		if prev, ok := current[key].(string); ok {
+			if next, ok := value.(string); ok {
+				current[key] = prev + next
+				continue
+			}
+		}
+		current[key] = value
+	}
+	return current
 }
 
 // isValidJSON 检查字符串是否为合法 JSON

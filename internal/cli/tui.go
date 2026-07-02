@@ -6,6 +6,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -17,6 +18,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	ansi "github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
 	"github.com/lzq/5hAgent/internal/agent"
 	"github.com/lzq/5hAgent/internal/commands"
@@ -24,7 +26,7 @@ import (
 	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/skill"
 	"github.com/lzq/5hAgent/internal/task"
-	"github.com/lzq/5hAgent/internal/toolmeta"
+	"github.com/lzq/5hAgent/internal/tools"
 )
 
 const (
@@ -33,15 +35,20 @@ const (
 	roleTool         = "tool"
 	roleSystem       = "system"
 	roleHint         = "hint"
+	roleThinking     = "thinking"
 	defaultTUIWidth  = 100
 	defaultTUIHeight = 30
 )
 
 type conversationEntry struct {
-	Role     string
-	Content  string
-	ToolName string
-	ToolOpen bool
+	Role       string
+	Content    string
+	ToolName   string
+	ToolArgs   string
+	ToolKey    string
+	ToolState  string
+	ToolOutput string
+	ToolOpen   bool
 }
 
 type statusSnapshot struct {
@@ -65,6 +72,7 @@ type AppModel struct {
 	modelName  string
 	agentName  string
 	sessionID  string
+	promptDir  string
 	taskList   *task.TaskList
 	skillMgr   *skill.Manager
 	ctxManager *agentctx.Manager
@@ -92,6 +100,10 @@ type AppModel struct {
 }
 
 type assistantTokenMsg struct {
+	token string
+}
+
+type assistantThinkingMsg struct {
 	token string
 }
 
@@ -176,7 +188,7 @@ var (
 
 var menuItems = []string{"CHATS", "HISTORY", "LOGS", "AGENTS"}
 
-func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string) *AppModel {
+func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string) *AppModel {
 	vp := viewport.New(0, 0)
 	vp.MouseWheelEnabled = true
 	vp.MouseWheelDelta = 2
@@ -204,6 +216,7 @@ func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, taskLis
 			return ag.Name()
 		}(), "Agent"),
 		sessionID:        sessionID,
+		promptDir:        promptDir,
 		taskList:         taskList,
 		skillMgr:         skillMgr,
 		ctxManager:       ctxManager,
@@ -237,6 +250,9 @@ func loadHistoryEntries(ctxManager *agentctx.Manager, messageCtx *agentctx.Conte
 		case schema.User:
 			r = roleUser
 		case schema.Assistant:
+			if msg.ReasoningContent != "" {
+				entries = append(entries, conversationEntry{Role: roleThinking, Content: msg.ReasoningContent})
+			}
 			r = roleAssistant
 		case schema.System:
 			r = roleSystem
@@ -272,6 +288,16 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentStatus = "streaming"
 		m.refreshView()
 		return m, tickSpinner()
+	case assistantThinkingMsg:
+		if len(m.entries) > 0 && m.entries[len(m.entries)-1].Role == roleThinking {
+			m.entries[len(m.entries)-1].Content += msg.token
+		} else {
+			m.entries = append(m.entries, conversationEntry{Role: roleThinking, Content: msg.token})
+		}
+		m.currentAssistant = -1
+		m.currentStatus = "thinking"
+		m.refreshView()
+		return m, tickSpinner()
 	case assistantDoneMsg:
 		m.busy = false
 		m.currentAssistant = -1
@@ -293,14 +319,16 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case toolEventMsg:
-		text := compactToolEventText(msg.event)
 		if msg.event.Kind == "call" {
 			m.toolCalls++
-			m.lastTool = fallback(toolmeta.DisplayName(msg.event.Name), msg.event.Name)
+			m.lastTool = fallback(tools.DisplayName(msg.event.Name), msg.event.Name)
 		}
-		m.entries = append(m.entries, conversationEntry{Role: roleHint, Content: text})
+		m.applyToolEvent(msg.event)
 		m.currentAssistant = -1
 		m.refreshView()
+		if msg.event.Kind == "call" {
+			return m, tickSpinner()
+		}
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -403,7 +431,7 @@ func (m *AppModel) submit() tea.Cmd {
 	}
 
 	if strings.HasPrefix(text, "/compress") {
-		result, err := commands.HandleCompress(m.ctx, text, m.ctxManager, m.messageCtx, m.ag.GetModel(), "prompt", "compact")
+		result, err := commands.HandleCompress(m.ctx, text, m.ctxManager, m.messageCtx, m.ag.GetModel(), m.promptDir, "compact")
 		if err != nil {
 			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: err.Error()})
 		} else {
@@ -450,6 +478,8 @@ func (m *AppModel) runAgent(input string) {
 	}
 	_, err := m.ag.RunStream(m.ctx, m.messageCtx, input, func(token string) {
 		m.program.Send(assistantTokenMsg{token: token})
+	}, func(token string) {
+		m.program.Send(assistantThinkingMsg{token: token})
 	})
 	if err != nil {
 		m.program.Send(assistantErrorMsg{err: err})
@@ -533,7 +563,8 @@ func (m *AppModel) resize() {
 	headerHeight := 3
 	footerHeight := 1
 	inputHeight := 4
-	m.viewport.Width = max(8, mainWidth-4)
+	// 预留 2 字符给滚动条 + 2 字符内边距，防止内容被右侧面板遮挡
+	m.viewport.Width = max(8, mainWidth-6)
 	m.viewport.Height = max(1, m.height-headerHeight-footerHeight-inputHeight)
 	m.input.SetWidth(max(8, m.viewport.Width-4))
 	m.input.SetHeight(1)
@@ -545,7 +576,7 @@ func (m *AppModel) refreshView() {
 	stickToBottom := m.autoScroll || m.viewport.AtBottom() || m.viewport.TotalLineCount() <= m.viewport.Height
 	parts := make([]string, 0, len(m.entries))
 	for _, entry := range m.entries {
-		parts = append(parts, renderConversationEntry(entry, contentWidth))
+		parts = append(parts, m.renderConversationEntry(entry, contentWidth))
 	}
 	m.viewport.SetContent(strings.Join(parts, "\n"))
 	if stickToBottom {
@@ -672,38 +703,143 @@ func (m *AppModel) findToolEntry(name string) int {
 	return -1
 }
 
-func compactToolEventText(event logger.ToolEvent) string {
-	clean := strings.TrimSpace(stripANSI(event.Text))
-	if clean == "" {
-		return fmt.Sprintf("[tool] %s", fallback(toolmeta.DisplayName(event.Name), event.Name))
-	}
-
-	entry := parseToolBlock(clean)
-	displayName := fallback(entry.Name, toolmeta.DisplayName(event.Name))
-	displayName = fallback(displayName, event.Name)
-	if displayName == "" {
-		displayName = "tool"
-	}
+func (m *AppModel) applyToolEvent(event logger.ToolEvent) {
+	displayName := fallback(tools.DisplayName(event.Name), event.Name)
+	key := toolEventKey(event.Name, event.Args)
+	summary := formatToolArgsSummary(event.Args)
 
 	switch event.Kind {
 	case "call":
-		parts := []string{fmt.Sprintf("[tool] %s", displayName)}
-		if len(entry.Args) > 0 {
-			parts = append(parts, strings.Join(entry.Args, " · "))
-		}
-		return truncateInline(strings.Join(parts, " "), 180)
+		m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "running", ToolOutput: "running..."})
 	case "result":
-		result := strings.Join(entry.Result, " · ")
-		if result == "" {
-			result = strings.TrimPrefix(clean, "⎿ ")
+		idx := m.findRunningToolEntry(key, event.Name)
+		output := summarizeToolEventOutput(event)
+		if idx < 0 {
+			m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "done", ToolOutput: output})
+			return
 		}
-		return truncateInline(fmt.Sprintf("[tool] %s done: %s", displayName, result), 180)
+		m.entries[idx].ToolState = "done"
+		m.entries[idx].ToolOutput = output
 	case "error":
-		message := fallback(entry.Error, clean)
-		return truncateInline(fmt.Sprintf("[tool] %s error: %s", displayName, message), 180)
+		idx := m.findRunningToolEntry(key, event.Name)
+		output := summarizeToolEventOutput(event)
+		if idx < 0 {
+			m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "error", ToolOutput: output})
+			return
+		}
+		m.entries[idx].ToolState = "error"
+		m.entries[idx].ToolOutput = output
 	default:
-		return truncateInline("[tool] "+strings.ReplaceAll(clean, "\n", " · "), 180)
+		m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "done", ToolOutput: strings.TrimSpace(stripANSI(event.Text))})
 	}
+}
+
+func (m *AppModel) findRunningToolEntry(key string, name string) int {
+	displayName := tools.DisplayName(name)
+	for i := len(m.entries) - 1; i >= 0; i-- {
+		entry := m.entries[i]
+		if entry.Role != roleHint || entry.ToolState != "running" {
+			continue
+		}
+		if key != "" && entry.ToolKey == key {
+			return i
+		}
+		if entry.ToolName == name || entry.ToolName == displayName {
+			return i
+		}
+	}
+	return -1
+}
+
+func toolEventKey(name string, args string) string {
+	return name + "\x00" + strings.TrimSpace(args)
+}
+
+func formatToolArgsSummary(args string) string {
+	args = strings.TrimSpace(args)
+	if args == "" || args == "{}" {
+		return ""
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(args), &raw); err != nil {
+		return "[args=" + truncateMiddle(args, 120) + "]"
+	}
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, key+"="+truncateMiddle(toolArgValue(raw[key]), 80))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+func toolArgValue(v interface{}) string {
+	switch vv := v.(type) {
+	case string:
+		return vv
+	case float64:
+		return fmt.Sprintf("%g", vv)
+	case bool:
+		if vv {
+			return "true"
+		}
+		return "false"
+	case nil:
+		return "null"
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return string(data)
+	}
+}
+
+func summarizeToolEventOutput(event logger.ToolEvent) string {
+	clean := strings.TrimSpace(stripANSI(event.Text))
+	entry := parseToolBlock(clean)
+	switch event.Kind {
+	case "result":
+		fields := append([]string{}, entry.Result...)
+		if len(fields) == 0 {
+			fields = strings.Split(strings.TrimSpace(strings.TrimPrefix(clean, "⎿ ")), "\n")
+		}
+		return compactOutputLines(fields, 4)
+	case "error":
+		if entry.Error != "" {
+			return compactOutputLines([]string{entry.Error}, 2)
+		}
+		if event.Error != "" {
+			return "error: " + truncateMiddle(event.Error, 180)
+		}
+		return compactOutputLines(strings.Split(clean, "\n"), 2)
+	default:
+		return compactOutputLines(strings.Split(clean, "\n"), 3)
+	}
+}
+
+func compactOutputLines(lines []string, limit int) string {
+	result := make([]string, 0, limit)
+	for _, line := range lines {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "⎿ "))
+		if line == "" {
+			continue
+		}
+		result = append(result, truncateMiddle(line, 160))
+		if len(result) >= limit {
+			break
+		}
+	}
+	if len(result) == 0 {
+		return "(no output)"
+	}
+	if len(lines) > len(result) {
+		result = append(result, "...")
+	}
+	return strings.Join(result, "\n")
 }
 
 func truncateInline(text string, maxLen int) string {
@@ -711,7 +847,7 @@ func truncateInline(text string, maxLen int) string {
 	return truncateMiddle(text, maxLen)
 }
 
-func renderConversationEntry(entry conversationEntry, width int) string {
+func (m *AppModel) renderConversationEntry(entry conversationEntry, width int) string {
 	switch entry.Role {
 	case roleUser:
 		body := compactParagraph(strings.TrimSpace(entry.Content))
@@ -720,7 +856,9 @@ func renderConversationEntry(entry conversationEntry, width int) string {
 		content := strings.TrimRight(renderMarkdownForTerminal(normalizeAssistantContent(entry.Content), true), "\n")
 		return wrapVisibleText(content, max(8, width))
 	case roleHint:
-		return renderHintEntry(entry.Content, width)
+		return m.renderToolHintEntry(entry, width)
+	case roleThinking:
+		return renderThinkingEntry(entry.Content, width)
 	case roleTool:
 		return renderToolEntry(entry.Content, width)
 	case roleSystem:
@@ -730,36 +868,76 @@ func renderConversationEntry(entry conversationEntry, width int) string {
 	}
 }
 
-func renderHintEntry(content string, width int) string {
+func renderThinkingEntry(content string, width int) string {
 	content = strings.TrimSpace(content)
 	if content == "" {
-		return renderPrefixedPlainText("  · ", "", colorGray, width)
+		return ""
 	}
-	lineWidth := max(8, width-lipgloss.Width("  · "))
-	lines := wrapVisibleLines(content, lineWidth)
+	label := logger.Gray("thinking")
+	body := colorLinesANSI(wrapVisibleText(content, max(8, width-2)), logger.Gray)
+	return label + "\n" + indentLines(body, "  ", "  ")
+}
+
+func colorLinesANSI(text string, color func(string) string) string {
+	lines := strings.Split(text, "\n")
 	for i, line := range lines {
-		prefix := strings.Repeat(" ", lipgloss.Width("  · "))
-		if i == 0 {
-			prefix = lipgloss.NewStyle().Foreground(colorGray).Render("  · ")
-		}
-		lines[i] = prefix + colorizeToolHintLine(line)
+		lines[i] = color(line)
 	}
 	return strings.Join(lines, "\n")
 }
 
-func colorizeToolHintLine(line string) string {
-	plain := stripANSI(line)
-	if !strings.HasPrefix(plain, "[tool] ") {
-		return logger.Gray(line)
+func (m *AppModel) renderToolHintEntry(entry conversationEntry, width int) string {
+	stateIcon := "●"
+	stateColor := colorGreen
+	switch entry.ToolState {
+	case "running":
+		stateIcon = spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
+		stateColor = colorBlue
+	case "error":
+		stateIcon = "●"
+		stateColor = colorYellow
 	}
-	rest := strings.TrimPrefix(plain, "[tool] ")
-	toolName := rest
-	suffix := ""
-	if idx := strings.IndexAny(rest, " \t:"); idx >= 0 {
-		toolName = rest[:idx]
-		suffix = rest[idx:]
+
+	name := fallback(entry.ToolName, "tool")
+	args := strings.TrimSpace(entry.ToolArgs)
+	header := lipgloss.NewStyle().Foreground(stateColor).Render(stateIcon) + " " + logger.Yellow(name)
+	if args != "" {
+		header += " " + logger.Gray(args)
 	}
-	return logger.Bold(logger.Blue("[tool]")) + " " + logger.Yellow(toolName) + logger.Gray(suffix)
+
+	output := strings.TrimSpace(entry.ToolOutput)
+	if output == "" {
+		return header
+	}
+	lineWidth := max(8, width-2)
+	lines := wrapVisibleText(output, lineWidth)
+	if entry.ToolState == "error" {
+		lines = loggerColorLines(lines, colorYellow)
+	} else {
+		lines = loggerColorLines(lines, colorGray)
+	}
+	return header + "\n" + indentLines(lines, "  └ ", "    ")
+}
+
+func loggerColorLines(text string, color lipgloss.Color) string {
+	style := lipgloss.NewStyle().Foreground(color)
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = style.Render(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func indentLines(text string, firstPrefix string, nextPrefix string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if i == 0 {
+			lines[i] = firstPrefix + line
+		} else {
+			lines[i] = nextPrefix + line
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func renderPrefixedPlainText(prefix string, content string, color lipgloss.Color, width int) string {
@@ -795,7 +973,7 @@ func renderStatusPanel(snapshot statusSnapshot, width int) string {
 		renderRow("STATE", snapshot.CurrentState),
 		renderRow("BUSY", fmt.Sprintf("%v", snapshot.Busy)),
 		renderRow("TOOLS", fmt.Sprintf("%d", snapshot.ToolCallsTotal)),
-		renderRow("LAST", fallback(toolmeta.DisplayName(snapshot.LastToolName), "-")),
+		renderRow("LAST", fallback(tools.DisplayName(snapshot.LastToolName), "-")),
 		"",
 		sectionTitleStyle.Render("ENVIRONMENT_CTX"),
 		renderRow("MODEL", fallback(snapshotModelName(snapshot), "-")),
@@ -836,36 +1014,10 @@ func wrapVisibleLines(line string, width int) []string {
 	if width <= 0 || lipgloss.Width(line) <= width || strings.TrimSpace(stripANSI(line)) == "" {
 		return []string{line}
 	}
-
-	var lines []string
-	var current strings.Builder
-	visible := 0
-	runes := []rune(line)
-	for i := 0; i < len(runes); {
-		if runes[i] == '\x1b' {
-			j := i + 1
-			for j < len(runes) && runes[j] != 'm' {
-				j++
-			}
-			if j < len(runes) {
-				j++
-			}
-			current.WriteString(string(runes[i:j]))
-			i = j
-			continue
-		}
-		if visible >= width {
-			lines = append(lines, current.String())
-			current.Reset()
-			visible = 0
-		}
-		current.WriteRune(runes[i])
-		visible++
-		i++
+	if line != stripANSI(line) {
+		line = stripANSI(line)
 	}
-	if current.Len() > 0 {
-		lines = append(lines, current.String())
-	}
+	lines := strings.Split(ansi.Wrap(line, width, " \t"), "\n")
 	if len(lines) == 0 {
 		return []string{line}
 	}
@@ -1011,7 +1163,7 @@ func renderToolEntry(content string, width int) string {
 
 func renderToolCompactEntry(entry toolEntry, width int) string {
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Foreground(colorYellow).Bold(true).Render("TOOL_EXEC " + strings.ToUpper(fallback(entry.Name, "event"))))
+	b.WriteString(lipgloss.NewStyle().Foreground(colorGray).Render("TOOL " + strings.ToUpper(fallback(entry.Name, "event"))))
 
 	if len(entry.Args) > 0 {
 		joined := strings.Join(entry.Args, "   ·   ")
@@ -1110,10 +1262,10 @@ func tickSpinner() tea.Cmd {
 	})
 }
 
-func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string) error {
+func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string) error {
 	launchMu.Lock()
 	defer launchMu.Unlock()
-	model := NewAppModel(ctx, ag, modelName, taskList, skillMgr, ctxManager, messageCtx, sessionID)
+	model := NewAppModel(ctx, ag, modelName, promptDir, taskList, skillMgr, ctxManager, messageCtx, sessionID)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	model.program = p
 	logger.SetToolEventSink(func(event logger.ToolEvent) {

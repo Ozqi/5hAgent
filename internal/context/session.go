@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cloudwego/eino/schema"
@@ -279,7 +280,7 @@ func (s *Store) loadFromFile(filePath string, data []byte) (*Session, error) {
 				session.UpdatedAt = t
 			}
 		} else if entry.Role != "" {
-			session.messages = append(session.messages, &schema.Message{Role: schema.User, Content: entry.Content})
+			session.messages = append(session.messages, &schema.Message{Role: parseRole(entry.Role), Content: entry.Content})
 		}
 	}
 	return session, nil
@@ -292,9 +293,25 @@ func (s *Store) parseMessages(data []byte) ([]*schema.Message, error) {
 		if err := json.Unmarshal(line, &entry); err != nil || entry.Role == "" || entry.Type == "session" {
 			continue
 		}
-		messages = append(messages, &schema.Message{Role: schema.User, Content: entry.Content})
+		messages = append(messages, &schema.Message{Role: parseRole(entry.Role), Content: entry.Content})
 	}
 	return messages, nil
+}
+
+// parseRole 将字符串 role 映射为 schema.RoleType
+func parseRole(role string) schema.RoleType {
+	switch strings.ToLower(role) {
+	case "user":
+		return schema.User
+	case "assistant":
+		return schema.Assistant
+	case "system":
+		return schema.System
+	case "tool":
+		return schema.Tool
+	default:
+		return schema.User
+	}
 }
 
 func splitJSONLines(data []byte) [][]byte {

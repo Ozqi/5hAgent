@@ -27,6 +27,7 @@
 > ```
 >
 > 这里的默认参数是：
+>
 > - `chunkSize = 2500`
 > - `chunkOverlap = 300`
 >
@@ -45,6 +46,7 @@
 > `AstCodeSplitter` 内部维护了一组 `SPLITTABLE_NODE_TYPES`。不同语言有不同的可切节点。
 
 > 典型映射如下 ：
+>
 > - JavaScript / TypeScript: `function_declaration`、`class_declaration`、`method_definition`、`export_statement`
 > - Python: `function_definition`、`class_definition`、`decorated_definition`、`async_function_definition`
 > - Go: `function_declaration`、`method_declaration`、`type_declaration`、`var_declaration`、`const_declaration`
@@ -58,17 +60,19 @@
 > 真正抽取 chunk 的逻辑在 `extractChunks()`。
 
 > 它会深度遍历 AST；当节点类型命中 `splittableTypes` 时，就取该节点的源码范围：
+>
 > - `startLine = currentNode.startPosition.row + 1`
 > - `endLine = currentNode.endPosition.row + 1`
 > - `content = code.slice(currentNode.startIndex, currentNode.endIndex)`
 >
 > 生成的每个 `CodeChunk` 都会带元数据：
+>
 > - `startLine`
 > - `endLine`
 > - `language`
 > - `filePath`
 
-> 这意味着检索结果不是“文件级命中”，而是“文件中的某一段结构化代码命中”。后续展示给模型时，可以直接带上代码片段和行号。
+> 这意味着检索结果不是“文件级命中”，而是“文件中的某一段结构化代码命中”。后续展示给模型时，可以直接带上代码片段和行号。 
 
 ## 大块二次拆分
 
@@ -77,6 +81,7 @@
 > 这时会进入 `refineChunks()`。如果 `chunk.content.length > this.chunkSize`，代码会调用 `splitLargeChunk()` 再拆一次。
 
 > `splitLargeChunk()` 的策略比较直接：按行累加，直到当前子块长度即将超过 `chunkSize`，就落一个新子块。也就是说：
+>
 > - 第一层切分优先看 AST 语义边界
 > - 第二层切分才退化为按行控制块大小
 
@@ -95,6 +100,7 @@
 > AST splitter 不是唯一方案。`claude-context` 还实现了 `LangChainCodeSplitter`，代码在 `packages/core/src/splitter/langchain-splitter.ts`。
 
 > AST 会在以下情况回退：
+>
 > - 当前语言不在 AST 支持列表里
 > - `tree-sitter` 解析失败
 > - `tree.rootNode` 不可用
@@ -122,6 +128,7 @@
 > `extractChunks()` 还有一个兜底分支：如果整棵树遍历后，一个可分节点都没找到，它会把整个文件作为一个 chunk 返回。
 
 > 这说明它的整体容错顺序是：
+>
 > 1. 先按 AST 结构切
 > 2. AST 结构块太大，就按行再拆
 > 3. AST 没打出任何块，就直接整文件返回
@@ -134,6 +141,7 @@
 > 这里的 embedding provider 默认通常是 OpenAI embedding，也可以换成别的实现。embedding 的作用是把一段代码映射成一个高维向量，后续查询时可以按语义相似度做近邻检索。
 
 > Milvus 是一个向量数据库。`claude-context` 会把每个 chunk 的：
+>
 > - `content`
 > - `vector`
 > - `relativePath`
@@ -149,9 +157,11 @@
 > `claude-context` 的分片策略不是“平均切成若干段”，而是“语义优先，长度受控，失败可退化”。
 
 > 可以把它概括成四句话：
+>
 > - 先按 AST 中的函数、类、方法、类型声明切
 > - 块太大，再按行拆到 `chunkSize` 以内
 > - 每块追加固定 `chunkOverlap`
 > - AST 不可用时，回退到 LangChain 字符分片
 
 > 这也是它适合代码检索的原因：相比纯字符切块，它更容易把一个完整的逻辑单元作为检索对象保留下来。
+

@@ -24,6 +24,7 @@ workspace/
 .worktrees/
 compact/
 testspace/swebench_pro/repos/
+testspace/*.txt
 
 # 5hAgent runtime data
 .5hagent/

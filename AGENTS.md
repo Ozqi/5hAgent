@@ -135,9 +135,9 @@ When the work is in implementation stage:
 
 ## Current Implementation Notes
 
-- Skills are loaded from `.5hagent/skills/*/SKILL.md`.
-- Prompts are loaded by walking `prompt/` recursively.
-- The main system prompt currently comes from `prompt/main.md` via `internal/utils/utils.go`.
+- Skills are loaded from `~/.5hAgent/skills/*/SKILL.md`.
+- Prompts are loaded from `~/.5hAgent/prompt/*.md`.
+- The main system prompt comes from `~/.5hAgent/prompt/main.md` via `internal/utils/utils.go`.
 - Context compression is simple truncation, not summary-based compression.
 - `internal/agent/tool_use.go` still classifies old task tool names in its read-only map; keep that mismatch in mind when changing task-tool concurrency behavior.
 

@@ -19,6 +19,10 @@ import (
 var registry []tool.BaseTool
 var registryMu sync.RWMutex
 
+// mcpServers 注册的 MCP 服务器
+var mcpServers map[string]mcp.Client
+var mcpServerDescs map[string]string
+
 // InitRegistry 初始化工具注册表（需要在 main 中调用）
 func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
 	registryMu.Lock()
@@ -26,9 +30,11 @@ func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
 
 	registry = nil // 清空
 	toolmeta.Reset()
+	mcpServers = make(map[string]mcp.Client)
+	mcpServerDescs = make(map[string]string)
 
 	// 基础文件工具
-	tools := []struct {
+	baseTools := []struct {
 		meta toolmeta.Meta
 		fn   func() (tool.BaseTool, error)
 	}{
@@ -41,7 +47,7 @@ func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
 		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "list_dir", FullName: "base.list_dir", OriginalName: "list_dir", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewListDirTool() }},
 	}
 
-	for _, t := range tools {
+	for _, t := range baseTools {
 		tool, err := t.fn()
 		if err != nil {
 			return fmt.Errorf("failed to create %s tool: %w", t.meta.FullName, err)
@@ -52,13 +58,13 @@ func InitRegistry(taskList *task.TaskList, skillMgr *skill.Manager) error {
 
 	// Task 工具（统一入口）
 	if taskList != nil {
-		registry = append(registry, NewTaskTool(taskList))
+		registry = append(registry, &TaskTool{taskList: taskList})
 		toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategoryTask, Source: "local", DisplayName: "task", FullName: "task.task", OriginalName: "task"})
 	}
 
 	// Skill 工具
 	if skillMgr != nil {
-		registry = append(registry, NewSkillTool(skillMgr))
+		registry = append(registry, &SkillTool{mgr: skillMgr})
 		toolmeta.Register(toolmeta.Meta{Category: toolmeta.CategorySkill, Source: "local", DisplayName: "skill", FullName: "skill.skill", OriginalName: "skill"})
 	}
 
@@ -115,6 +121,10 @@ func RegisterMCPTools(serverName string, client mcp.Client, specs []mcp.ToolSpec
 	if client == nil {
 		return fmt.Errorf("mcp client is required")
 	}
+
+	// 注册服务器到全局 map（供 mcp_list_tools 使用）
+	RegisterMCPServer(serverName, client)
+
 	for _, spec := range specs {
 		if spec.Name == "" {
 			return fmt.Errorf("mcp tool name is required")
@@ -131,3 +141,37 @@ func RegisterMCPTools(serverName string, client mcp.Client, specs []mcp.ToolSpec
 	}
 	return nil
 }
+
+// RegisterMCPServer 注册 MCP 服务器
+func RegisterMCPServer(name string, client mcp.Client) {
+	mcpServers[name] = client
+}
+
+// GetMCPServers 返回所有注册的 MCP 服务器
+func GetMCPServers() map[string]mcp.Client {
+	return mcpServers
+}
+
+// GetMCPServer 返回指定名称的 MCP 服务器
+func GetMCPServer(name string) (mcp.Client, bool) {
+	client, ok := mcpServers[name]
+	return client, ok
+}
+
+// DisplayName returns the display name for a tool
+func DisplayName(name string) string {
+	return toolmeta.DisplayName(name)
+}
+
+// Lookup returns the meta for a tool name
+func Lookup(name string) (toolmeta.Meta, bool) {
+	return toolmeta.Lookup(name)
+}
+
+// Re-export Category constants
+const (
+	CategoryBase  = toolmeta.CategoryBase
+	CategoryTask  = toolmeta.CategoryTask
+	CategorySkill = toolmeta.CategorySkill
+	CategoryMCP   = toolmeta.CategoryMCP
+)

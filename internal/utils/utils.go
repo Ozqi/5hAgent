@@ -1,7 +1,8 @@
 // utils.go - 工具函数
 // 功能：
-//  - 加载 prompt 目录下的 .md 文件内容
-//  - 从 ~/.5hAgent/.env 加载配置
+//   - 加载 prompt 目录下的 .md 文件内容
+//   - 从 ~/.5hAgent/.env 加载配置
+//
 // 导出函数：Load, LoadConfig, GetConfigDir, GetProjectDataDir
 package utils
 
@@ -40,10 +41,11 @@ type AppConfig struct {
 
 // LLMConfig LLM 提供商配置
 type LLMConfig struct {
-	APIKey    string
-	BaseURL   string
-	Model     string
-	MaxTokens int
+	APIKey               string
+	BaseURL              string
+	Model                string
+	MaxTokens            int
+	ThinkingBudgetTokens int
 }
 
 // AgentConfig Agent 行为配置
@@ -57,10 +59,10 @@ type AgentConfig struct {
 // 默认值常量
 const (
 	DefaultBaseURL         = "https://api.anthropic.com"
-	DefaultModel          = "claude-sonnet-4-6"
-	DefaultMaxTokens      = 4096
-	DefaultAgentName      = "5hAgent"
-	DefaultMaxTotalTokens = 200000
+	DefaultModel           = "claude-sonnet-4-6"
+	DefaultMaxTokens       = 4096
+	DefaultAgentName       = "5hAgent"
+	DefaultMaxTotalTokens  = 200000
 	DefaultRepeatToolLimit = 5
 )
 
@@ -102,6 +104,11 @@ func LoadConfig() (*AppConfig, error) {
 	if maxTokens := getEnv("LLM_MAX_TOKENS", ""); maxTokens != "" {
 		if v, err := strconv.Atoi(maxTokens); err == nil {
 			config.LLM.MaxTokens = v
+		}
+	}
+	if thinkingBudget := getEnv("LLM_THINKING_BUDGET_TOKENS", ""); thinkingBudget != "" {
+		if v, err := strconv.Atoi(thinkingBudget); err == nil {
+			config.LLM.ThinkingBudgetTokens = v
 		}
 	}
 
@@ -159,6 +166,9 @@ func (c *AppConfig) Validate() error {
 	}
 	if c.LLM.MaxTokens <= 0 {
 		return fmt.Errorf("LLM_MAX_TOKENS must be positive")
+	}
+	if c.LLM.ThinkingBudgetTokens < 0 {
+		return fmt.Errorf("LLM_THINKING_BUDGET_TOKENS must be non-negative")
 	}
 	if c.Agent.MaxTotalTokens <= 0 {
 		return fmt.Errorf("AGENT_MAX_TOTAL_TOKENS must be positive")

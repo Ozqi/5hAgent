@@ -1,5 +1,5 @@
 // skill.go - 技能加载与管理
-// 功能：从 .5hagent/skills/*/SKILL.md 加载技能，支持启用/禁用
+// 功能：从 ~/.5hAgent/skills/*/SKILL.md 加载技能，支持启用/禁用
 // 主要类型：Skill, Manager
 // 导出函数：NewManager, LoadSkills, GetSkill, ListSkills, EnableSkill, DisableSkill
 package skill
@@ -108,12 +108,13 @@ func (m *Manager) loadSkillFile(path string) (*Skill, error) {
 	}
 
 	skill.Content = strings.TrimSpace(parts[1])
-	skill.Enabled = false // 默认禁用
+	skill.Enabled = true // 默认启用所有 skills
 
 	return &skill, nil
 }
 
 // GetSkill 获取指定技能
+// GetSkill retrieves a skill by name. Returns (skill, true) if found, (nil, false) otherwise.
 func (m *Manager) GetSkill(name string) (*Skill, bool) {
 	skill, ok := m.skills[name]
 	return skill, ok

@@ -132,50 +132,51 @@ mcp.{serverName}.{toolName}
 
 ## 工具分类
 
-| Category | 来源 | 示例 |
-|----------|------|------|
-| base | 内置文件工具 | base.read_file |
-| task | TaskList | task.task |
-| skill | Skill 系统 | skill.skill |
-| mcp | MCP Server | mcp.filesystem.list_directory |
+| Category | 来源         | 示例                          |
+| -------- | ------------ | ----------------------------- |
+| base     | 内置文件工具 | base.read_file                |
+| task     | TaskList     | task.task                     |
+| skill    | Skill 系统   | skill.skill                   |
+| mcp      | MCP Server   | mcp.filesystem.list_directory |
 
 ## 执行路径
 
 ```
-Agent.exeToolsPar() → exeToolCall() → MCPTool.InvokableRun() → client.CallTool()
+Agent.RunStream() → toolQueue → exeToolCall() → MCPTool.InvokableRun() → client.CallTool()
 ```
 
 ## /mcp 命令
 
-| 命令 | 说明 |
-|------|------|
-| `/mcp list` | 列出服务器 |
-| `/mcp add <name> <command> [args...]` | 添加 |
-| `/mcp remove <name>` | 删除 |
-| `/mcp enable <name>` | 启用 |
-| `/mcp disable <name>` | 禁用 |
+| 命令                                  | 说明       |
+| ------------------------------------- | ---------- |
+| `/mcp list`                           | 列出服务器 |
+| `/mcp add <name> <command> [args...]` | 添加       |
+| `/mcp remove <name>`                  | 删除       |
+| `/mcp enable <name>`                  | 启用       |
+| `/mcp disable <name>`                 | 禁用       |
 
 > 注意：运行时修改配置需要重启生效
 
-## 常用 MCP 服务器
-
-| 服务器 | 安装 | 用途 |
-|--------|------|------|
-| filesystem | `npx -y @modelcontextprotocol/server-filesystem <path>` | 文件操作 |
-| brave-search | `npx -y @modelcontextprotocol/server-brave-search` | 搜索引擎 |
-| github | `npx -y @modelcontextprotocol/server-github` | GitHub API |
-
 ## 错误处理
 
-MCP 工具执行失败时返回统一提示：
+MCP 工具执行失败时，错误信息直接透传 MCP 服务器的原始返回，不添加额外提示干扰。
+
+## mcp_list_tools
+
+`mcp.list_tools` 是内置工具，用于列出当前已连接的 MCP 服务器及其工具列表：
 
 ```
-check the remote tool arguments and server-specific requirements before retrying.
+Agent >>> 使用 mcp_list_tools 查看可用工具
 ```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| server | string | MCP 服务器名称（可选，不填则列出所有） |
 
 ## 相关代码
 
 - [mcp.go](../internal/mcp/mcp.go)
 - [client_stdio.go](../internal/mcp/client_stdio.go)
 - [mcp_tool.go](../internal/tools/mcp_tool.go)
+- [mcp_list_tools.go](../internal/tools/mcp_list_tools.go)
 - [commands/mcp.go](../internal/commands/mcp.go)
