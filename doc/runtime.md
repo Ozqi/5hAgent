@@ -46,7 +46,7 @@ flowchart TD
 | `runtime.New` | [`runtime.go`](../internal/runtime/runtime.go) | 初始化共享运行时 | `utils.LoadConfig` -> `task.NewTaskList` -> `agent.NewAgent` -> `tools.NewRegistry().Init` |
 | `Runtime.RunTaskOnce` | [`runtime.go`](../internal/runtime/runtime.go) | 执行一个文件任务并写报告 | `selectTask` -> `Agent.RunStream` -> `TaskList.UpdateTaskStatus` -> `writeReport` |
 | `Runtime.RunTasksUntilDone` | [`runtime.go`](../internal/runtime/runtime.go) | 连续执行 task.md 中的可运行任务 | `selectTask` -> `RunTaskOnce` -> 重新读取 task.md |
-| `Runtime.RunProcess` | [`runtime.go`](../internal/runtime/runtime.go) | 作为 Agent Systemd runner 执行单个 AgentProcess | 注入 `PromptSpec` -> `WithSystemRuntime` -> `Agent.RunStream` -> `writeProcessReport` |
+| `Runtime.RunProcess` | [`runtime.go`](../internal/runtime/runtime.go) | 作为 Agent Systemd runner 执行单个 AgentProcess | 注入 `ProcessSpec.SystemPrompt` -> `WithSystemRuntime` -> `Agent.RunStream` -> `writeProcessReport` |
 | `NewTaskFileEventSource` | [`event_source_task.go`](../internal/runtime/event_source_task.go) | 把 task 文件变化转换成 `task.created` 事件 | `FileEventSource.Next` -> `TaskList.ListTasksByStatus` -> `TaskSpecBuilder` |
 | `runTUI` | [`main.go`](../cmd/5hagent/main.go) | 启动 TUI 前端 | `runtime.New` -> `cli.LaunchTUI` |
 | `runHeadless` | [`main.go`](../cmd/5hagent/main.go) | 启动无头任务执行 | `runtime.New` -> `Runtime.RunTaskOnce` |
@@ -90,14 +90,14 @@ TUI 中的 `/run` 会调用 `Runtime.RunTasksUntilDone`。它不创建新的 dae
 `Runtime.RunProcess(ctx, proc, ipc)` 是 `systemd.ProcessRunner` 的执行层适配器：
 
 1. 为当前进程创建新的内存 message context。
-2. 把 `PromptSpec.System` 和每个 `SkillRef{Name, Description}` 写入 system message。
+2. 把 `ProcessSpec.SystemPrompt` 写入 system message。
 3. 用 `agentctx.WithSystemRuntime` 注入当前 `ProcessID` 和结构化 IPC 实现，供 `sys.ipc` 工具使用。
 4. 调用 `Agent.RunStream` 执行进程退出条件。
-5. 写 `.5hagent/reports/<pid>.md` 和 `.5hagent/agents/<pid>/logs/`，并回填 `AgentProcess.ReportPath/WorkLogPath`。
+5. 写 `.5hagent/reports/<task-id>.<pid>.<timestamp>.md` 和 `.5hagent/agents/<pid>/logs/<timestamp>-<task-id>.md`，并回填 `AgentProcess.ReportPath/WorkLogPath`。
 
-`runtime.NewTaskFileEventSource` 属于 runtime 适配层，不在 `internal/systemd` 主包里。它复用已有 `TaskList`，把 `.5hagent/task.md` 的变化转换成 `task.created` 事件；payload 使用 `systemd.TaskCreatedPayload`，其中 `ProcessSpec` 由调用方提供的 `TaskSpecBuilder` 生成，`task_id/task_title/file_event` 保留给调度审计。
+`runtime.NewTaskFileEventSource` 属于 runtime 适配层，不在 `internal/systemd` 主包里。它复用已有 `TaskList`，把 `.5hagent/task.md` 的变化转换成 `task.created` 事件；payload 使用 `systemd.TaskCreatedPayload`，其中 `ProcessSpec` 由调用方提供的 `TaskSpecBuilder` 生成，`task_id/task_title` 保留给调度审计。
 
-`5hagent daemon` 是当前最小接通入口：启动时先把已有 `pending/in_progress` 任务投递一次，然后用 `TaskFileEventSource` 监听文件变化；`--poll` 控制 task 文件和 timer 的轮询间隔。
+`5hagent daemon` 是当前最小接通入口：启动时先把已有 `pending/in_progress` 任务投递一次，然后用 `TaskFileEventSource` 监听文件变化；`--poll` 控制 task 文件轮询间隔。
 
 ### Headless 工作日志
 
@@ -143,5 +143,5 @@ Runtime 将 `.env` 中的配置拆成两个方向：
 
 - 会创建或更新 Project 目录下 `.5hagent/task.md`、`.5hagent/reports/`、`.5hagent/agents/<agent-name>/logs/` 和项目 skills；未设置 `ProjectDir` 时使用当前工作目录。
 - 会写日志到 `~/.5hAgent` 下的日志文件。
-- 默认会读写 `~/.5hAgent/sessions/*.jsonl`；`runtime.NewInMemory` 创建的 Runtime 默认只使用内存 context，调用 `sys.session.create/save` 后才写入 session。
+- 默认会读写 `~/.5hAgent/sessions/*.jsonl`；`runtime.NewInMemory` 创建的 Runtime 默认只使用内存 context。Agent Systemd 不再暴露 `sys.session` 工具，避免进程模式重复定义 session 持久化语义。
 - 如果配置了 MCP，会启动 stdio 子进程；`Runtime.Close` 负责关闭。

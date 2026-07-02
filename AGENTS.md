@@ -119,7 +119,6 @@ LLM 可见工具当前包括：
 - `task.task`
 - `skill.skill`
 - `context.context`
-- `sys.session`
 - `sys.ipc`
 - `mcp.<server>.<tool>`
 
@@ -132,20 +131,19 @@ LLM 可见工具当前包括：
 ## Agent Systemd 当前边界
 
 - `internal/systemd` 是纯调度核心，只依赖标准库；不要在该包重新引入 `agentctx`、`skill`、`task` 等执行层或业务包。
-- `ProcessSpec` 只包含 `PromptSpec` 和 `ExitSpec`；Project、WorkDir、SessionID、工具白名单等执行期细节仍归 runtime 或工具层处理。
-- `PromptSpec.Skills` 只接收外部 spec/decision/builder 已给出的 `Name/Description`，systemd 不自动读取或填充 skill 列表。
-- `AgentSystemd.Run(ctx, runner, caller)` 是唯一调度循环入口；`caller == nil` 时只执行硬编码规则，`task.failed` 且需要升级判断时才调用 decision。
+- `ProcessSpec` 只包含 `SystemPrompt` 和 `ExitCondition`；Project、WorkDir、SessionID、工具白名单等执行期细节仍归 runtime 或工具层处理。
+- `AgentSystemd.Run(ctx, runner)` 是唯一调度循环入口；当前只执行硬编码 task supervisor 规则，不再包含 decision 升级点。
 - `ProcessRunner` 当前签名是 `RunProcess(ctx, proc, ipc)`；由 runtime 自己把 `ProcessID/IPC` 注入 `agentctx.WithSystemRuntime`。
 - `TaskFileEventSource` 属于 `internal/runtime/event_source_task.go` 适配层；`internal/systemd` 只保留通用 `EventSource` 和 `FileEventSource`。
-- `task.created` 使用 `TaskCreatedPayload{process_spec, task_id, task_title, file_event}`；`process.start/manual.request` payload 是纯 `ProcessSpec`，dispatch 严格解析并拒绝未知字段。
-- `timer.tick` 不进入 `seen` 去重表，避免长期运行时 `seen` 无界增长；进程结束类事件会清理相关 retry key。
-- `RunProcess` 结束后投递 `process.exited/process.failed`，事件 payload 应携带 report/worklog artifact 路径。
+- `task.created` 使用 `TaskCreatedPayload{process_spec, task_id, task_title}`；dispatch 严格解析并拒绝未知字段。
+- 非空事件 ID 会进入 `seen` 去重表，避免重复处理；当前没有 retry/max-retry 调度状态。
+- `RunProcess` 结束后投递 `process.exited/process.failed`；report/worklog 路径保存在 `AgentProcess`，不再重复放进事件 payload。
 - `task.created` 的 `task_id/task_title` 会进入 `AgentProcess.SourceTask`，不进入 `ProcessSpec`；runtime 用它写 process report、worklog，并在进程结束后把源 task 标记为 `completed/failed`。
+- Session 持久化归 `runtime/context` 现有 session manager；`sys.session` 不再作为 LLM 可见工具注册，避免 AgentProcess 额外定义一套落盘语义。
 - daemon report 使用 `<task-id>.<process-id>.<timestamp>.md`，不要恢复成只用 `agent-<n>.md` 的覆盖式命名。
 - daemon stdout 需要保留 process start/completed/failed、task id 和 report path，方便长期运行时判断状态。
-- daemon 策略参数通过 `--max-retry` 和 `--stalled-after` 配置；当前不暴露 `maxConcurrency`，因为调度策略仍是串行多 AgentProcess。
 - `dispatch` 异步启动失败但尚未创建进程时，需要补发 `process.failed` 事件；已创建进程后的 runner 错误由 `RunProcess` 自己投递失败事件。
-- `cmd/5hagent/main.go` 的 `daemon` 子命令是当前最小运行期调用方；systemd 冒烟测试覆盖 process start/exited、高风险事件、异步失败事件和 retry 上限。
+- `cmd/5hagent/main.go` 的 `daemon` 子命令是当前最小运行期调用方；systemd 冒烟测试覆盖 process exited 和异步失败事件。
 
 ## 上下文和压缩
 
@@ -166,7 +164,7 @@ LLM 可见工具当前包括：
 | `learn/stage-3-skill-prompt` | Stage 3 学习快照：Skill 系统、prompt 管理、Skill 注入机制。 |
 | `learn/stage-4-mcp-session-tui` | Stage 4 学习快照：MCP、session 持久化、TUI 和日志体验。 |
 | `learn/stage-5-current` | Stage 5 学习快照：当前公开 baseline，对齐 `master` / `origin/master`。 |
-| Stage 6 设计 | Agent Systemd 顶层调度设计：启动只传 PromptSpec/ExitSpec，context 默认视作进程内存；先记录在 `doc/agent-systemd.md`，尚未对应稳定学习分支。 |
+| Stage 6 设计 | Agent Systemd 顶层调度设计：启动只传 system prompt / exit condition，context 默认视作进程内存；先记录在 `doc/agent-systemd.md`，尚未对应稳定学习分支。 |
 | `master` | 公开稳定 baseline；当前指向 `learn/stage-5-current`。 |
 | `develop` | 当前开发主线；在 `master` 之后继续开发 headless runtime、Ollama baseline、context 工具和文档。 |
 

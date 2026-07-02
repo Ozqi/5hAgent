@@ -282,7 +282,7 @@ flowchart LR
 | 文档 | 模块 | 重点 |
 |------|------|------|
 | [runtime.md](runtime.md) | `internal/runtime` | 共享运行时初始化、TUI/无头入口、报告写入、工具绑定 |
-| [agent-systemd.md](agent-systemd.md) | Stage 6 设计 | Agent Systemd、PromptSpec/ExitSpec、内存 context、IPC、decision JSON 判断 |
+| [agent-systemd.md](agent-systemd.md) | Stage 6 设计 | Agent Systemd、system prompt、exit condition、内存 context、IPC、task daemon 调度 |
 | [agent-systemd-test.md](agent-systemd-test.md) | 调试入口 | tmux TUI、headless、daemon 真实交互调试 |
 | [agent.md](agent.md) | `internal/agent` | ReAct 循环、stream 读取、tool call 收集、上下文写回 |
 | [tools.md](tools.md) | `internal/tools` / `internal/toolmeta` | 工具注册、工具 schema、执行策略、MCP 工具包装 |

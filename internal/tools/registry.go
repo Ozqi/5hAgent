@@ -90,8 +90,7 @@ func (r *Registry) Init(taskList *task.TaskList, skillMgr *skill.Manager) error 
 	}
 
 	// System 工具
-	r.tools = append(r.tools, NewSessionTool())
-	r.registerMeta(toolmeta.Meta{Category: toolmeta.CategorySystem, Source: "local", DisplayName: "session", FullName: "sys.session", OriginalName: "session"})
+	// session 持久化归 runtime/context 的 Session 管理；这里不再暴露 LLM 工具，避免 AgentProcess 再定义一套落盘语义。
 	r.tools = append(r.tools, NewIPCTool())
 	r.registerMeta(toolmeta.Meta{Category: toolmeta.CategorySystem, Source: "local", DisplayName: "ipc", FullName: "sys.ipc", OriginalName: "ipc"})
 

@@ -56,7 +56,6 @@ flowchart TB
 | `task.task` | `task_tool.go` | 混合 | 统一任务管理入口 |
 | `skill.skill` | `skill_tool.go` | 只读 | 查看启动时加载的技能 |
 | `context.context` | `context_tool.go` | 混合 | inspect/pin/audit/compress 当前上下文 |
-| `sys.session` | `session_tool.go` | 写 | 显式创建/保存/解除当前 context 的 session 绑定 |
 | `sys.ipc` | `ipc_tool.go` | 写 | Agent 进程间短消息收发 |
 | `mcp.<server>.<tool>` | `mcp_tool.go` | 取决于远端 | MCP Server 提供的工具 |
 
@@ -92,7 +91,7 @@ func (r *Registry) Init(taskList *task.TaskList, skillMgr *skill.Manager) error 
     r.registerMeta(toolmeta.Meta{..., FullName: "skill.skill"})
 
     // 注册系统工具
-    r.tools = append(r.tools, NewSessionTool(), NewIPCTool())
+    r.tools = append(r.tools, NewIPCTool())
 }
 
 func (r *Registry) RegisterContextTool(llm model.ToolCallingChatModel, promptDir string) {
@@ -144,14 +143,6 @@ func (r *Registry) RegisterContextTool(llm model.ToolCallingChatModel, promptDir
 - `compress` 支持 `mode=lm` 或 `mode=truncate`
 - 工具执行依赖 `Agent.RunStream()` 注入的 `ToolRuntime`；脱离 Agent 当前上下文直接调用会返回 `context runtime not found`
 
-`sys.session` 的关键约束：
-
-- `action` 只能是 `create/save/drop`
-- `create` 可选 `session_id`；为空时创建新 session
-- `save/drop` 只作用于当前 Agent context
-- 不删除 session 文件，不读取其他 Agent context
-- 工具执行依赖 `Agent.RunStream()` 注入的 `ToolRuntime`
-
 `sys.ipc` 的关键约束：
 
 - `action` 只能是 `send/recv`
@@ -159,6 +150,12 @@ func (r *Registry) RegisterContextTool(llm model.ToolCallingChatModel, promptDir
 - `recv` 只接收当前 Agent process 的消息
 - 不共享 context，只传短消息或 artifact 路径
 - 工具执行依赖 runtime 注入 `ProcessID/IPC`，IPC 消息协议是 `internal/ipctypes.Message`
+
+Session 边界：
+
+- `internal/context.Manager` 仍保留 `BindSession/SaveSession/DropSession`，供 runtime/TUI/headless 内部使用。
+- `sys.session` 不再注册为 LLM 可见工具，避免 AgentProcess 再定义一套独立的“持久化落盘”语义。
+- 后续如要恢复显式 session 操作，应先重新设计 Runtime session 与 daemon process 生命周期的唯一职责边界。
 
 Project 路径边界：
 

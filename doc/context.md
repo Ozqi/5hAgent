@@ -449,7 +449,7 @@ compact/messages/<YYYYMMDD-HHMMSS>.md
 - 压缩会通过 `ReplaceMessages()` 重写当前 session 文件。
 - `Clear(ctx)` 只清空内存，不清空 session 文件。
 - `CloneContext()` 只复制消息 slice，不复制 session 关联。
-- `BindSession/SaveSession/DropSession` 是 Agent Systemd `sys.session.*` 的底座；默认内存 context 不会自动落盘。
+- `BindSession/SaveSession/DropSession` 是 runtime/context 的 session 底座；Agent Systemd 不再把它们暴露成 LLM 可见的 `sys.session` 工具。
 - `Compress()` fallback 不保护 system 消息。
 - 压缩摘要是普通 system 消息，没有结构化元数据标记来源、范围或 archive id。
 - pinned range 和 audit event 目前只在内存中维护，不随 session 恢复。

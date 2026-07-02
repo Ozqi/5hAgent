@@ -27,6 +27,10 @@ import (
 	"github.com/lzq/5hAgent/internal/utils"
 )
 
+// =============================================================================
+// Runtime 配置和运行期对象
+// =============================================================================
+
 // Options 控制运行时初始化方式。
 // Debug 会提升日志级别；SessionID/ContinueLast 只影响默认 MessageCtx。
 // MemoryContext 为 Agent Systemd 预留：启用后不绑定 session store，Context 随进程退出销毁。
@@ -53,9 +57,9 @@ type Runtime struct {
 	ModelName  string
 	ProjectDir string
 
-	ToolRegistry  *tools.Registry            // 当前 Runtime 独立工具注册表
-	decisionModel model.ToolCallingChatModel // 未绑定工具的模型，仅用于 Agent Systemd decision
-	mcpClients    []*mcp.StdioClient         // 需要随进程退出释放的 MCP stdio 子进程
+	ToolRegistry *tools.Registry            // 当前 Runtime 独立工具注册表
+	plainModel   model.ToolCallingChatModel // 未绑定工具的模型，用于 no-tool AgentProcess
+	mcpClients   []*mcp.StdioClient         // 需要随进程退出释放的 MCP stdio 子进程
 }
 
 // RunOptions 描述一次文件任务执行。
@@ -109,16 +113,20 @@ func (r *RunAllReport) Summary() string {
 }
 
 type processReport struct {
-	ProcessID string
-	Source    systemd.SourceTask
-	WorkLog   string
-	Prompt    systemd.PromptSpec
-	Exit      systemd.ExitSpec
-	Response  string
-	Err       error
-	StartedAt time.Time
-	EndedAt   time.Time
+	ProcessID     string
+	Source        systemd.SourceTask
+	WorkLog       string
+	SystemPrompt  string
+	ExitCondition string
+	Response      string
+	Err           error
+	StartedAt     time.Time
+	EndedAt       time.Time
 }
+
+// =============================================================================
+// Runtime 初始化：配置、LLM、Agent、工具、MCP
+// =============================================================================
 
 // New 初始化一个可交互或无头复用的 Runtime。
 // 步骤：加载配置 -> 初始化日志 -> 打开任务文件和 session store -> 创建 LLM/Agent -> 注册本地与 MCP 工具。
@@ -230,17 +238,17 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	ag.SetTools(allTools)
 
 	return &Runtime{
-		Agent:         ag,
-		TaskList:      list,
-		CtxManager:    ctxManager,
-		MessageCtx:    messageCtx,
-		SessionID:     sessionID,
-		PromptDir:     promptDir,
-		ModelName:     llmConfig.Model,
-		ProjectDir:    projectRoot,
-		ToolRegistry:  toolRegistry,
-		decisionModel: client.GetModel(),
-		mcpClients:    mcpClients,
+		Agent:        ag,
+		TaskList:     list,
+		CtxManager:   ctxManager,
+		MessageCtx:   messageCtx,
+		SessionID:    sessionID,
+		PromptDir:    promptDir,
+		ModelName:    llmConfig.Model,
+		ProjectDir:   projectRoot,
+		ToolRegistry: toolRegistry,
+		plainModel:   client.GetModel(),
+		mcpClients:   mcpClients,
 	}, nil
 }
 
@@ -255,8 +263,12 @@ func NewInMemory(ctx context.Context, opts Options) (*Runtime, error) {
 	return New(ctx, opts)
 }
 
+// =============================================================================
+// Agent Systemd 适配：Runtime 作为 ProcessRunner
+// =============================================================================
+
 // RunProcess 让 Runtime 作为 Agent Systemd 的同步执行 runner。
-// 参数：proc 只读取 PromptSpec/ExitSpec；Project/WorkDir 仍由外层启动 runtime 时决定。
+// 参数：proc 只读取 SystemPrompt/ExitCondition；Project/WorkDir 仍由外层启动 runtime 时决定。
 // 调用层级：systemd.AgentSystemd.RunProcess -> Runtime.RunProcess -> Agent.RunStream。
 // 步骤：创建内存 context -> 注入 ProcessSpec.Prompt -> 调用 Agent.RunStream -> 写进程 report/worklog。
 func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess, ipc systemd.IPC) error {
@@ -277,21 +289,9 @@ func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess, ip
 	if proc.ID != "" && ipc != nil {
 		ctx = agentctx.WithSystemRuntime(ctx, r.CtxManager, messageCtx, proc.ID, ipc)
 	}
-	if proc.Spec.Prompt.System != "" {
-		if err := r.CtxManager.AddMessage(messageCtx, &schema.Message{Role: schema.System, Content: proc.Spec.Prompt.System}); err != nil {
+	if proc.Spec.SystemPrompt != "" {
+		if err := r.CtxManager.AddMessage(messageCtx, &schema.Message{Role: schema.System, Content: proc.Spec.SystemPrompt}); err != nil {
 			return fmt.Errorf("add process system prompt: %w", err)
-		}
-	}
-	for _, skill := range proc.Spec.Prompt.Skills {
-		if skill.Name == "" {
-			continue
-		}
-		content := "# Skill: " + skill.Name
-		if skill.Description != "" {
-			content += "\n\n" + skill.Description
-		}
-		if err := r.CtxManager.AddMessage(messageCtx, &schema.Message{Role: schema.System, Content: content}); err != nil {
-			return fmt.Errorf("add process skill %s: %w", skill.Name, err)
 		}
 	}
 	dataDir := projectDataDir(r.ProjectDir)
@@ -307,7 +307,7 @@ func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess, ip
 Exit Condition:
 %s
 
-请在当前进程上下文内完成任务。上下文默认只存在于内存；如需持久化，必须显式调用系统级持久化工具。`, proc.Spec.Exit.Condition)
+请在当前进程上下文内完成任务。上下文默认只存在于内存；如需持久化，必须显式调用系统级持久化工具。`, proc.Spec.ExitCondition)
 	restoreModel := r.useProcessModel(proc)
 	defer restoreModel()
 	response, runErr := r.Agent.RunStreamWithOptions(ctx, messageCtx, input, workLog.OnToken, r.processModelOptions(proc), workLog.OnReasoning)
@@ -324,7 +324,7 @@ Exit Condition:
 			logger.ErrorTag("TASK", "mark source task %s: %v", finalStatus, err)
 		}
 	}
-	report := &processReport{ProcessID: proc.ID, Source: proc.SourceTask, WorkLog: proc.WorkLogPath, Prompt: proc.Spec.Prompt, Exit: proc.Spec.Exit, Response: response, Err: runErr, StartedAt: started, EndedAt: time.Now().UTC()}
+	report := &processReport{ProcessID: proc.ID, Source: proc.SourceTask, WorkLog: proc.WorkLogPath, SystemPrompt: proc.Spec.SystemPrompt, ExitCondition: proc.Spec.ExitCondition, Response: response, Err: runErr, StartedAt: started, EndedAt: time.Now().UTC()}
 	path, writeErr := r.writeProcessReport("", report)
 	proc.ReportPath = path
 	if writeErr != nil {
@@ -342,25 +342,6 @@ Exit Condition:
 	return runErr
 }
 
-// CallDecision 执行一次受控 LM 判断。
-// 参数：input 是 Agent Systemd 编码后的结构化 JSON。
-// 调用层级：AgentSystemd.Decision -> Runtime.CallDecision -> model.Generate。
-// 步骤：构造只要求 JSON 的单轮消息 -> 调用未绑定工具的模型 -> 返回原始文本。
-func (r *Runtime) CallDecision(ctx context.Context, input []byte) ([]byte, error) {
-	if r.decisionModel == nil {
-		return nil, fmt.Errorf("decision model is nil")
-	}
-	resp, err := r.decisionModel.Generate(ctx, []*schema.Message{{
-		Role: schema.User,
-		Content: "Return only decision JSON. No markdown.\n\n" +
-			string(input),
-	}})
-	if err != nil {
-		return nil, fmt.Errorf("decision generate: %w", err)
-	}
-	return []byte(strings.TrimSpace(resp.Content)), nil
-}
-
 // Close 释放 Runtime 启动的外部资源。
 func (r *Runtime) Close() error {
 	var firstErr error
@@ -372,6 +353,10 @@ func (r *Runtime) Close() error {
 	logger.CloseDebugLog()
 	return firstErr
 }
+
+// =============================================================================
+// Headless task 执行：直接消费 .5hagent/task.md
+// =============================================================================
 
 // RunTaskOnce 从任务文件选取一个任务，调用 Agent 执行，并写入 Markdown 报告。
 // 成功时任务标记为 completed；失败时标记为 failed，报告仍会落盘供下一轮恢复。
@@ -479,11 +464,8 @@ func (r *Runtime) TaskProcessSpec(t *task.Task) (systemd.ProcessSpec, error) {
 		return systemd.ProcessSpec{}, fmt.Errorf("task is nil")
 	}
 	return systemd.ProcessSpec{
-		Prompt: systemd.PromptSpec{System: taskPrompt(r.TaskList.Path(), t)},
-		Exit: systemd.ExitSpec{
-			Condition: "完成任务并写出可审计结果；如果遇到不可恢复阻塞，说明 blocker 后退出。",
-			MaxTurns:  12,
-		},
+		SystemPrompt:  taskPrompt(r.TaskList.Path(), t),
+		ExitCondition: "完成任务并写出可审计结果；如果遇到不可恢复阻塞，说明 blocker 后退出。",
 	}, nil
 }
 
@@ -520,6 +502,10 @@ func (r *Runtime) EmitCurrentTask(sys *systemd.AgentSystemd) error {
 	})
 	return nil
 }
+
+// =============================================================================
+// Runtime 内部 helper：session、MCP、task 选择和 prompt
+// =============================================================================
 
 func openMessageCtx(manager *agentctx.Manager, sessionID string, continueLast bool) (*agentctx.Context, string, error) {
 	if sessionID != "" {
@@ -602,6 +588,10 @@ func taskPrompt(taskPath string, t *task.Task) string {
 4. 完成后给出可写入执行报告的简短结果、证据和后续建议。`, taskPath, t.ID, t.Title, t.Status, t.Description)
 }
 
+// =============================================================================
+// 报告和 worklog 辅助：文件命名、渲染、路径清理
+// =============================================================================
+
 func (r *Runtime) writeReport(dir string, report *RunReport) (string, error) {
 	if dir == "" {
 		dir = filepath.Join(projectDataDir(r.ProjectDir), "reports")
@@ -644,15 +634,15 @@ func processLogTask(proc *systemd.AgentProcess) *task.Task {
 	if title == "" {
 		title = id
 	}
-	return &task.Task{ID: id, Title: title, Description: proc.Spec.Exit.Condition}
+	return &task.Task{ID: id, Title: title, Description: proc.Spec.ExitCondition}
 }
 
 func (r *Runtime) useProcessModel(proc *systemd.AgentProcess) func() {
-	if r == nil || r.Agent == nil || r.decisionModel == nil || !r.processForbidsTools(proc) {
+	if r == nil || r.Agent == nil || r.plainModel == nil || !r.processForbidsTools(proc) {
 		return func() {}
 	}
 	old := r.Agent.GetModel()
-	r.Agent.SetModel(r.decisionModel)
+	r.Agent.SetModel(r.plainModel)
 	return func() { r.Agent.SetModel(old) }
 }
 
@@ -738,12 +728,6 @@ func renderProcessReport(report *processReport) string {
 		status = "failed"
 		errText = "\n## Error\n\n```text\n" + report.Err.Error() + "\n```\n"
 	}
-	skills := make([]string, 0, len(report.Prompt.Skills))
-	for _, skill := range report.Prompt.Skills {
-		if skill.Name != "" {
-			skills = append(skills, skill.Name)
-		}
-	}
 	taskID := report.Source.ID
 	taskTitle := report.Source.Title
 	eventID := report.Source.EventID
@@ -757,7 +741,6 @@ func renderProcessReport(report *processReport) string {
 - started_at: %s
 - ended_at: %s
 - worklog: %s
-- skills: %s
 
 ## Exit Condition
 
@@ -766,7 +749,7 @@ func renderProcessReport(report *processReport) string {
 ## Agent Output
 
 %s
-%s`, report.ProcessID, taskID, taskTitle, eventID, status, report.StartedAt.Format(time.RFC3339), report.EndedAt.Format(time.RFC3339), report.WorkLog, strings.Join(skills, ", "), report.Exit.Condition, strings.TrimSpace(report.Response), errText)
+%s`, report.ProcessID, taskID, taskTitle, eventID, status, report.StartedAt.Format(time.RFC3339), report.EndedAt.Format(time.RFC3339), report.WorkLog, report.ExitCondition, strings.TrimSpace(report.Response), errText)
 }
 
 func safeName(raw string) string {
