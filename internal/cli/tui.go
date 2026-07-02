@@ -396,12 +396,12 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.ViewUp()
 			m.refreshView()
 			return m, nil
-		case "down", "j", "ctrl+n":
+		case "down", "ctrl+n":
 			m.viewport.LineDown(1)
 			m.autoScroll = m.viewport.AtBottom()
 			m.refreshView()
 			return m, nil
-		case "up", "k", "ctrl+p":
+		case "up", "ctrl+p":
 			m.autoScroll = false
 			m.viewport.LineUp(1)
 			m.refreshView()

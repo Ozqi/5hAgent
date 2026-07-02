@@ -147,7 +147,7 @@ type statusSnapshot struct {
 | `Ctrl+C` / 双 `Esc` | 退出 |
 | `PgUp` / `Ctrl+B` | 上滚 |
 | `PgDown` / `Ctrl+F` | 下滚 |
-| `↑/↓` 或 `j/k` | 行滚动 |
+| `↑/↓` 或 `Ctrl+P` / `Ctrl+N` | 行滚动 |
 | 鼠标滚轮 | 上下滚动历史记录 |
 
 ## 关键函数
