@@ -1,9 +1,0 @@
-[1m[35mminiAgent - Interactive Mode (Stage 1)[0m[0m
-[90mType your message and press Enter. Ctrl+C or Ctrl+D to exit.[0m
-
-[90m
-[思考中...][0m[[90m06:57:51[0m][[31m[1mERROR[0m][[35mLLM[0m] Stream failed: create new streaming message fail: POST "https://api.minimaxi.com/anthropic/v1/messages": 529  {"type":"error","error":{"type":"overloaded_error","message":"当前时段请求拥挤，极速版套餐可使用highspeed模型，享受更稳定的响应体验。https://platform.minimaxi.com/subscribe/token-plan (2064) (529)"},"request_id":"063652ef6fce29f519d837f183ccd33c"}
-                    [[90m06:57:51[0m][[31m[1mERROR[0m][[33mAGENT[0m] Error: LLM stream failed: create new streaming message fail: POST "https://api.minimaxi.com/anthropic/v1/messages": 529  {"type":"error","error":{"type":"overloaded_error","message":"当前时段请求拥挤，极速版套餐可使用highspeed模型，享受更稳定的响应体验。https://platform.minimaxi.com/subscribe/token-plan (2064) (529)"},"request_id":"063652ef6fce29f519d837f183ccd33c"}
-[31mError: agent error: LLM stream failed: create new streaming message fail: POST "https://api.minimaxi.com/anthropic/v1/messages": 529  {"type":"error","error":{"type":"overloaded_error","message":"当前时段请求拥挤，极速版套餐可使用highspeed模型，享受更稳定的响应体验。https://platform.minimaxi.com/subscribe/token-plan (2064) (529)"},"request_id":"063652ef6fce29f519d837f183ccd33c"}[0m
-[33m
-Goodbye![0m

@@ -1,4 +1,6 @@
-// Package commands 处理用户的斜杠命令
+// skill.go - /skill 命令处理
+// 功能：解析 /skill 命令（list/enable/disable），调用 skill.Manager
+// 导出函数：HandleSkill, listSkills, enableSkill, disableSkill
 package commands
 
 import (

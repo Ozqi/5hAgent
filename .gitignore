@@ -10,6 +10,8 @@ __pycache__/
 
 # Go
 5hagent
+!cmd/5hagent/
+!cmd/5hagent/**
 *.exe
 *.test
 *.out
@@ -19,6 +21,9 @@ __pycache__/
 
 # Workspace (SWE-bench test data)
 workspace/
+.worktrees/
+compact/
+testspace/swebench_pro/repos/
 
 # 5hAgent runtime data
 .5hagent/

@@ -1,8 +1,11 @@
+// edit.go - 文件编辑工具
+// 功能：精确字符串替换（old_string -> new_string），支持全部替换
+// 主要类型：EditInput, EditOutput
+// 导出函数：NewEditTool
 package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -29,7 +32,7 @@ type EditOutput struct {
 // NewEditTool creates a new edit tool for precise file editing
 func NewEditTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
-		"edit",
+		"base.edit",
 		"Edit a file by replacing exact string matches. REQUIRED: path (absolute file path), old_string (exact match), new_string (replacement). Returns the number of replacements made.",
 		func(ctx context.Context, input EditInput) (*schema.ToolResult, error) {
 			// Validate required parameters
@@ -53,54 +56,15 @@ func NewEditTool() (tool.EnhancedInvokableTool, error) {
 
 			// Check if old_string exists
 			if !strings.Contains(originalContent, input.OldString) {
-				output := EditOutput{
-					Success:      false,
-					Message:      fmt.Sprintf("old_string not found in file. The exact string you provided does not exist in '%s'. Make sure to match whitespace, indentation, and newlines exactly. Consider reading the file again to verify the exact content.", input.Path),
-					Replacements: 0,
-				}
-				outputJSON, _ := json.Marshal(output)
-				return &schema.ToolResult{
-					Parts: []schema.ToolOutputPart{
-						{
-							Type: schema.ToolPartTypeText,
-							Text: string(outputJSON),
-						},
-					},
-				}, nil
+				return JSONResult(EditOutput{Success: false, Message: fmt.Sprintf("old_string not found in %s", input.Path), Replacements: 0})
 			}
-
-			// Count occurrences
-			count := strings.Count(originalContent, input.OldString)
 
 			// Replace all occurrences
 			newContent := strings.ReplaceAll(originalContent, input.OldString, input.NewString)
-
-			// Write back to file
-			err = os.WriteFile(input.Path, []byte(newContent), 0644)
-			if err != nil {
+			if err := os.WriteFile(input.Path, []byte(newContent), 0644); err != nil {
 				return nil, fmt.Errorf("failed to write file: %w", err)
 			}
-
-			// Build output
-			output := EditOutput{
-				Success:      true,
-				Message:      fmt.Sprintf("Replaced %d occurrence(s)", count),
-				Replacements: count,
-			}
-
-			outputJSON, err := json.Marshal(output)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal output: %w", err)
-			}
-
-			return &schema.ToolResult{
-				Parts: []schema.ToolOutputPart{
-					{
-						Type: schema.ToolPartTypeText,
-						Text: string(outputJSON),
-					},
-				},
-			}, nil
+			return JSONResult(EditOutput{Success: true, Message: fmt.Sprintf("Replaced %d occurrence(s)", strings.Count(originalContent, input.OldString)), Replacements: strings.Count(originalContent, input.OldString)})
 		},
 	)
 }

@@ -1,8 +1,11 @@
+// write_file.go - 文件写入工具
+// 功能：创建或覆盖文件，自动创建父目录
+// 主要类型：WriteFileInput, WriteFileOutput
+// 导出函数：NewWriteFileTool
 package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,7 +31,7 @@ type WriteFileOutput struct {
 // NewWriteFileTool creates a new write_file tool using Eino's InferEnhancedTool
 func NewWriteFileTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
-		"write_file",
+		"base.write_file",
 		"Write content to a file at the specified path. Creates the file if it doesn't exist, or overwrites it if it does. Automatically creates parent directories if needed.",
 		func(ctx context.Context, input WriteFileInput) (*schema.ToolResult, error) {
 			// Validate input
@@ -46,33 +49,10 @@ func NewWriteFileTool() (tool.EnhancedInvokableTool, error) {
 			}
 
 			// Write file
-			err := os.WriteFile(input.Path, []byte(input.Content), 0644)
-			if err != nil {
-				return nil, fmt.Errorf("failed to write file '%s': %w", input.Path, err)
+			if err := os.WriteFile(input.Path, []byte(input.Content), 0644); err != nil {
+				return nil, fmt.Errorf("failed to write: %w", err)
 			}
-
-			// Build output
-			output := WriteFileOutput{
-				Success: true,
-				Message: fmt.Sprintf("Successfully wrote to %s", input.Path),
-				Bytes:   len(input.Content),
-			}
-
-			// Convert output to JSON string
-			outputJSON, err := json.Marshal(output)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal output: %w", err)
-			}
-
-			// Return as ToolResult with text part
-			return &schema.ToolResult{
-				Parts: []schema.ToolOutputPart{
-					{
-						Type: schema.ToolPartTypeText,
-						Text: string(outputJSON),
-					},
-				},
-			}, nil
+			return JSONResult(WriteFileOutput{Success: true, Message: fmt.Sprintf("Written to %s", input.Path), Bytes: len(input.Content)})
 		},
 	)
 }

@@ -1,8 +1,11 @@
+// glob.go - 文件模式匹配工具
+// 功能：支持 * 和 ** 通配符，递归/非递归搜索
+// 主要类型：GlobInput, GlobOutput
+// 导出函数：NewGlobTool, recursiveGlob
 package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,7 +32,7 @@ type GlobOutput struct {
 // NewGlobTool creates a new glob tool for file pattern matching
 func NewGlobTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
-		"glob",
+		"base.glob",
 		"Find files matching a glob pattern. Supports wildcards: * (any chars), ** (recursive dirs), ? (single char). Returns sorted list of matching file paths.",
 		func(ctx context.Context, input GlobInput) (*schema.ToolResult, error) {
 			// Set default path
@@ -58,27 +61,7 @@ func NewGlobTool() (tool.EnhancedInvokableTool, error) {
 
 			// Sort results
 			sort.Strings(matches)
-
-			// Build output
-			output := GlobOutput{
-				Files: matches,
-				Count: len(matches),
-			}
-
-			// Convert to JSON
-			outputJSON, err := json.Marshal(output)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal output: %w", err)
-			}
-
-			return &schema.ToolResult{
-				Parts: []schema.ToolOutputPart{
-					{
-						Type: schema.ToolPartTypeText,
-						Text: string(outputJSON),
-					},
-				},
-			}, nil
+			return JSONResult(GlobOutput{Files: matches, Count: len(matches)})
 		},
 	)
 }

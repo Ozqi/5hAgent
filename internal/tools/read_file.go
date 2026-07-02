@@ -1,9 +1,12 @@
+// read_file.go - 文件读取工具
+// 功能：按行读取文件，支持 offset/limit 范围指定
+// 主要类型：ReadFileInput, ReadFileOutput
+// 导出函数：NewReadFileTool
 package tools
 
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -28,7 +31,7 @@ type ReadFileOutput struct {
 // NewReadFileTool creates a new read_file tool using Eino's InferEnhancedTool
 func NewReadFileTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
-		"read_file",
+		"base.read_file",
 		"Read file content from the specified path. Returns the content and total line count. Supports reading specific line ranges using offset and limit parameters.",
 		func(ctx context.Context, input ReadFileInput) (*schema.ToolResult, error) {
 			// Validate path
@@ -88,32 +91,11 @@ func NewReadFileTool() (tool.EnhancedInvokableTool, error) {
 			}
 
 			// Build output
-			output := ReadFileOutput{
-				Content:    "",
-				TotalLines: totalLines,
-			}
-
-			// Format content with line numbers
+			output := ReadFileOutput{Content: "", TotalLines: totalLines}
 			for i, line := range lines {
-				lineNumber := input.Offset + i
-				output.Content += fmt.Sprintf("%d\t%s\n", lineNumber, line)
+				output.Content += fmt.Sprintf("%d\t%s\n", input.Offset+i, line)
 			}
-
-			// Convert output to JSON string
-			outputJSON, err := json.Marshal(output)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal output: %w", err)
-			}
-
-			// Return as ToolResult with text part
-			return &schema.ToolResult{
-				Parts: []schema.ToolOutputPart{
-					{
-						Type: schema.ToolPartTypeText,
-						Text: string(outputJSON),
-					},
-				},
-			}, nil
+			return JSONResult(output)
 		},
 	)
 }

@@ -1,8 +1,11 @@
+// list_dir.go - 目录列表工具
+// 功能：列出目录内容，支持递归；返回文件/目录名、路径、大小
+// 主要类型：ListDirInput, ListDirOutput, FileInfo
+// 导出函数：NewListDirTool
 package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,7 +39,7 @@ type ListDirOutput struct {
 // NewListDirTool creates a new list_dir tool for listing directory contents
 func NewListDirTool() (tool.EnhancedInvokableTool, error) {
 	return utils.InferEnhancedTool(
-		"list_dir",
+		"base.list_dir",
 		"List contents of a directory. Returns file names, paths, types (file/dir), and sizes. Supports recursive listing of subdirectories.",
 		func(ctx context.Context, input ListDirInput) (*schema.ToolResult, error) {
 			// Set default path
@@ -105,30 +108,8 @@ func NewListDirTool() (tool.EnhancedInvokableTool, error) {
 			}
 
 			// Sort by path
-			sort.Slice(files, func(i, j int) bool {
-				return files[i].Path < files[j].Path
-			})
-
-			// Build output
-			output := ListDirOutput{
-				Files: files,
-				Count: len(files),
-			}
-
-			// Convert to JSON
-			outputJSON, err := json.Marshal(output)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal output: %w", err)
-			}
-
-			return &schema.ToolResult{
-				Parts: []schema.ToolOutputPart{
-					{
-						Type: schema.ToolPartTypeText,
-						Text: string(outputJSON),
-					},
-				},
-			}, nil
+			sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+			return JSONResult(ListDirOutput{Files: files, Count: len(files)})
 		},
 	)
 }

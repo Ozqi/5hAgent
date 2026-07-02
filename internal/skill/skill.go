@@ -1,3 +1,7 @@
+// skill.go - 技能加载与管理
+// 功能：从 .5hagent/skills/*/SKILL.md 加载技能，支持启用/禁用
+// 主要类型：Skill, Manager
+// 导出函数：NewManager, LoadSkills, GetSkill, ListSkills, EnableSkill, DisableSkill
 package skill
 
 import (
@@ -142,10 +146,4 @@ func (m *Manager) DisableSkill(name string) error {
 	}
 	skill.Enabled = false
 	return nil
-}
-
-// InjectSkills 已废弃：技能现在作为独立消息注入，不再混入 system prompt
-// 保留此方法以保持向后兼容
-func (m *Manager) InjectSkills(basePrompt string) string {
-	return basePrompt
 }
