@@ -389,26 +389,32 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.autoScroll = m.viewport.AtBottom()
 			m.viewport.ViewDown()
 			m.autoScroll = m.viewport.AtBottom()
+			m.refreshView()
 			return m, nil
 		case "pgup", "ctrl+b":
 			m.autoScroll = false
 			m.viewport.ViewUp()
+			m.refreshView()
 			return m, nil
 		case "down", "j", "ctrl+n":
 			m.viewport.LineDown(1)
 			m.autoScroll = m.viewport.AtBottom()
+			m.refreshView()
 			return m, nil
 		case "up", "k", "ctrl+p":
 			m.autoScroll = false
 			m.viewport.LineUp(1)
+			m.refreshView()
 			return m, nil
 		case "end":
 			m.viewport.GotoBottom()
 			m.autoScroll = true
+			m.refreshView()
 			return m, nil
 		case "home":
 			m.viewport.GotoTop()
 			m.autoScroll = false
+			m.refreshView()
 			return m, nil
 		}
 	}
@@ -1282,21 +1288,35 @@ func stripANSI(text string) string {
 }
 
 func renderViewportPane(vp viewport.Model, content string) string {
+	width := max(1, vp.Width)
+	height := max(1, vp.Height)
+	var lines []string
 	if vp.TotalLineCount() <= vp.Height {
-		contentLines := strings.Split(content, "\n")
-		padTop := max(0, vp.Height-len(contentLines))
-		pad := make([]string, 0, padTop)
-		for len(pad) < padTop {
-			pad = append(pad, "")
+		lines = strings.Split(content, "\n")
+		for len(lines) < height {
+			lines = append([]string{""}, lines...)
 		}
-		contentLines = append(pad, contentLines...)
-		for len(contentLines) < vp.Height {
-			contentLines = append(contentLines, "")
-		}
-		return strings.Join(contentLines[:max(0, min(len(contentLines), vp.Height))], "\n")
+	} else {
+		lines = strings.Split(vp.View(), "\n")
 	}
-	contentLines := strings.Split(vp.View(), "\n")
-	return strings.Join(contentLines[:max(0, min(len(contentLines), vp.Height))], "\n")
+	return renderFixedLines(lines, width, height)
+}
+
+func renderFixedLines(lines []string, width int, height int) string {
+	fixed := make([]string, 0, height)
+	for i := 0; i < height; i++ {
+		line := ""
+		if i < len(lines) {
+			line = lines[i]
+		}
+		line = truncateMiddle(line, width)
+		padding := width - lipgloss.Width(line)
+		if padding > 0 {
+			line += strings.Repeat(" ", padding)
+		}
+		fixed = append(fixed, line)
+	}
+	return strings.Join(fixed, "\n")
 }
 
 func fallback(value string, defaultValue string) string {
