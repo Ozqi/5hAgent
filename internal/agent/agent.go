@@ -609,6 +609,15 @@ func (a *Agent) SetModel(model model.ToolCallingChatModel) {
 	a.model = model
 }
 
+// SetSystemPrompt 更新后续新会话注入的 system prompt。
+// 已存在消息的当前会话不会被重写，避免破坏历史上下文。
+func (a *Agent) SetSystemPrompt(prompt string) {
+	if a == nil || a.config == nil {
+		return
+	}
+	a.config.SystemPrompt = prompt
+}
+
 // GetModel 返回当前绑定的 LLM 模型
 // 返回: ToolCallingChatModel 实例，可能为 nil
 func (a *Agent) GetModel() model.ToolCallingChatModel {
@@ -647,6 +656,15 @@ func (a *Agent) TokenUsage() (used int, limit int) {
 		return 0, 0
 	}
 	return a.tokenBudget.Usage()
+}
+
+// CurrentTurn 返回当前 ReAct 轮次。
+// 空闲时表示最近一次运行停留的轮次；TUI 只把它作为运行时元信息展示。
+func (a *Agent) CurrentTurn() int {
+	if a == nil || a.state == nil {
+		return 0
+	}
+	return a.state.CurrentTurn
 }
 
 // 初始化，注入系统提示词，注入skill提示词。

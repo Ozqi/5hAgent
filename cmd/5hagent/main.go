@@ -86,7 +86,10 @@ func runTUI(cmd *cobra.Command, args []string) {
 		}
 		return result.Summary(), err
 	}
-	if err := cli.LaunchTUI(ctx, rt.Agent, rt.ModelName, rt.PromptDir, rt.TaskList, rt.Agent.GetSkillManager(), rt.CtxManager, rt.MessageCtx, rt.SessionID, runTasks); err != nil {
+	switchModel := func(ctx context.Context, ref string) (string, error) {
+		return rt.SwitchModel(ctx, ref)
+	}
+	if err := cli.LaunchTUI(ctx, rt.Agent, rt.ModelName, rt.PromptDir, rt.TaskList, rt.Agent.GetSkillManager(), rt.CtxManager, rt.MessageCtx, rt.SessionID, runTasks, switchModel); err != nil {
 		cli.PrintError(fmt.Errorf("tui error: %w", err))
 		os.Exit(1)
 	}

@@ -25,6 +25,7 @@ func TestRunCommandStartsTaskRunner(t *testing.T) {
 			called = true
 			return "Run completed: 1 task(s)", nil
 		},
+		nil,
 	)
 	cmd := model.handleRunCommand("/run")
 	if cmd == nil {
@@ -47,5 +48,64 @@ func TestRunCommandStartsTaskRunner(t *testing.T) {
 	}
 	if !strings.Contains(done.summary, "Run completed") {
 		t.Fatalf("summary = %q, want run summary", done.summary)
+	}
+}
+
+func TestModelCommandSwitchesModel(t *testing.T) {
+	var gotRef string
+	model := NewAppModel(
+		context.Background(),
+		nil,
+		"old-model",
+		"",
+		nil,
+		nil,
+		nil,
+		nil,
+		"test-session",
+		nil,
+		func(ctx context.Context, ref string) (string, error) {
+			gotRef = ref
+			return "gpt-5.5", nil
+		},
+	)
+
+	cmd := model.handleModelCommand("/model mira/gpt-5.5")
+	if cmd != nil {
+		t.Fatalf("handleModelCommand() cmd = %v, want nil", cmd)
+	}
+	if gotRef != "mira/gpt-5.5" {
+		t.Fatalf("model ref = %q, want mira/gpt-5.5", gotRef)
+	}
+	if model.modelName != "gpt-5.5" {
+		t.Fatalf("modelName = %q, want gpt-5.5", model.modelName)
+	}
+	if len(model.entries) == 0 || !strings.Contains(model.entries[len(model.entries)-1].Content, "Switched model") {
+		t.Fatalf("entries = %+v, want switched message", model.entries)
+	}
+}
+
+func TestModelCommandShowsUsage(t *testing.T) {
+	model := NewAppModel(
+		context.Background(),
+		nil,
+		"old-model",
+		"",
+		nil,
+		nil,
+		nil,
+		nil,
+		"test-session",
+		nil,
+		nil,
+	)
+
+	model.handleModelCommand("/model")
+	if len(model.entries) == 0 {
+		t.Fatal("entries empty, want usage")
+	}
+	got := model.entries[len(model.entries)-1].Content
+	if !strings.Contains(got, "usage: /model <provider/model>") || !strings.Contains(got, "mira/gpt-5.4") {
+		t.Fatalf("usage = %q, want model examples", got)
 	}
 }

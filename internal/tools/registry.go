@@ -10,6 +10,7 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/schema"
 	"github.com/lzq/5hAgent/internal/mcp"
 	"github.com/lzq/5hAgent/internal/skill"
 	"github.com/lzq/5hAgent/internal/task"
@@ -122,6 +123,23 @@ func (r *Registry) All() []tool.BaseTool {
 	return tools
 }
 
+func (r *Registry) ToolInfos(ctx context.Context) ([]*schema.ToolInfo, error) {
+	r.mu.RLock()
+	tools := make([]tool.BaseTool, len(r.tools))
+	copy(tools, r.tools)
+	r.mu.RUnlock()
+
+	infos := make([]*schema.ToolInfo, 0, len(tools))
+	for _, t := range tools {
+		info, err := t.Info(ctx)
+		if err != nil {
+			return nil, err
+		}
+		infos = append(infos, info)
+	}
+	return infos, nil
+}
+
 // GetToolByName returns a tool by its name, or nil if not found
 func GetToolByName(name string) tool.BaseTool {
 	ensureRegistry()
@@ -158,6 +176,21 @@ func (r *Registry) RegisterContextTool(llm model.ToolCallingChatModel, promptDir
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.tools = append(r.tools, NewContextTool(llm, promptDir))
+	r.registerMeta(toolmeta.Meta{Category: toolmeta.CategoryContext, Source: "local", DisplayName: "context", FullName: "context.context", OriginalName: "context"})
+}
+
+func (r *Registry) ReplaceContextTool(llm model.ToolCallingChatModel, promptDir string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	filtered := r.tools[:0]
+	for _, t := range r.tools {
+		info, err := t.Info(context.Background())
+		if err == nil && info.Name == "context.context" {
+			continue
+		}
+		filtered = append(filtered, t)
+	}
+	r.tools = append(filtered, NewContextTool(llm, promptDir))
 	r.registerMeta(toolmeta.Meta{Category: toolmeta.CategoryContext, Source: "local", DisplayName: "context", FullName: "context.context", OriginalName: "context"})
 }
 

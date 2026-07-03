@@ -220,22 +220,12 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	toolRegistry.RegisterContextTool(client.GetModel(), promptDir)
 	mcpClients := startMCPServers(ctx, toolRegistry)
 
-	allTools := toolRegistry.All()
-	toolInfos := make([]*schema.ToolInfo, 0, len(allTools))
-	for _, t := range allTools {
-		info, err := t.Info(ctx)
-		if err != nil {
-			logger.WarnTag("TOOL", "skip tool info: %v", err)
-			continue
-		}
-		toolInfos = append(toolInfos, info)
-	}
-	modelWithTools, err := client.GetModel().WithTools(toolInfos)
+	modelWithTools, err := bindTools(ctx, client.GetModel(), toolRegistry)
 	if err != nil {
 		return nil, fmt.Errorf("bind tools: %w", err)
 	}
 	ag.SetModel(modelWithTools)
-	ag.SetTools(allTools)
+	ag.SetTools(toolRegistry.All())
 
 	return &Runtime{
 		Agent:        ag,
@@ -250,6 +240,55 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		plainModel:   client.GetModel(),
 		mcpClients:   mcpClients,
 	}, nil
+}
+
+// SwitchModel 在当前 Runtime 内切换 provider/model，并重新绑定当前工具集合。
+// 参数：modelRef 使用 provider/model 格式，例如 mira/gpt-5.4。
+// 边界：不改写 .env，不重写当前会话已有 system prompt；新会话会使用新模型 prefix。
+func (r *Runtime) SwitchModel(ctx context.Context, modelRef string) (string, error) {
+	appConfig, err := utils.LoadConfigWithOptions(utils.LoadConfigOptions{ModelRef: modelRef})
+	if err != nil {
+		return "", fmt.Errorf("load model config: %w", err)
+	}
+	llmConfig := &llm.Config{
+		Provider:             appConfig.LLM.Provider,
+		APIKey:               appConfig.LLM.APIKey,
+		BaseURL:              appConfig.LLM.BaseURL,
+		Model:                appConfig.LLM.Model,
+		MaxTokens:            appConfig.LLM.MaxTokens,
+		ThinkingBudgetTokens: appConfig.LLM.ThinkingBudgetTokens,
+	}
+	client, err := llm.NewClient(ctx, llmConfig)
+	if err != nil {
+		return "", fmt.Errorf("create LLM client: %w", err)
+	}
+	promptProvider := appConfig.LLM.Provider
+	if appConfig.LLM.Supplier != "" {
+		promptProvider = appConfig.LLM.Supplier
+	}
+	systemPrompt, err := utils.LoadSystemPrompt(r.PromptDir, promptProvider, appConfig.LLM.Model)
+	if err != nil {
+		return "", fmt.Errorf("load system prompt: %w", err)
+	}
+	r.ToolRegistry.ReplaceContextTool(client.GetModel(), r.PromptDir)
+	modelWithTools, err := bindTools(ctx, client.GetModel(), r.ToolRegistry)
+	if err != nil {
+		return "", fmt.Errorf("bind tools: %w", err)
+	}
+	r.Agent.SetModel(modelWithTools)
+	r.Agent.SetTools(r.ToolRegistry.All())
+	r.Agent.SetSystemPrompt(systemPrompt)
+	r.ModelName = llmConfig.Model
+	r.plainModel = client.GetModel()
+	return r.ModelName, nil
+}
+
+func bindTools(ctx context.Context, m model.ToolCallingChatModel, registry *tools.Registry) (model.ToolCallingChatModel, error) {
+	toolInfos, err := registry.ToolInfos(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return m.WithTools(toolInfos)
 }
 
 // NewInMemory 初始化不绑定 session store 的 Runtime。

@@ -138,6 +138,7 @@ type statusSnapshot struct {
 | `/compress` | 上下文压缩 |
 | `/mcp <args>` | MCP 服务器管理 |
 | `/session <args>` | 会话管理 |
+| `/model <provider/model>` | 切换当前 TUI runtime 使用的模型，不改写 `.env` |
 
 ## 快捷键
 
@@ -154,11 +155,12 @@ type statusSnapshot struct {
 
 | 函数 | 说明 |
 |------|------|
-| `LaunchTUI(ctx, ag, model, taskList, skillMgr, ctxManager, messageCtx, runTasks)` | 启动 TUI |
+| `LaunchTUI(ctx, ag, model, taskList, skillMgr, ctxManager, messageCtx, runTasks, switchModel)` | 启动 TUI |
 | `NewAppModel(...)` | 创建模型 |
 | `Update(msg)` | 处理消息 |
 | `View()` | 渲染界面 |
 | `submit()` | 提交输入 |
+| `handleModelCommand()` | 处理 `/model` 并调用 runtime 切换模型 |
 | `handleRunCommand()` | 处理 `/run` 并调用 runtime 连续执行任务 |
 | `runAgent()` | 运行 Agent |
 | `snapshot()` | 生成状态快照 |

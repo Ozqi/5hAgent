@@ -49,6 +49,13 @@ AGENT_CONTEXT_AUTO_COMPRESS=true
 5hagent --llm-model claude-opus-4-6 run
 ```
 
+TUI 内可用 `/model provider/model` 临时切换当前 runtime 模型，不改写 `~/.5hAgent/.env`：
+
+```text
+/model
+/model mira/gpt-5.5
+```
+
 ### 使用本地 Ollama
 
 如果想先用本地模型跑通 baseline，可安装 Ollama 并拉取一个模型：
