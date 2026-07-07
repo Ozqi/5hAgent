@@ -114,6 +114,7 @@ type AppModel struct {
 	runTasks    RunTasksFunc
 	switchModel SwitchModelFunc
 	ctx         context.Context
+	runCancel   context.CancelFunc
 
 	width  int
 	height int
@@ -224,6 +225,7 @@ var slashCommandHints = []slashCommandHint{
 	{Name: "/mcp", Usage: "/mcp <list|add|remove|enable|disable>", Desc: "mcp servers"},
 	{Name: "/session", Usage: "/session <new|list|switch|save|drop>", Desc: "sessions"},
 	{Name: "/run", Usage: "/run", Desc: "run task.md until no pending tasks"},
+	{Name: "/stop", Usage: "/stop", Desc: "stop current run"},
 	{Name: "/model", Usage: "/model <provider/model>", Desc: "mira/gpt-5.4, mira/gpt-5.5, mira/glm-5.2"},
 }
 
@@ -363,6 +365,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshView()
 		return m, nil
 	case assistantTokenMsg:
+		if !m.busy {
+			return m, nil
+		}
 		if m.currentAssistant == -1 || m.currentAssistant >= len(m.entries) || m.entries[m.currentAssistant].Role != roleAssistant {
 			m.entries = append(m.entries, conversationEntry{Role: roleAssistant, Content: msg.token})
 			m.currentAssistant = len(m.entries) - 1
@@ -373,6 +378,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshView()
 		return m, tickSpinner()
 	case assistantThinkingMsg:
+		if !m.busy {
+			return m, nil
+		}
 		if len(m.entries) > 0 && m.entries[len(m.entries)-1].Role == roleThinking {
 			m.entries[len(m.entries)-1].Content += msg.token
 		} else {
@@ -542,6 +550,9 @@ func (m *AppModel) submit() tea.Cmd {
 	if text == "" {
 		return nil
 	}
+	if fields := strings.Fields(text); len(fields) > 0 && fields[0] == "/stop" {
+		return m.handleStopCommand(text)
+	}
 	if m.busy {
 		m.currentStatus = "busy"
 		return nil
@@ -627,9 +638,11 @@ func (m *AppModel) submit() tea.Cmd {
 	m.busy = true
 	m.currentStatus = "thinking"
 	m.currentAssistant = -1
+	runCtx, cancel := context.WithCancel(m.ctx)
+	m.runCancel = cancel
 	m.refreshView()
 
-	go m.runAgent(text)
+	go m.runAgent(runCtx, cancel, text)
 	return tickSpinner()
 }
 
@@ -731,16 +744,40 @@ func (m *AppModel) handleRunCommand(text string) tea.Cmd {
 	})
 }
 
-func (m *AppModel) runAgent(input string) {
+func (m *AppModel) handleStopCommand(text string) tea.Cmd {
+	m.input.Reset()
+	if !m.busy || m.runCancel == nil {
+		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "no active run"})
+		m.refreshView()
+		return nil
+	}
+	m.runCancel()
+	m.runCancel = nil
+	m.busy = false
+	m.currentAssistant = -1
+	m.currentStatus = "stopped"
+	m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "stopped current run"})
+	m.refreshView()
+	return nil
+}
+
+func (m *AppModel) runAgent(runCtx context.Context, cancel context.CancelFunc, input string) {
 	if m.program == nil {
 		return
 	}
-	_, err := m.ag.RunStream(m.ctx, m.messageCtx, input, func(token string) {
+	defer func() {
+		m.runCancel = nil
+		cancel()
+	}()
+	_, err := m.ag.RunStream(runCtx, m.messageCtx, input, func(token string) {
 		m.program.Send(assistantTokenMsg{token: token})
 	}, func(token string) {
 		m.program.Send(assistantThinkingMsg{token: token})
 	})
 	if err != nil {
+		if runCtx.Err() != nil {
+			return
+		}
 		m.program.Send(assistantErrorMsg{err: err})
 		return
 	}

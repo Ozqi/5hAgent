@@ -113,6 +113,53 @@ func TestModelCommandShowsUsage(t *testing.T) {
 	}
 }
 
+func TestStopCommandCancelsActiveRun(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	model := NewAppModel(context.Background(), nil, "test-model", "", nil, nil, nil, nil, "test-session", nil, nil)
+	model.busy = true
+	model.runCancel = cancel
+	model.input.SetValue("/stop")
+
+	if cmd := model.submit(); cmd != nil {
+		t.Fatalf("submit(/stop) cmd = %v, want nil", cmd)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("run context was not canceled")
+	}
+	if model.busy {
+		t.Fatal("busy = true, want false after stop")
+	}
+	if model.currentStatus != "stopped" {
+		t.Fatalf("currentStatus = %q, want stopped", model.currentStatus)
+	}
+	if len(model.entries) == 0 || !strings.Contains(model.entries[len(model.entries)-1].Content, "stopped current run") {
+		t.Fatalf("entries = %#v, want stop message", model.entries)
+	}
+}
+
+func TestStopCommandReportsNoActiveRun(t *testing.T) {
+	model := NewAppModel(context.Background(), nil, "test-model", "", nil, nil, nil, nil, "test-session", nil, nil)
+	model.input.SetValue("/stop")
+
+	if cmd := model.submit(); cmd != nil {
+		t.Fatalf("submit(/stop) cmd = %v, want nil", cmd)
+	}
+	if len(model.entries) == 0 || !strings.Contains(model.entries[len(model.entries)-1].Content, "no active run") {
+		t.Fatalf("entries = %#v, want no active run message", model.entries)
+	}
+}
+
+func TestAssistantTokenIgnoredAfterStop(t *testing.T) {
+	model := NewAppModel(context.Background(), nil, "test-model", "", nil, nil, nil, nil, "test-session", nil, nil)
+	model.busy = false
+
+	updated, _ := model.Update(assistantTokenMsg{token: "late"})
+	model = updated.(*AppModel)
+	if len(model.entries) != 0 {
+		t.Fatalf("entries = %#v, want no late assistant token", model.entries)
+	}
+}
+
 func TestLoadHistoryEntriesCompactsToolResults(t *testing.T) {
 	mgr := agentctx.NewManager()
 	ctx, err := mgr.CreateContext("")
