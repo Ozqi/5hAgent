@@ -285,6 +285,7 @@ func loadHistoryEntries(ctxManager *agentctx.Manager, messageCtx *agentctx.Conte
 	}
 
 	entries := make([]conversationEntry, 0, len(messages))
+	toolEntries := make(map[string]int)
 	for _, msg := range messages {
 		var r string
 		switch msg.Role {
@@ -294,11 +295,34 @@ func loadHistoryEntries(ctxManager *agentctx.Manager, messageCtx *agentctx.Conte
 			if msg.ReasoningContent != "" {
 				entries = append(entries, conversationEntry{Role: roleThinking, Content: msg.ReasoningContent})
 			}
+			for _, tc := range msg.ToolCalls {
+				name := fallback(tools.DisplayName(tc.Function.Name), tc.Function.Name)
+				entry := conversationEntry{
+					Role:      roleHint,
+					ToolName:  name,
+					ToolArgs:  formatToolArgsSummary(tc.Function.Arguments),
+					ToolKey:   toolEventKey(tc.Function.Name, tc.Function.Arguments),
+					ToolState: "done",
+				}
+				entries = append(entries, entry)
+				if tc.ID != "" {
+					toolEntries[tc.ID] = len(entries) - 1
+				}
+			}
+			if msg.Content == "" {
+				continue
+			}
 			r = roleAssistant
 		case schema.System:
 			r = roleSystem
 		case schema.Tool:
-			r = roleTool
+			output := compactOutputLines(strings.Split(msg.Content, "\n"), 4)
+			if idx, ok := toolEntries[msg.ToolCallID]; ok {
+				entries[idx].ToolOutput = output
+				continue
+			}
+			entries = append(entries, conversationEntry{Role: roleHint, ToolName: fallback(msg.ToolName, "tool"), ToolState: "done", ToolOutput: output})
+			continue
 		default:
 			continue
 		}

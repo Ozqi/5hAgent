@@ -7,6 +7,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/cloudwego/eino/schema"
+	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/logger"
 )
 
@@ -108,6 +110,40 @@ func TestModelCommandShowsUsage(t *testing.T) {
 	got := model.entries[len(model.entries)-1].Content
 	if !strings.Contains(got, "usage: /model <provider/model>") || !strings.Contains(got, "mira/gpt-5.4") {
 		t.Fatalf("usage = %q, want model examples", got)
+	}
+}
+
+func TestLoadHistoryEntriesCompactsToolResults(t *testing.T) {
+	mgr := agentctx.NewManager()
+	ctx, err := mgr.CreateContext("")
+	if err != nil {
+		t.Fatalf("CreateContext() error = %v", err)
+	}
+	if err := mgr.AddMessage(ctx, &schema.Message{
+		Role: schema.Assistant,
+		ToolCalls: []schema.ToolCall{{
+			ID: "call_1",
+			Function: schema.FunctionCall{
+				Name:      "base.read_file",
+				Arguments: `{"path":".5hagent/task.md","limit":800}`,
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("AddMessage(assistant) error = %v", err)
+	}
+	if err := mgr.AddMessage(ctx, schema.ToolMessage("line 1\nline 2\nline 3\nline 4\nline 5", "call_1")); err != nil {
+		t.Fatalf("AddMessage(tool) error = %v", err)
+	}
+
+	entries := loadHistoryEntries(mgr, ctx)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %#v, want one compact tool entry", entries)
+	}
+	if entries[0].Role != roleHint || entries[0].ToolName != "read_file" {
+		t.Fatalf("entry = %#v, want compact read_file hint", entries[0])
+	}
+	if !strings.Contains(entries[0].ToolOutput, "...") {
+		t.Fatalf("tool output = %q, want compact ellipsis", entries[0].ToolOutput)
 	}
 }
 
