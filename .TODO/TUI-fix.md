@@ -25,6 +25,10 @@
 
    **确定结论**：高概率是恢复旧 session 时，历史消息里保存的是旧 system prompt 或旧工具文本块；`ensureConversationSetup` 发现已有消息后不会替换 system prompt。这是 session 兼容问题，不应靠删除 `tui.md` 解决。后续应单独设计“恢复旧 session 时是否迁移/标记旧 system prompt”。
 
+   **实现状态**：已实现历史工具结果压缩恢复。`loadHistoryEntries` 会把 assistant tool call 与后续 tool result 合并成压缩的工具提示，不再把旧 `schema.Tool` 消息按完整文本展开。
+
 4. 每条消息都应该标明发出时间， worklog也要做到这一点，可能需要新增字段啥的
 
    **确定结论**：需要新增消息元数据或在持久化层补 `created_at`，不是纯渲染改动。当前 `Session` JSONL 只保存 role/content/tool_calls/tool_call_id/tool_name，缺少单消息时间字段；worklog 也需要统一事件时间。后续应作为独立提交实现，避免和本次工具展示改动混在一起。
+
+   **实现状态**：已实现。Session JSONL 为每条消息写入 `created_at` 并同步到 `schema.Message.Extra`；TUI 历史/实时消息显示时间；headless worklog 的 Assistant、Tool Event、Status 段落标题带时间。

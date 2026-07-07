@@ -98,7 +98,7 @@ func (l *headlessWorkLog) End(runErr error) {
 			}
 			fmt.Fprintf(os.Stdout, "status: failed (%v)\n", runErr)
 		}
-		l.writeFileString(fmt.Sprintf("\n## Status\n\nfailed: %v\n", runErr))
+		l.writeFileString(fmt.Sprintf("\n## Status %s\n\nfailed: %v\n", worklogTime(), runErr))
 		l.Stop()
 		return
 	}
@@ -108,7 +108,7 @@ func (l *headlessWorkLog) End(runErr error) {
 		}
 		fmt.Fprintln(os.Stdout, "status: completed")
 	}
-	l.writeFileString("\n## Status\n\ncompleted\n")
+	l.writeFileString(fmt.Sprintf("\n## Status %s\n\ncompleted\n", worklogTime()))
 	l.Stop()
 }
 
@@ -149,7 +149,7 @@ func (l *headlessWorkLog) printToolEvent(event logger.ToolEvent) {
 	if l.console {
 		fmt.Fprintln(os.Stdout, text)
 	}
-	l.writeFileString("\n## Tool Event\n\n```text\n")
+	l.writeFileString(fmt.Sprintf("\n## Tool Event %s\n\n```text\n", worklogTime()))
 	l.writeFileString(stripANSI(text))
 	l.writeFileString("\n```\n")
 }
@@ -203,7 +203,7 @@ func (l *headlessWorkLog) ensureFileAssistantHeader() {
 	if l.file == nil || l.fileInAssistant {
 		return
 	}
-	l.writeFileString("## Assistant\n\n")
+	l.writeFileString(fmt.Sprintf("## Assistant %s\n\n", worklogTime()))
 	l.fileInAssistant = true
 }
 
@@ -220,4 +220,8 @@ var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func stripANSI(text string) string {
 	return ansiPattern.ReplaceAllString(text, "")
+}
+
+func worklogTime() string {
+	return time.Now().UTC().Format(time.RFC3339)
 }

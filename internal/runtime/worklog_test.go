@@ -76,14 +76,14 @@ func TestHeadlessWorkLogPrintsTokensAndToolEvents(t *testing.T) {
 		"- agent: Demo Agent",
 		"- task: demo",
 		"- title: Demo task",
-		"## Assistant",
+		"## Assistant ",
 		"hello",
-		"## Tool Event",
+		"## Tool Event ",
 		"read_file",
 		"path: README.md",
 		"total lines",
 		"done",
-		"## Status",
+		"## Status ",
 		"completed",
 	} {
 		if !strings.Contains(string(content), want) {

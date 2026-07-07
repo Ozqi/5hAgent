@@ -120,7 +120,8 @@ func TestLoadHistoryEntriesCompactsToolResults(t *testing.T) {
 		t.Fatalf("CreateContext() error = %v", err)
 	}
 	if err := mgr.AddMessage(ctx, &schema.Message{
-		Role: schema.Assistant,
+		Role:  schema.Assistant,
+		Extra: map[string]any{"created_at": "2026-07-07T01:02:03Z"},
 		ToolCalls: []schema.ToolCall{{
 			ID: "call_1",
 			Function: schema.FunctionCall{
@@ -142,8 +143,19 @@ func TestLoadHistoryEntriesCompactsToolResults(t *testing.T) {
 	if entries[0].Role != roleHint || entries[0].ToolName != "read_file" {
 		t.Fatalf("entry = %#v, want compact read_file hint", entries[0])
 	}
+	if entries[0].CreatedAt != "2026-07-07T01:02:03Z" {
+		t.Fatalf("entry created_at = %q", entries[0].CreatedAt)
+	}
 	if !strings.Contains(entries[0].ToolOutput, "...") {
 		t.Fatalf("tool output = %q, want compact ellipsis", entries[0].ToolOutput)
+	}
+}
+
+func TestRenderConversationEntryShowsCreatedAt(t *testing.T) {
+	model := NewAppModel(context.Background(), nil, "test-model", "", nil, nil, nil, nil, "test-session", nil, nil)
+	rendered := stripANSI(model.renderConversationEntry(conversationEntry{Role: roleAssistant, Content: "hello", CreatedAt: "manual-time"}, 80))
+	if !strings.Contains(rendered, "manual-time") {
+		t.Fatalf("rendered = %q, want created_at label", rendered)
 	}
 }
 

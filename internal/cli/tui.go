@@ -49,12 +49,20 @@ const (
 type conversationEntry struct {
 	Role        string
 	Content     string
+	CreatedAt   string
 	ToolName    string
 	ToolArgs    string
 	ToolKey     string
 	ToolState   string
 	ToolOutput  string
 	SystemTitle string
+}
+
+func entryNow(entry conversationEntry) conversationEntry {
+	if entry.CreatedAt == "" {
+		entry.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	return entry
 }
 
 type statusSnapshot struct {
@@ -293,12 +301,13 @@ func loadHistoryEntries(ctxManager *agentctx.Manager, messageCtx *agentctx.Conte
 			r = roleUser
 		case schema.Assistant:
 			if msg.ReasoningContent != "" {
-				entries = append(entries, conversationEntry{Role: roleThinking, Content: msg.ReasoningContent})
+				entries = append(entries, conversationEntry{Role: roleThinking, Content: msg.ReasoningContent, CreatedAt: messageCreatedAt(msg)})
 			}
 			for _, tc := range msg.ToolCalls {
 				name := fallback(tools.DisplayName(tc.Function.Name), tc.Function.Name)
 				entry := conversationEntry{
 					Role:      roleHint,
+					CreatedAt: messageCreatedAt(msg),
 					ToolName:  name,
 					ToolArgs:  formatToolArgsSummary(tc.Function.Arguments),
 					ToolKey:   toolEventKey(tc.Function.Name, tc.Function.Arguments),
@@ -321,14 +330,24 @@ func loadHistoryEntries(ctxManager *agentctx.Manager, messageCtx *agentctx.Conte
 				entries[idx].ToolOutput = output
 				continue
 			}
-			entries = append(entries, conversationEntry{Role: roleHint, ToolName: fallback(msg.ToolName, "tool"), ToolState: "done", ToolOutput: output})
+			entries = append(entries, conversationEntry{Role: roleHint, CreatedAt: messageCreatedAt(msg), ToolName: fallback(msg.ToolName, "tool"), ToolState: "done", ToolOutput: output})
 			continue
 		default:
 			continue
 		}
-		entries = append(entries, conversationEntry{Role: r, Content: msg.Content})
+		entries = append(entries, conversationEntry{Role: r, Content: msg.Content, CreatedAt: messageCreatedAt(msg)})
 	}
 	return entries
+}
+
+func messageCreatedAt(msg *schema.Message) string {
+	if msg == nil || msg.Extra == nil {
+		return ""
+	}
+	if v, ok := msg.Extra["created_at"].(string); ok {
+		return v
+	}
+	return ""
 }
 
 func (m *AppModel) Init() tea.Cmd {
@@ -818,7 +837,11 @@ func (m *AppModel) refreshView() {
 	contentWidth := max(8, m.viewport.Width)
 	stickToBottom := m.autoScroll || m.viewport.AtBottom() || m.viewport.TotalLineCount() <= m.viewport.Height
 	parts := make([]string, 0, len(m.entries))
-	for _, entry := range m.entries {
+	for i := range m.entries {
+		if m.entries[i].CreatedAt == "" {
+			m.entries[i] = entryNow(m.entries[i])
+		}
+		entry := m.entries[i]
 		parts = append(parts, m.renderConversationEntry(entry, contentWidth))
 	}
 	if len(parts) == 0 {
@@ -1327,21 +1350,39 @@ func (m *AppModel) renderConversationEntry(entry conversationEntry, width int) s
 	switch entry.Role {
 	case roleUser:
 		body := compactParagraph(strings.TrimSpace(entry.Content))
-		return renderUserEntry(body, width)
+		return withEntryTime(entry, renderUserEntry(body, width))
 	case roleAssistant:
 		content := strings.TrimRight(renderMarkdownForTerminal(normalizeAssistantContent(entry.Content), true), "\n")
-		return wrapVisibleText(content, max(8, width))
+		return withEntryTime(entry, wrapVisibleText(content, max(8, width)))
 	case roleHint:
-		return m.renderToolHintEntry(entry, width)
+		return withEntryTime(entry, m.renderToolHintEntry(entry, width))
 	case roleThinking:
-		return renderThinkingEntry(entry.Content, width)
+		return withEntryTime(entry, renderThinkingEntry(entry.Content, width))
 	case roleTool:
-		return renderToolEntry(entry.Content, width)
+		return withEntryTime(entry, renderToolEntry(entry.Content, width))
 	case roleSystem:
-		return renderSystemEntry(entry.SystemTitle, entry.Content, width)
+		return withEntryTime(entry, renderSystemEntry(entry.SystemTitle, entry.Content, width))
 	default:
-		return wrapVisibleText(strings.TrimSpace(entry.Content), width)
+		return withEntryTime(entry, wrapVisibleText(strings.TrimSpace(entry.Content), width))
 	}
+}
+
+func withEntryTime(entry conversationEntry, rendered string) string {
+	label := entryTimeLabel(entry.CreatedAt)
+	if label == "" || strings.TrimSpace(stripANSI(rendered)) == "" {
+		return rendered
+	}
+	return lipgloss.NewStyle().Foreground(colorMuted).Faint(true).Render(label) + "\n" + rendered
+}
+
+func entryTimeLabel(createdAt string) string {
+	if createdAt == "" {
+		return ""
+	}
+	if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+		return t.Local().Format("15:04:05")
+	}
+	return createdAt
 }
 
 func renderSystemEntry(title string, content string, width int) string {

@@ -44,6 +44,7 @@ type sessionFileEntry struct {
 	ToolCalls  []schema.ToolCall `json:"tool_calls,omitempty"`        // assistant 发起的工具调用
 	ToolCallID string            `json:"tool_call_id,omitempty"`      // tool result 对应的调用 ID
 	ToolName   string            `json:"tool_name,omitempty"`         // tool result 对应的工具名
+	Extra      map[string]any    `json:"extra,omitempty"`             // 消息附加元数据
 }
 
 // NewStore 创建或打开会话存储
@@ -179,6 +180,7 @@ func (s *Store) GetLatestID() (string, error) {
 //
 // 返回: 可能的错误
 func (s *Store) Append(session *Session, msg *schema.Message) error {
+	ensureMessageCreatedAt(msg, time.Now().UTC())
 	session.messages = append(session.messages, msg)
 	session.UpdatedAt = time.Now().UTC()
 	session.dirty = true
@@ -239,6 +241,7 @@ func (s *Store) saveToFile(session *Session) error {
 
 	// 添加消息
 	for _, msg := range session.messages {
+		ensureMessageCreatedAt(msg, session.UpdatedAt)
 		entry := sessionFileEntry{
 			Role:       string(msg.Role),
 			Content:    msg.Content,
@@ -246,6 +249,8 @@ func (s *Store) saveToFile(session *Session) error {
 			ToolCalls:  msg.ToolCalls,
 			ToolCallID: msg.ToolCallID,
 			ToolName:   msg.ToolName,
+			CreatedAt:  messageCreatedAt(msg),
+			Extra:      msg.Extra,
 		}
 		entries = append(entries, entry)
 	}
@@ -306,6 +311,13 @@ func (s *Store) parseMessages(data []byte) ([]*schema.Message, error) {
 }
 
 func messageFromEntry(entry sessionFileEntry) *schema.Message {
+	extra := entry.Extra
+	if extra == nil {
+		extra = make(map[string]any)
+	}
+	if entry.CreatedAt != "" {
+		extra["created_at"] = entry.CreatedAt
+	}
 	return &schema.Message{
 		Role:             parseRole(entry.Role),
 		Content:          entry.Content,
@@ -313,7 +325,34 @@ func messageFromEntry(entry sessionFileEntry) *schema.Message {
 		ToolCalls:        entry.ToolCalls,
 		ToolCallID:       entry.ToolCallID,
 		ToolName:         entry.ToolName,
+		Extra:            extra,
 	}
+}
+
+func ensureMessageCreatedAt(msg *schema.Message, fallback time.Time) {
+	if msg == nil {
+		return
+	}
+	if msg.Extra == nil {
+		msg.Extra = make(map[string]any)
+	}
+	if _, ok := msg.Extra["created_at"]; ok {
+		return
+	}
+	if fallback.IsZero() {
+		fallback = time.Now().UTC()
+	}
+	msg.Extra["created_at"] = fallback.UTC().Format(time.RFC3339)
+}
+
+func messageCreatedAt(msg *schema.Message) string {
+	if msg == nil || msg.Extra == nil {
+		return ""
+	}
+	if v, ok := msg.Extra["created_at"].(string); ok {
+		return v
+	}
+	return ""
 }
 
 // parseRole 将字符串 role 映射为 schema.RoleType
