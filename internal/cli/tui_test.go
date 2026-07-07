@@ -157,6 +157,10 @@ func TestRenderConversationEntryShowsCreatedAt(t *testing.T) {
 	if !strings.Contains(rendered, "manual-time") {
 		t.Fatalf("rendered = %q, want created_at label", rendered)
 	}
+	firstLine := strings.Split(rendered, "\n")[0]
+	if !strings.Contains(firstLine, "hello") || !strings.Contains(firstLine, "manual-time") {
+		t.Fatalf("first line = %q, want content and right-side time", firstLine)
+	}
 }
 
 func TestConfirmRequiresSecondPressWithinWindow(t *testing.T) {
@@ -262,7 +266,7 @@ func TestRenderMainPaneKeepsFooterWithoutSlashHint(t *testing.T) {
 	model.metaCache = cachedMeta{Workdir: "/tmp/test-workspace", LoadedAt: time.Now()}
 
 	rendered := stripANSI(renderMainPane(model))
-	if !strings.Contains(rendered, "test-workspace") {
+	if !strings.Contains(rendered, "/tmp/test-workspace") {
 		t.Fatalf("rendered main pane missing footer: %q", rendered)
 	}
 	if strings.Contains(rendered, "session") || strings.Contains(rendered, "dir ") {

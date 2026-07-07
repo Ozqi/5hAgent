@@ -1071,7 +1071,7 @@ func renderInputFooter(snapshot statusSnapshot, _ string, width int) string {
 	if width < 72 {
 		parts := make([]string, 0, 4)
 		if meta.Workdir != "" && meta.Workdir != "-" {
-			parts = append(parts, lipgloss.NewStyle().Foreground(colorWhite).Render(truncateMiddle(filepath.Base(meta.Workdir), 18)))
+			parts = append(parts, lipgloss.NewStyle().Foreground(colorWhite).Render(truncateMiddle(meta.Workdir, 24)))
 		}
 		if meta.Git.Repo {
 			branch := truncateMiddle(fallback(meta.Git.Branch, "detached"), 12)
@@ -1094,7 +1094,7 @@ func renderInputFooter(snapshot statusSnapshot, _ string, width int) string {
 	}
 	parts := make([]string, 0, 8)
 	if meta.Workdir != "" && meta.Workdir != "-" {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorWhite).Render(truncateMiddle(filepath.Base(meta.Workdir), 18)))
+		parts = append(parts, lipgloss.NewStyle().Foreground(colorWhite).Render(truncateMiddle(meta.Workdir, 36)))
 	}
 	if meta.Git.Repo {
 		branch := truncateMiddle(fallback(meta.Git.Branch, "detached"), 18)
@@ -1350,29 +1350,29 @@ func (m *AppModel) renderConversationEntry(entry conversationEntry, width int) s
 	switch entry.Role {
 	case roleUser:
 		body := compactParagraph(strings.TrimSpace(entry.Content))
-		return withEntryTime(entry, renderUserEntry(body, width))
+		return withEntryTime(entry, renderUserEntry(body, width), width)
 	case roleAssistant:
 		content := strings.TrimRight(renderMarkdownForTerminal(normalizeAssistantContent(entry.Content), true), "\n")
-		return withEntryTime(entry, wrapVisibleText(content, max(8, width)))
+		return withEntryTime(entry, wrapVisibleText(content, max(8, width)), width)
 	case roleHint:
-		return withEntryTime(entry, m.renderToolHintEntry(entry, width))
+		return withEntryTime(entry, m.renderToolHintEntry(entry, width), width)
 	case roleThinking:
-		return withEntryTime(entry, renderThinkingEntry(entry.Content, width))
+		return withEntryTime(entry, renderThinkingEntry(entry.Content, width), width)
 	case roleTool:
-		return withEntryTime(entry, renderToolEntry(entry.Content, width))
+		return withEntryTime(entry, renderToolEntry(entry.Content, width), width)
 	case roleSystem:
-		return withEntryTime(entry, renderSystemEntry(entry.SystemTitle, entry.Content, width))
+		return withEntryTime(entry, renderSystemEntry(entry.SystemTitle, entry.Content, width), width)
 	default:
-		return withEntryTime(entry, wrapVisibleText(strings.TrimSpace(entry.Content), width))
+		return withEntryTime(entry, wrapVisibleText(strings.TrimSpace(entry.Content), width), width)
 	}
 }
 
-func withEntryTime(entry conversationEntry, rendered string) string {
+func withEntryTime(entry conversationEntry, rendered string, width int) string {
 	label := entryTimeLabel(entry.CreatedAt)
 	if label == "" || strings.TrimSpace(stripANSI(rendered)) == "" {
 		return rendered
 	}
-	return lipgloss.NewStyle().Foreground(colorMuted).Faint(true).Render(label) + "\n" + rendered
+	return appendRightLabel(rendered, label, width)
 }
 
 func entryTimeLabel(createdAt string) string {
@@ -1383,6 +1383,22 @@ func entryTimeLabel(createdAt string) string {
 		return t.Local().Format("15:04:05")
 	}
 	return createdAt
+}
+
+func appendRightLabel(rendered string, label string, width int) string {
+	lines := strings.Split(rendered, "\n")
+	if len(lines) == 0 {
+		return rendered
+	}
+	styled := lipgloss.NewStyle().Foreground(colorMuted).Faint(true).Render(label)
+	width = max(12, width)
+	if lipgloss.Width(lines[0])+lipgloss.Width(styled)+2 <= width {
+		padding := width - lipgloss.Width(lines[0]) - lipgloss.Width(styled)
+		lines[0] += strings.Repeat(" ", max(2, padding)) + styled
+		return strings.Join(lines, "\n")
+	}
+	lines[0] += " " + styled
+	return strings.Join(lines, "\n")
 }
 
 func renderSystemEntry(title string, content string, width int) string {
@@ -1446,7 +1462,7 @@ func renderThinkingEntry(content string, width int) string {
 
 func (m *AppModel) renderToolHintEntry(entry conversationEntry, width int) string {
 	stateIcon := "▮"
-	stateColor := colorGreen
+	stateColor := colorBlue
 	switch entry.ToolState {
 	case "running":
 		stateIcon = spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
@@ -1461,7 +1477,7 @@ func (m *AppModel) renderToolHintEntry(entry conversationEntry, width int) strin
 	if entry.ToolState != "running" {
 		stateIcon = "▮"
 	}
-	header := lipgloss.NewStyle().Foreground(stateColor).Bold(true).Render(stateIcon) + " " + lipgloss.NewStyle().Foreground(colorCommand).Render(name)
+	header := lipgloss.NewStyle().Foreground(stateColor).Bold(true).Render(stateIcon) + " " + lipgloss.NewStyle().Foreground(stateColor).Render(name)
 	if args != "" {
 		header += " " + logger.Gray(args)
 	}
@@ -1667,8 +1683,8 @@ func renderToolEntry(content string, width int) string {
 
 func renderToolCompactEntry(entry toolEntry, width int) string {
 	var b strings.Builder
-	icon := lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("▮")
-	name := lipgloss.NewStyle().Foreground(colorCommand).Render(fallback(entry.Name, "tool"))
+	icon := lipgloss.NewStyle().Foreground(colorBlue).Bold(true).Render("▮")
+	name := lipgloss.NewStyle().Foreground(colorBlue).Render(fallback(entry.Name, "tool"))
 	b.WriteString(icon + " " + name)
 
 	if len(entry.Args) > 0 {
@@ -1725,7 +1741,7 @@ func renderToolUnknownEntry(content string, width int) string {
 	if maxLen < 20 {
 		maxLen = 20
 	}
-	return lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("▮") + " " + lipgloss.NewStyle().Foreground(colorGray).Render(truncateMiddle(clean, maxLen))
+	return lipgloss.NewStyle().Foreground(colorBlue).Bold(true).Render("▮") + " " + lipgloss.NewStyle().Foreground(colorGray).Render(truncateMiddle(clean, maxLen))
 }
 
 // truncateMiddle 截断中间部分
