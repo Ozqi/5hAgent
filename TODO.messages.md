@@ -1,6 +1,6 @@
 # TODO.messages.md - Agent Systemd TODO 复审 (r6)
 
-> 2026-06-30 复测后更新。核对范围：`5hagent daemon --poll 1s` 在 `/Users/bytedance/Proj/5hWorkSpace` 的真实运行结果、`internal/systemd/systemd.go`、`internal/runtime/runtime.go`、`internal/runtime/event_source_task.go`、`doc/agent-systemd.md`。
+> 2026-06-30 复测后更新。核对范围：`5hagent daemon --poll 1s` 在 `/Users/bytedance/Proj/5hWorkSpace` 的真实运行结果、`internal/systemd/systemd.go`、`internal/runtime/runtime.go`、`internal/runtime/event_source_task.go`、`doc/runtime/agent-systemd.md`。
 >
 > 结论：Agent Systemd 当前是“最小 daemon 调度骨架可用”，不是“完备多 Agent 调度框架”。它可以从 `.5hagent/task.md` 启动 AgentProcess，写 process report/worklog，并在同一 daemon 生命周期内串行启动 `agent-1`、`agent-2`。r6 P0 已完成：任务状态闭环、task trace、report 不覆盖和 daemon 可观测性已落地并通过真实 daemon 冒烟。剩余重点是连续多任务自动化、并发策略、IPC 真实闭环、decision retry 验收和智能效果基准。
 
@@ -73,13 +73,13 @@
 
 ## r6 测试规范入口
 
-详细测试矩阵写在 `doc/agent-systemd-test.md`。后续 Agent Systemd 改动必须先更新该文档里的“预期行为”和“验证命令”，再改代码。
+详细测试矩阵写在 `doc/runtime/agent-systemd-test.md`。后续 Agent Systemd 改动必须先更新该文档里的“预期行为”和“验证命令”，再改代码。
 
 ---
 
 # TODO.messages.md - Agent Systemd TODO 复审 (r5)
 
-> 2026-06-29 复审当前工作树后更新。核对范围：`cmd/5hagent/main.go`、`internal/systemd/systemd.go`、`internal/runtime/runtime.go`、`internal/runtime/event_source_task.go`、`internal/context/ctx.go`、`internal/tools/ipc_tool.go`、`internal/ipctypes/`、`internal/systemd/systemd_test.go`、`internal/runtime/process_test.go`、`doc/agent-systemd.md`、`README.md`、`AGENTS.md`。
+> 2026-06-29 复审当前工作树后更新。核对范围：`cmd/5hagent/main.go`、`internal/systemd/systemd.go`、`internal/runtime/runtime.go`、`internal/runtime/event_source_task.go`、`internal/context/ctx.go`、`internal/tools/ipc_tool.go`、`internal/ipctypes/`、`internal/systemd/systemd_test.go`、`internal/runtime/process_test.go`、`doc/runtime/agent-systemd.md`、`README.md`、`AGENTS.md`。
 >
 > 结论：r4 中多数高优项已经落地，旧文档中“零调用方、零测试、反向依赖、`seen` 泄漏、payload 静默丢字段”等判断已过期。下面是当前剩余 TODO；r4 原文仅作为历史归档保留，不要按旧执行顺序继续改。
 
@@ -92,7 +92,7 @@
 - `WithToolRuntime` 和 `WithSystemRuntime` 均为 merge 模式，调用顺序不再隐式依赖。
 - `timer.tick` 不进入 `seen` 去重表；`process.exited/process.failed/process.stopped` 会清理 retry key。
 - `task.created` 已改用 `TaskCreatedPayload{process_spec, task_id, task_title, file_event}`，`dispatch` 按事件类型严格解析 payload。
-- `doc/agent-systemd.md` 已把旧伪代码改为当前 `Run/dispatch/Decision/applyDecision` 结构，并折叠了大段“已完成”清单。
+- `doc/runtime/agent-systemd.md` 已把旧伪代码改为当前 `Run/dispatch/Decision/applyDecision` 结构，并折叠了大段“已完成”清单。
 - 已新增 `internal/systemd/systemd_test.go` 和 `internal/runtime/process_test.go`，覆盖基础调度闭环、异步启动失败、高风险事件、retry 上限和 `Runtime.RunProcess` prompt 注入。
 
 ## r5 剩余 TODO
@@ -108,7 +108,7 @@
 
 ## r5 推荐执行顺序
 
-1. 先跑验证命令，更新本文和 `doc/agent-systemd.md` 中的验证状态。
+1. 先跑验证命令，更新本文和 `doc/runtime/agent-systemd.md` 中的验证状态。
 2. 补 P2 的小粒度 systemd 测试，锁住 r4 已修的协议和内存增长问题。
 3. 设计 daemon 的任务状态闭环，再决定是否改代码；不要把 `task_id` 直接塞进 `ProcessSpec`。
 4. 保留 IPC `LastActiveAt` TODO，等需要 IPC 审计或真实多进程通信后再改事件链。
@@ -123,4 +123,4 @@
 - runtime 注入：`WithToolRuntime` 和 `WithSystemRuntime` 均为 merge 模式。
 - 端到端入口：`5hagent daemon` 已接通最小运行期路径。
 - 测试：已有 systemd 基础调度测试和 runtime fake LLM 适配测试。
-- 文档：`doc/agent-systemd.md` 已更新真实函数名和当前完成审计。
+- 文档：`doc/runtime/agent-systemd.md` 已更新真实函数名和当前完成审计。

@@ -171,10 +171,10 @@ doc/               # 详细文档
 
 ## 文档
 
-- [Runtime 运行时](doc/runtime.md)
-- [Agent 架构](doc/agent.md)
-- [工具系统](doc/tools.md)
-- [上下文管理](doc/context.md)
-- [Skill 使用](doc/skill.md)
-- [LLM 客户端](doc/llm.md)
-- [LLM 调用流程](doc/llm-call-flow.md)
+- [Runtime 运行时](doc/runtime/runtime.md)
+- [Agent 架构](doc/core/agent.md)
+- [工具系统](doc/integrations/tools.md)
+- [上下文管理](doc/core/context.md)
+- [Skill 使用](doc/core/skill.md)
+- [LLM 客户端](doc/config/llm.md)
+- [LLM 调用流程](doc/config/llm-call-flow.md)

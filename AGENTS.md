@@ -166,7 +166,7 @@ LLM 可见工具当前包括：
 | `learn/stage-3-skill-prompt` | Stage 3 学习快照：Skill 系统、prompt 管理、Skill 注入机制。 |
 | `learn/stage-4-mcp-session-tui` | Stage 4 学习快照：MCP、session 持久化、TUI 和日志体验。 |
 | `learn/stage-5-current` | Stage 5 学习快照：当前公开 baseline，对齐 `master` / `origin/master`。 |
-| Stage 6 设计 | Agent Systemd 顶层调度设计：启动只传 system prompt / exit condition，context 默认视作进程内存；先记录在 `doc/agent-systemd.md`，尚未对应稳定学习分支。 |
+| Stage 6 设计 | Agent Systemd 顶层调度设计：启动只传 system prompt / exit condition，context 默认视作进程内存；先记录在 `doc/runtime/agent-systemd.md`，尚未对应稳定学习分支。 |
 | `master` | 公开稳定 baseline；当前指向 `learn/stage-5-current`。 |
 | `develop` | 当前开发主线；在 `master` 之后继续开发 headless runtime、Ollama baseline、context 工具和文档。 |
 
