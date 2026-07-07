@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -30,6 +31,7 @@ import (
 	"github.com/lzq/5hAgent/internal/skill"
 	"github.com/lzq/5hAgent/internal/task"
 	"github.com/lzq/5hAgent/internal/tools"
+	"github.com/mattn/go-runewidth"
 )
 
 const (
@@ -41,6 +43,7 @@ const (
 	roleThinking     = "thinking"
 	defaultTUIWidth  = 100
 	defaultTUIHeight = 30
+	quitConfirmDelay = 2 * time.Second
 )
 
 type conversationEntry struct {
@@ -51,7 +54,6 @@ type conversationEntry struct {
 	ToolKey     string
 	ToolState   string
 	ToolOutput  string
-	ToolOpen    bool
 	SystemTitle string
 }
 
@@ -121,6 +123,8 @@ type AppModel struct {
 	spinnerFrame     int
 	escPending       bool
 	lastEscAt        time.Time
+	quitPending      bool
+	lastQuitAt       time.Time
 	autoScroll       bool
 	metaCache        cachedMeta
 }
@@ -171,21 +175,15 @@ var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 var launchMu sync.Mutex
 
 var (
-	colorBg      = lipgloss.Color("#12131d")
-	colorBlack   = lipgloss.Color("#000000")
-	colorSurface = lipgloss.Color("#1a1b26")
 	colorGreen   = lipgloss.Color("#9ece6a")
 	colorBlue    = lipgloss.Color("#7aa2f7")
 	colorPurple  = lipgloss.Color("#bb9af7")
 	colorYellow  = lipgloss.Color("#e0af68")
-	colorText    = lipgloss.Color("#a9b1d6")
 	colorGray    = lipgloss.Color("#565f89")
 	colorWhite   = lipgloss.Color("#e2e1f1")
 	colorCommand = lipgloss.Color("#89b4fa")
 	colorResult  = lipgloss.Color("#cdd6f4")
 	colorError   = lipgloss.Color("#f38ba8")
-	colorWarnBg  = lipgloss.Color("#3a252a")
-	colorOkBg    = lipgloss.Color("#2a3832")
 	colorInputBg = lipgloss.Color("#404a4f")
 	colorInputFg = lipgloss.Color("#dce4e3")
 	colorMuted   = lipgloss.Color("#93a799")
@@ -203,9 +201,6 @@ var (
 
 	slashHintStyle = lipgloss.NewStyle().
 			Foreground(colorGray)
-
-	messageBoxStyle = lipgloss.NewStyle().
-			Padding(0, 2)
 )
 
 type slashCommandHint struct {
@@ -411,13 +406,20 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
-			return m, tea.Quit
-		case "esc":
-			if m.escPending && time.Since(m.lastEscAt) <= 700*time.Millisecond {
+			if confirm(&m.quitPending, &m.lastQuitAt, quitConfirmDelay) {
 				return m, tea.Quit
 			}
-			m.escPending = true
-			m.lastEscAt = time.Now()
+			m.currentStatus = "ctrl+c again to quit"
+			m.refreshView()
+			return m, nil
+		case "ctrl+d":
+			m.currentStatus = "detached"
+			m.refreshView()
+			return m, tea.Suspend
+		case "esc":
+			if confirm(&m.escPending, &m.lastEscAt, quitConfirmDelay) {
+				return m, tea.Quit
+			}
 			m.currentStatus = "esc again to quit"
 			m.refreshView()
 			return m, nil
@@ -458,20 +460,36 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	m.escPending = false
 	m.input, cmd = m.input.Update(msg)
+	if _, ok := msg.(tea.KeyMsg); ok {
+		m.escPending = false
+		m.quitPending = false
+	}
 	m.viewport, _ = m.viewport.Update(msg)
 	m.autoScroll = m.viewport.AtBottom()
 	return m, cmd
+}
+
+// confirm 处理“短时间内二次按键确认”的通用状态。
+func confirm(pending *bool, last *time.Time, within time.Duration) bool {
+	now := time.Now()
+	if *pending && now.Sub(*last) <= within {
+		*pending = false
+		return true
+	}
+	*pending = true
+	*last = now
+	return false
 }
 
 func (m *AppModel) View() string {
 	m.resize()
 	// 当前布局保持单列：历史记录在上，输入框附近承载运行状态。
 	mainView := renderMainPane(m)
-	statusBar := renderBottomStatusBar(m.width, m.currentStatus, m.busy)
+	statusBar := renderBottomStatusBar(m.width)
+	mainHeight := max(1, m.height-1)
 	return lipgloss.JoinVertical(lipgloss.Left,
-		lipgloss.NewStyle().Height(max(1, m.height-1)).Render(mainView),
+		renderFixedLines(strings.Split(mainView, "\n"), max(1, m.width), mainHeight),
 		statusBar,
 	)
 }
@@ -748,16 +766,27 @@ func (m *AppModel) resize() {
 	}
 
 	mainWidth := max(20, m.width)
-	headerHeight := 0
-	footerHeight := 1
-	inputAreaHeight := 5
-	if strings.HasPrefix(strings.TrimSpace(m.input.Value()), "/") {
-		inputAreaHeight += len(slashHintMatches(strings.TrimSpace(m.input.Value())))
-	}
-	m.viewport.Width = max(8, mainWidth)
-	m.viewport.Height = max(1, m.height-headerHeight-footerHeight-inputAreaHeight)
 	m.input.SetWidth(max(8, mainWidth-2))
 	m.input.SetHeight(2)
+	m.viewport.Width = max(8, mainWidth)
+	m.viewport.Height = max(1, m.height-1-m.reservedMainHeight(mainWidth))
+}
+
+// reservedMainHeight 返回 viewport 之外的主界面行数。
+// 这里按真实渲染文本计数，避免窄屏 slash hint 或长输入换行后挤到输入框下方。
+func (m *AppModel) reservedMainHeight(width int) int {
+	headerHeight := 1
+	inputHeight := 2 + renderedLineCount(compactInputView(m.input.View()))
+	footerHeight := 1
+	slashHeight := renderedLineCount(m.renderSlashHint(max(12, width-4)))
+	return headerHeight + slashHeight + inputHeight + footerHeight
+}
+
+func renderedLineCount(text string) int {
+	if strings.TrimSpace(stripANSI(text)) == "" {
+		return 0
+	}
+	return strings.Count(text, "\n") + 1
 }
 
 func (m *AppModel) refreshView() {
@@ -916,13 +945,15 @@ func renderMainPane(m *AppModel) string {
 	inputBlock := renderInputBar(m.input.View(), width)
 	slashHint := m.renderSlashHint(max(12, width-4))
 	footer := renderInputFooter(snapshot, m.sessionID, width)
-	content := lipgloss.JoinVertical(lipgloss.Left,
+	blocks := []string{
 		conversation,
 		header,
-		slashHint,
-		inputBlock,
-		footer,
-	)
+	}
+	if slashHint != "" {
+		blocks = append(blocks, slashHint)
+	}
+	blocks = append(blocks, inputBlock, footer)
+	content := lipgloss.JoinVertical(lipgloss.Left, blocks...)
 	return mainViewStyle.Width(width).Render(content)
 }
 
@@ -987,13 +1018,13 @@ func renderTopStatus(snapshot statusSnapshot, modelName string, _ string, width 
 }
 
 // renderInputFooter 渲染输入框下方的低频上下文状态。
-// 参数：snapshot 为运行快照；sessionID 用于显示当前会话；width 为当前主列宽度。
-func renderInputFooter(snapshot statusSnapshot, sessionID string, width int) string {
+// 参数：snapshot 为运行快照；width 为当前主列宽度。
+func renderInputFooter(snapshot statusSnapshot, _ string, width int) string {
 	meta := snapshot.Runtime
-	shortSession := truncateMiddle(fallback(meta.SessionID, sessionID), 12)
 	if width < 72 {
-		parts := []string{
-			lipgloss.NewStyle().Foreground(colorMuted).Render("session " + shortSession),
+		parts := make([]string, 0, 4)
+		if meta.Workdir != "" && meta.Workdir != "-" {
+			parts = append(parts, lipgloss.NewStyle().Foreground(colorWhite).Render(truncateMiddle(filepath.Base(meta.Workdir), 18)))
 		}
 		if meta.Git.Repo {
 			branch := truncateMiddle(fallback(meta.Git.Branch, "detached"), 12)
@@ -1014,11 +1045,9 @@ func renderInputFooter(snapshot statusSnapshot, sessionID string, width int) str
 		}
 		return strings.Join(parts, lipgloss.NewStyle().Faint(true).Render(" · "))
 	}
-	parts := []string{
-		lipgloss.NewStyle().Foreground(colorMuted).Render("session " + shortSession),
-	}
+	parts := make([]string, 0, 8)
 	if meta.Workdir != "" && meta.Workdir != "-" {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorWhite).Render("dir "+truncateMiddle(filepath.Base(meta.Workdir), 18)))
+		parts = append(parts, lipgloss.NewStyle().Foreground(colorWhite).Render(truncateMiddle(filepath.Base(meta.Workdir), 18)))
 	}
 	if meta.Git.Repo {
 		branch := truncateMiddle(fallback(meta.Git.Branch, "detached"), 18)
@@ -1116,32 +1145,8 @@ func slashHintMatches(input string) []slashCommandHint {
 	return matches
 }
 
-func renderBottomStatusBar(width int, status string, busy bool) string {
-	state := fallback(status, "idle")
-	if busy {
-		state = animatedStateLabel(busy, status, 0)
-	}
-	if state == "idle" {
-		return statusBarStyle.Width(max(1, width)).Render(strings.Repeat(" ", max(1, width)))
-	}
-	text := " " + lipgloss.NewStyle().Foreground(colorMuted).Render(state)
-	padding := width - lipgloss.Width(text)
-	if padding < 0 {
-		padding = 0
-	}
-	return statusBarStyle.Width(max(1, width)).Render(text + strings.Repeat(" ", padding))
-}
-
-func (m *AppModel) findToolEntry(name string) int {
-	for i := len(m.entries) - 1; i >= 0; i-- {
-		if m.entries[i].Role != roleTool || !m.entries[i].ToolOpen {
-			continue
-		}
-		if name == "" || m.entries[i].ToolName == name {
-			return i
-		}
-	}
-	return -1
+func renderBottomStatusBar(width int) string {
+	return statusBarStyle.Width(max(1, width)).Render(strings.Repeat(" ", max(1, width)))
 }
 
 func (m *AppModel) applyToolEvent(event logger.ToolEvent) {
@@ -1149,6 +1154,7 @@ func (m *AppModel) applyToolEvent(event logger.ToolEvent) {
 	key := toolEventKey(event.Name, event.Args)
 	summary := formatToolArgsSummary(event.Args)
 
+	// result/error 依赖 tool name + args 回填最近的 running 行；找不到时补一条完成记录，避免丢事件。
 	switch event.Kind {
 	case "call":
 		m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "running", ToolOutput: "running..."})
@@ -1203,7 +1209,7 @@ func formatToolArgsSummary(args string) string {
 	}
 	var raw map[string]interface{}
 	if err := json.Unmarshal([]byte(args), &raw); err != nil {
-		return "[args=" + truncateMiddle(args, 120) + "]"
+		return "[args=" + truncateMiddle(args, 180) + "]"
 	}
 	keys := make([]string, 0, len(raw))
 	for key := range raw {
@@ -1212,7 +1218,7 @@ func formatToolArgsSummary(args string) string {
 	sort.Strings(keys)
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
-		parts = append(parts, key+"="+truncateMiddle(toolArgValue(raw[key]), 80))
+		parts = append(parts, key+"="+truncateMiddle(toolArgValue(raw[key]), 120))
 	}
 	return "[" + strings.Join(parts, ",") + "]"
 }
@@ -1241,6 +1247,7 @@ func toolArgValue(v interface{}) string {
 
 func summarizeToolEventOutput(event logger.ToolEvent) string {
 	clean := strings.TrimSpace(stripANSI(event.Text))
+	// 兼容 logger 旧文本块格式（●/⎿/✗），也兼容当前 ToolEvent.Text 的短摘要。
 	entry := parseToolBlock(clean)
 	switch event.Kind {
 	case "result":
@@ -1372,32 +1379,24 @@ func renderThinkingEntry(content string, width int) string {
 	return label + "\n" + indentLines(body, "  └ ", "    ")
 }
 
-func colorLinesANSI(text string, color func(string) string) string {
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		lines[i] = color(line)
-	}
-	return strings.Join(lines, "\n")
-}
-
 func (m *AppModel) renderToolHintEntry(entry conversationEntry, width int) string {
-	stateIcon := "●"
+	stateIcon := "▮"
 	stateColor := colorGreen
 	switch entry.ToolState {
 	case "running":
 		stateIcon = spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 		stateColor = colorBlue
 	case "error":
-		stateIcon = "●"
+		stateIcon = "▮"
 		stateColor = colorError
 	}
 
 	name := fallback(entry.ToolName, "tool")
 	args := strings.TrimSpace(entry.ToolArgs)
 	if entry.ToolState != "running" {
-		stateIcon = "◆"
+		stateIcon = "▮"
 	}
-	header := lipgloss.NewStyle().Foreground(stateColor).Bold(true).Render(stateIcon) + " " + lipgloss.NewStyle().Bold(true).Render(toolDisplayVerb(entry.ToolState)) + " " + lipgloss.NewStyle().Foreground(colorCommand).Render(name)
+	header := lipgloss.NewStyle().Foreground(stateColor).Bold(true).Render(stateIcon) + " " + lipgloss.NewStyle().Foreground(colorCommand).Render(name)
 	if args != "" {
 		header += " " + logger.Gray(args)
 	}
@@ -1414,17 +1413,6 @@ func (m *AppModel) renderToolHintEntry(entry conversationEntry, width int) strin
 		lines = loggerColorLines(lines, colorResult)
 	}
 	return header + "\n" + indentLines(lines, "  └ ", "  └ ")
-}
-
-func toolDisplayVerb(state string) string {
-	switch state {
-	case "running":
-		return "Running"
-	case "error":
-		return "Failed"
-	default:
-		return "Ran"
-	}
 }
 
 func loggerColorLines(text string, color lipgloss.Color) string {
@@ -1446,33 +1434,6 @@ func indentLines(text string, firstPrefix string, nextPrefix string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
-}
-
-func renderPrefixedPlainText(prefix string, content string, color lipgloss.Color, width int) string {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return lipgloss.NewStyle().Foreground(color).Render(prefix)
-	}
-	lineWidth := max(8, width-lipgloss.Width(prefix))
-	lines := wrapVisibleLines(content, lineWidth)
-	for i, line := range lines {
-		if i == 0 {
-			lines[i] = lipgloss.NewStyle().Foreground(color).Render(prefix) + line
-			continue
-		}
-		lines[i] = strings.Repeat(" ", lipgloss.Width(prefix)) + line
-	}
-	return strings.Join(lines, "\n")
-}
-
-func renderMessageBlock(label string, body string, accent lipgloss.Color, width int) string {
-	blockWidth := max(8, width-1)
-	header := lipgloss.NewStyle().Foreground(accent).Bold(true).Render(label)
-	content := lipgloss.NewStyle().Foreground(colorText).Render(body)
-	return lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		messageBoxStyle.Copy().Width(blockWidth).Render(content),
-	)
 }
 
 func wrapVisibleLines(line string, width int) []string {
@@ -1503,14 +1464,6 @@ func wrapVisibleText(text string, width int) string {
 	return strings.Join(result, "\n")
 }
 
-func truncateVisibleLine(text string, width int) string {
-	lines := strings.Split(text, "\n")
-	if len(lines) == 0 {
-		return ""
-	}
-	return truncateMiddle(lines[0], max(1, width))
-}
-
 func stripANSI(text string) string {
 	return ansiPattern.ReplaceAllString(text, "")
 }
@@ -1537,7 +1490,7 @@ func renderFixedLines(lines []string, width int, height int) string {
 		if i < len(lines) {
 			line = lines[i]
 		}
-		line = truncateMiddle(line, width)
+		line = clipVisibleLine(line, width)
 		padding := width - lipgloss.Width(line)
 		if padding > 0 {
 			line += strings.Repeat(" ", padding)
@@ -1545,6 +1498,32 @@ func renderFixedLines(lines []string, width int, height int) string {
 		fixed = append(fixed, line)
 	}
 	return strings.Join(fixed, "\n")
+}
+
+func clipVisibleLine(line string, width int) string {
+	if width <= 0 || lipgloss.Width(line) <= width {
+		return line
+	}
+	var b strings.Builder
+	visible := 0
+	for i := 0; i < len(line); {
+		if line[i] == '\x1b' {
+			if end := strings.IndexByte(line[i:], 'm'); end >= 0 {
+				b.WriteString(line[i : i+end+1])
+				i += end + 1
+				continue
+			}
+		}
+		r, size := utf8.DecodeRuneInString(line[i:])
+		rw := runewidth.RuneWidth(r)
+		if visible+rw > width {
+			break
+		}
+		b.WriteRune(r)
+		visible += rw
+		i += size
+	}
+	return b.String()
 }
 
 func fallback(value string, defaultValue string) string {
@@ -1623,9 +1602,9 @@ func renderToolEntry(content string, width int) string {
 
 func renderToolCompactEntry(entry toolEntry, width int) string {
 	var b strings.Builder
-	icon := lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("◆")
+	icon := lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("▮")
 	name := lipgloss.NewStyle().Foreground(colorCommand).Render(fallback(entry.Name, "tool"))
-	b.WriteString(icon + " " + lipgloss.NewStyle().Bold(true).Render("Ran") + " " + name)
+	b.WriteString(icon + " " + name)
 
 	if len(entry.Args) > 0 {
 		joined := strings.Join(entry.Args, "   ·   ")
@@ -1675,24 +1654,13 @@ func renderToolCompactEntry(entry toolEntry, width int) string {
 func renderToolUnknownEntry(content string, width int) string {
 	clean := strings.TrimSpace(ansiPattern.ReplaceAllString(content, ""))
 	if clean == "" {
-		return lipgloss.NewStyle().Foreground(colorGray).Render("◆ Ran tool\n  └ (empty)")
+		return lipgloss.NewStyle().Foreground(colorGray).Render("▮ tool\n  └ (empty)")
 	}
 	maxLen := width - 10
 	if maxLen < 20 {
 		maxLen = 20
 	}
-	return lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("◆") + " " + lipgloss.NewStyle().Bold(true).Render("Ran") + " " + lipgloss.NewStyle().Foreground(colorGray).Render(truncateMiddle(clean, maxLen))
-}
-
-func renderMessageBoxWithHeader(text string, width int) string {
-	lines := strings.SplitN(text, "\n", 2)
-	if len(lines) == 1 {
-		return renderMessageBlock(lines[0], "", colorYellow, width)
-	}
-	return lipgloss.JoinVertical(lipgloss.Left,
-		lines[0],
-		messageBoxStyle.Copy().Width(max(8, width-1)).Render(lipgloss.NewStyle().Foreground(colorText).Render(lines[1])),
-	)
+	return lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("▮") + " " + lipgloss.NewStyle().Foreground(colorGray).Render(truncateMiddle(clean, maxLen))
 }
 
 // truncateMiddle 截断中间部分

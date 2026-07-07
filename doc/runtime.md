@@ -5,7 +5,7 @@
 
 ## 摘要
 
-`internal/runtime` 是 5hAgent baseline 的核心胶水层：它把配置、日志、任务文件、session、LLM、Agent、工具注册、上下文工具和 MCP 启动收束到一个 `Runtime` 对象。`cmd/5hagent` 只负责解析命令行并选择 TUI 或无头运行。
+`internal/runtime` 是 5hAgent baseline 的核心胶水层：它把配置、日志、任务文件、session、LLM、Agent、本地工具注册和上下文工具收束到一个 `Runtime` 对象。`cmd/5hagent` 只负责解析命令行并选择 TUI 或无头运行；启动阶段不等待 MCP stdio server。
 
 ```mermaid
 flowchart TD
@@ -16,7 +16,6 @@ flowchart TD
   Runtime --> Agent[agent.Agent]
   Runtime --> Tools[tools registry]
   Runtime --> CtxTool[context.context]
-  Runtime --> MCP[mcp stdio clients]
   Runtime --> Report[.5hagent/reports]
   Runtime --> WorkLog[.5hagent/agents/<agent>/logs]
   Agent --> LLM[llm.Client]
@@ -34,7 +33,7 @@ flowchart TD
 
 | 文件 | 作用 |
 | --- | --- |
-| [`internal/runtime/runtime.go`](../internal/runtime/runtime.go) | Runtime 初始化、MCP 生命周期、任务执行和报告写入 |
+| [`internal/runtime/runtime.go`](../internal/runtime/runtime.go) | Runtime 初始化、本地工具绑定、任务执行和报告写入 |
 | [`cmd/5hagent/main.go`](../cmd/5hagent/main.go) | CLI 薄入口，默认 TUI，`run` 子命令无头执行 |
 | [`internal/task/tasklist.go`](../internal/task/tasklist.go) | Markdown 任务真源和状态流转 |
 | [`internal/agent/agent.go`](../internal/agent/agent.go) | `RunStream` ReAct 主循环 |
@@ -64,10 +63,11 @@ flowchart TD
 5. `agent.NewAgent(nil, nil, config)` 创建 Agent，并传入 `ContextAutoCompress` 和当前 Project 的 `.5hagent` 数据目录。
 6. `tools.NewRegistry().Init(taskList, skillMgr)` 注册 base/task/skill/sys 工具并重置工具元数据。
 7. `toolRegistry.RegisterContextTool(client.GetModel(), promptDir)` 注册 `context.context`。
-8. `startMCPServers(ctx, toolRegistry)` 启动 MCP stdio server 并注册远端工具到当前 runtime registry。
-9. 遍历 `toolRegistry.All()` 生成 `schema.ToolInfo`。
-10. `client.GetModel().WithTools(toolInfos)` 绑定工具。
-11. `ag.SetModel(modelWithTools)` 和 `ag.SetTools(allTools)` 完成 Agent 注入。
+8. 遍历 `toolRegistry.All()` 生成 `schema.ToolInfo`。
+9. `client.GetModel().WithTools(toolInfos)` 绑定工具。
+10. `ag.SetModel(modelWithTools)` 和 `ag.SetTools(allTools)` 完成 Agent 注入。
+
+启动阶段不读取并启动 MCP stdio server，避免坏配置或外部进程阻塞 TUI/headless 启动。`/mcp` 当前保留配置管理入口；远端 MCP 工具如需恢复，应改为 lazy 启动或显式连接。
 
 `context.context` 需要未绑定工具的原始 model 来做 `mode=lm` 压缩，避免压缩调用本身再触发工具调用。
 
@@ -144,4 +144,4 @@ Runtime 将 `.env` 中的配置拆成两个方向：
 - 会创建或更新 Project 目录下 `.5hagent/task.md`、`.5hagent/reports/`、`.5hagent/agents/<agent-name>/logs/` 和项目 skills；未设置 `ProjectDir` 时使用当前工作目录。
 - 会写日志到 `~/.5hAgent` 下的日志文件。
 - 默认会读写 `~/.5hAgent/sessions/*.jsonl`；`runtime.NewInMemory` 创建的 Runtime 默认只使用内存 context。Agent Systemd 不再暴露 `sys.session` 工具，避免进程模式重复定义 session 持久化语义。
-- 如果配置了 MCP，会启动 stdio 子进程；`Runtime.Close` 负责关闭。
+- 启动阶段不启动 MCP stdio 子进程；`Runtime.Close` 只负责释放 runtime 自身打开的日志等资源。

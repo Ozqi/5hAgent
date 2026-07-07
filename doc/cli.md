@@ -145,7 +145,8 @@ type statusSnapshot struct {
 | 键 | 功能 |
 |----|------|
 | `Enter` | 发送消息 |
-| `Ctrl+C` / 双 `Esc` | 退出 |
+| 双 `Ctrl+C` / 双 `Esc` | 退出 |
+| `Ctrl+D` | 挂起到后台，shell 中用 `fg` 恢复 |
 | `PgUp` / `Ctrl+B` | 上滚 |
 | `PgDown` / `Ctrl+F` | 下滚 |
 | `↑/↓` 或 `Ctrl+P` / `Ctrl+N` | 行滚动 |

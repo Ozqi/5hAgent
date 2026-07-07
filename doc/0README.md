@@ -37,7 +37,7 @@ flowchart TB
         task["task.task<br/>任务工具"]
         skill["skill.skill<br/>技能工具"]
         context_tool["context.context<br/>上下文工具"]
-        mcp["mcp.*<br/>MCP 工具"]
+        mcp["mcp.*<br/>显式/未来 lazy MCP"]
     end
 
     subgraph UI["界面层 internal/cli"]
@@ -137,7 +137,7 @@ sequenceDiagram
 │
 ├── internal/
 │   ├── runtime/                # 共享运行时
-│   │   └── runtime.go         # 初始化配置、Agent、工具、MCP；无头任务执行和报告写入
+│   │   └── runtime.go         # 初始化配置、Agent、本地工具；无头任务执行和报告写入
 │   │
 │   ├── agent/                  # Agent 核心
 │   │   ├── agent.go           # ReAct 循环、流式 LLM 调用、上下文初始化、skill 注入

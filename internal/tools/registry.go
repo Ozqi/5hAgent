@@ -19,21 +19,19 @@ import (
 
 // Registry 保存一次 runtime 可见的工具集合。
 type Registry struct {
-	mu             sync.RWMutex
-	tools          []tool.BaseTool
-	meta           map[string]toolmeta.Meta
-	mcpServers     map[string]mcp.Client
-	mcpServerDescs map[string]string
-	workspaceRoot  string
+	mu            sync.RWMutex
+	tools         []tool.BaseTool
+	meta          map[string]toolmeta.Meta
+	mcpServers    map[string]mcp.Client
+	workspaceRoot string
 }
 
 var defaultRegistry = NewRegistry()
 
 func NewRegistry() *Registry {
 	return &Registry{
-		meta:           make(map[string]toolmeta.Meta),
-		mcpServers:     make(map[string]mcp.Client),
-		mcpServerDescs: make(map[string]string),
+		meta:       make(map[string]toolmeta.Meta),
+		mcpServers: make(map[string]mcp.Client),
 	}
 }
 
@@ -53,7 +51,6 @@ func (r *Registry) Init(taskList *task.TaskList, skillMgr *skill.Manager) error 
 	r.tools = nil
 	r.meta = make(map[string]toolmeta.Meta)
 	r.mcpServers = make(map[string]mcp.Client)
-	r.mcpServerDescs = make(map[string]string)
 
 	// 基础文件工具
 	baseTools := []struct {

@@ -7,6 +7,34 @@ import (
 	"testing"
 )
 
+func TestLoadSystemPromptBaseUsesRequestedBase(t *testing.T) {
+	dir := t.TempDir()
+	writePrompt(t, dir, "main", "main prompt")
+	writePrompt(t, dir, "tui", "tui prompt")
+	writePrompt(t, dir, "prefix.mira.gpt-5-4", "model prefix")
+
+	prompt, err := LoadSystemPromptBase(dir, "tui", "mira", "gpt-5.4")
+	if err != nil {
+		t.Fatalf("LoadSystemPromptBase() error = %v", err)
+	}
+	if prompt != "model prefix\n\ntui prompt" {
+		t.Fatalf("prompt = %q", prompt)
+	}
+}
+
+func TestLoadSystemPromptBaseFallsBackToMain(t *testing.T) {
+	dir := t.TempDir()
+	writePrompt(t, dir, "main", "main prompt")
+
+	prompt, err := LoadSystemPromptBase(dir, "tui", "mira", "gpt-5.4")
+	if err != nil {
+		t.Fatalf("LoadSystemPromptBase() error = %v", err)
+	}
+	if prompt != "main prompt" {
+		t.Fatalf("prompt = %q", prompt)
+	}
+}
+
 func TestLoadConfigReadsProviderModelRef(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -325,6 +353,13 @@ func writeConfig(t *testing.T, home, env string) {
 		env += "\n"
 	}
 	if err := os.WriteFile(filepath.Join(configDir, ".env"), []byte(env), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+}
+
+func writePrompt(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 }

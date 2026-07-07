@@ -49,12 +49,6 @@ const (
 - path: optional directory or file. Default current workspace.
 - type: optional ripgrep file type such as go, py, js, md.
 Examples: {"pattern":"func NewAgent","path":"internal","type":"go"}; {"pattern":"claude-context","path":"doc"}`
-	grepToolErrors = `pattern invalid: 正则表达式语法错误；简化模式或转义特殊字符
-path not found: 搜索路径不存在；确认目录/文件名
-no matches: 无匹配结果（正常情况，非错误）；尝试更宽松的模式
-rg not found (fallback): 系统未安装 ripgrep，自动使用 grep（功能受限）`
-	grepToolTips = `正则特殊字符需要转义：. * + ? [ ] ( ) { } | \\
-按类型过滤：type: go 只搜索 .go 文件`
 )
 
 // GrepInput defines the input parameters for grep tool

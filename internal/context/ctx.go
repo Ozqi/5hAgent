@@ -415,11 +415,11 @@ func (m *Manager) ReplaceMessages(ctx *Context, messages []*schema.Message) erro
 	return nil
 }
 
-// Clear 清空 Context
+// Clear 只清空当前内存 Context。
 // 参数:
 //   - ctx: Context 实例
 //
-// 返回: 可能的错误
+// 注意：它不会同步清空已绑定的 session 文件；需要持久化覆盖时使用 ReplaceMessages。
 func (m *Manager) Clear(ctx *Context) error {
 	ctx.messages = make([]*schema.Message, 0)
 	return nil
@@ -548,6 +548,7 @@ func (m *Manager) compressWithPrompt(goCtx context.Context, ctx *Context, llm mo
 	if llm == nil {
 		return nil, "", nil, fmt.Errorf("compression model is required")
 	}
+	// 压缩边界：system 消息全部保留；较旧 history 汇总成一条摘要；最近消息原样保留。
 	systemMsgs, historyMsgs := splitMessages(ctx.messages)
 	compressEnd := len(historyMsgs) - KeepRecentMessages
 	if compressEnd <= 0 {

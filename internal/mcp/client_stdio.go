@@ -173,6 +173,11 @@ func (c *StdioClient) start(ctx context.Context) error {
 
 // readLoop 读取 stdout 并分发响应/通知
 func (c *StdioClient) readLoop() {
+	defer func() {
+		if c.cancel != nil {
+			c.cancel()
+		}
+	}()
 	for {
 		line, err := c.stdout.ReadBytes('\n')
 		if err != nil {

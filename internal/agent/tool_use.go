@@ -125,11 +125,6 @@ func (c *toolCollector) runnableCalls(includeDispatched bool, allowEmptyArgument
 	return ready
 }
 
-// RunnableCalls 返回所有有效调用
-func (c *toolCollector) RunnableCalls() []schema.ToolCall {
-	return c.runnableCalls(true, true)
-}
-
 // execResult 工具执行结果
 type execResult struct {
 	idx    int

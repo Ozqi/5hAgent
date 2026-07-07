@@ -1,7 +1,7 @@
 // runtime.go - 无头 Agent 运行时
-// 功能：集中初始化配置、LLM、Agent、工具、MCP，并提供基于任务文件的无头执行入口。
+// 功能：集中初始化配置、LLM、Agent、本地工具，并提供基于任务文件的无头执行入口。
 // 调用方：cmd/5hagent/main.go 的 TUI 入口和 headless run 子命令。
-// 全局状态：复用 logger 和 tools 包内注册表；Runtime.Close 负责释放 MCP 进程和日志句柄。
+// 全局状态：复用 logger 和 tools 包内注册表；Runtime.Close 负责释放日志句柄。
 package runtime
 
 import (
@@ -16,11 +16,9 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"github.com/lzq/5hAgent/internal/agent"
-	"github.com/lzq/5hAgent/internal/commands"
 	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/llm"
 	"github.com/lzq/5hAgent/internal/logger"
-	"github.com/lzq/5hAgent/internal/mcp"
 	"github.com/lzq/5hAgent/internal/systemd"
 	"github.com/lzq/5hAgent/internal/task"
 	"github.com/lzq/5hAgent/internal/tools"
@@ -43,6 +41,7 @@ type Options struct {
 	LLMFormat     string
 	LLMModel      string
 	ModelRef      string
+	PromptBase    string
 }
 
 // Runtime 持有一次 5hAgent 进程运行所需的核心对象。
@@ -54,12 +53,12 @@ type Runtime struct {
 	MessageCtx *agentctx.Context
 	SessionID  string
 	PromptDir  string
+	PromptBase string
 	ModelName  string
 	ProjectDir string
 
 	ToolRegistry *tools.Registry            // 当前 Runtime 独立工具注册表
 	plainModel   model.ToolCallingChatModel // 未绑定工具的模型，用于 no-tool AgentProcess
-	mcpClients   []*mcp.StdioClient         // 需要随进程退出释放的 MCP stdio 子进程
 }
 
 // RunOptions 描述一次文件任务执行。
@@ -129,8 +128,8 @@ type processReport struct {
 // =============================================================================
 
 // New 初始化一个可交互或无头复用的 Runtime。
-// 步骤：加载配置 -> 初始化日志 -> 打开任务文件和 session store -> 创建 LLM/Agent -> 注册本地与 MCP 工具。
-// 副作用：创建 ~/.5hAgent、项目 .5hagent、日志文件，可能启动 MCP stdio 子进程。
+// 步骤：加载配置 -> 初始化日志 -> 打开任务文件和 session store -> 创建 LLM/Agent -> 注册本地工具。
+// 副作用：创建 ~/.5hAgent、项目 .5hagent、日志文件；启动阶段不启动 MCP stdio 子进程。
 func New(ctx context.Context, opts Options) (*Runtime, error) {
 	appConfig, err := utils.LoadConfigWithOptions(utils.LoadConfigOptions{
 		LLMFormat: opts.LLMFormat,
@@ -192,7 +191,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if appConfig.LLM.Supplier != "" {
 		promptProvider = appConfig.LLM.Supplier
 	}
-	systemPrompt, err := utils.LoadSystemPrompt(promptDir, promptProvider, appConfig.LLM.Model)
+	systemPrompt, err := utils.LoadSystemPromptBase(promptDir, opts.PromptBase, promptProvider, appConfig.LLM.Model)
 	if err != nil {
 		return nil, fmt.Errorf("load system prompt: %w", err)
 	}
@@ -218,7 +217,6 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("init tools: %w", err)
 	}
 	toolRegistry.RegisterContextTool(client.GetModel(), promptDir)
-	mcpClients := startMCPServers(ctx, toolRegistry)
 
 	modelWithTools, err := bindTools(ctx, client.GetModel(), toolRegistry)
 	if err != nil {
@@ -234,11 +232,11 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		MessageCtx:   messageCtx,
 		SessionID:    sessionID,
 		PromptDir:    promptDir,
+		PromptBase:   promptBase(opts.PromptBase),
 		ModelName:    llmConfig.Model,
 		ProjectDir:   projectRoot,
 		ToolRegistry: toolRegistry,
 		plainModel:   client.GetModel(),
-		mcpClients:   mcpClients,
 	}, nil
 }
 
@@ -266,7 +264,7 @@ func (r *Runtime) SwitchModel(ctx context.Context, modelRef string) (string, err
 	if appConfig.LLM.Supplier != "" {
 		promptProvider = appConfig.LLM.Supplier
 	}
-	systemPrompt, err := utils.LoadSystemPrompt(r.PromptDir, promptProvider, appConfig.LLM.Model)
+	systemPrompt, err := utils.LoadSystemPromptBase(r.PromptDir, r.PromptBase, promptProvider, appConfig.LLM.Model)
 	if err != nil {
 		return "", fmt.Errorf("load system prompt: %w", err)
 	}
@@ -383,14 +381,8 @@ Exit Condition:
 
 // Close 释放 Runtime 启动的外部资源。
 func (r *Runtime) Close() error {
-	var firstErr error
-	for _, client := range r.mcpClients {
-		if err := client.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
 	logger.CloseDebugLog()
-	return firstErr
+	return nil
 }
 
 // =============================================================================
@@ -568,35 +560,6 @@ func openMessageCtx(manager *agentctx.Manager, sessionID string, continueLast bo
 	return ctx, manager.GetSessionID(ctx), nil
 }
 
-func startMCPServers(ctx context.Context, registry *tools.Registry) []*mcp.StdioClient {
-	servers, err := commands.LoadMCPServers()
-	if err != nil {
-		logger.WarnTag("MCP", "load MCP config: %v", err)
-		return nil
-	}
-	clients := make([]*mcp.StdioClient, 0, len(servers))
-	for _, cfg := range servers {
-		client, err := mcp.NewStdioClient(ctx, mcp.StdioClientConfig{
-			Name:           cfg.Name,
-			Command:        cfg.Command,
-			Args:           cfg.Args,
-			Env:            cfg.Env,
-			StartupTimeout: cfg.StartupTimeout,
-		})
-		if err != nil {
-			logger.ErrorTag("MCP", "start %s: %v", cfg.Name, err)
-			continue
-		}
-		if err := registry.RegisterMCPTools(cfg.Name, client, client.ListTools()); err != nil {
-			logger.ErrorTag("MCP", "register %s: %v", cfg.Name, err)
-			_ = client.Close()
-			continue
-		}
-		clients = append(clients, client)
-	}
-	return clients
-}
-
 func (r *Runtime) selectTask(id string) (*task.Task, error) {
 	if id != "" {
 		return r.TaskList.GetTask(id)
@@ -723,6 +686,13 @@ func processReportName(report *processReport) string {
 
 func projectDataDir(projectDir string) string {
 	return filepath.Join(projectDir, ".5hagent")
+}
+
+func promptBase(base string) string {
+	if strings.TrimSpace(base) == "" {
+		return "main"
+	}
+	return base
 }
 
 func projectRoot(projectDir string) (string, error) {

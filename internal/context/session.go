@@ -199,15 +199,6 @@ func (s *Store) ReplaceMessages(session *Session, messages []*schema.Message) er
 	return s.saveToFile(session)
 }
 
-// GetMessages 返回会话的所有消息
-// 参数:
-//   - session: Session 实例
-//
-// 返回: 消息列表
-func (s *Store) GetMessages(session *Session) []*schema.Message {
-	return session.messages
-}
-
 // LoadMessages 加载会话的所有消息（从文件）
 // 参数:
 //   - session: Session 实例

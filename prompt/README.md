@@ -6,7 +6,8 @@
 
 - 代码通过 `utils.Load(dir, name)` 读取 `<dir>/<name>.md`。
 - 文件内容会被直接使用，不解析 frontmatter，不做变量替换。
-- `main.md` 是全局 Agent system prompt，必须存在。
+- `main.md` 是 headless/daemon 默认 system prompt，必须存在。
+- `tui.md` 是 TUI 交互入口 system prompt；旧安装缺失时回退到 `main.md`。
 - 可选模型前缀使用 `prefix.<provider>.<model-slug>.md`，存在时叠加到 `main.md` 前面。
 
 ## 模型前缀命名
@@ -25,7 +26,8 @@ hf.co/bartowski/Qwen_Qwen3.6-27B-GGUF:Q3_K_M
 
 ## 当前文件
 
-- `main.md`: 主 Agent system prompt
+- `main.md`: headless/daemon system prompt
+- `tui.md`: TUI 交互 system prompt
 - `compress.md`: 上下文压缩 prompt
 - `plan.md`: 规划相关 prompt
 - `worker.md`: worker 相关 prompt

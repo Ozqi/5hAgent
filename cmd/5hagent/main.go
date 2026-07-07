@@ -72,7 +72,9 @@ func main() {
 // 步骤：初始化 Runtime -> 将 Runtime 对象交给 TUI -> 退出时关闭 MCP 和日志。
 func runTUI(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
-	rt, err := agentrt.New(ctx, runtimeOptions(false))
+	opts := runtimeOptions(false)
+	opts.PromptBase = "tui"
+	rt, err := agentrt.New(ctx, opts)
 	if err != nil {
 		cli.PrintError(err)
 		os.Exit(1)

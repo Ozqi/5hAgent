@@ -102,6 +102,8 @@ type Client interface {
 
 ## 注册流程
 
+当前默认启动链路不执行 MCP 注册：`runtime.New` 不启动 stdio server，也不把远端工具加入 LLM 可见工具列表。下面是保留的显式/未来 lazy 连接流程，不属于 TUI/headless 启动必经路径。
+
 ```mermaid
 sequenceDiagram
     participant Main as main.go
@@ -144,6 +146,8 @@ mcp.{serverName}.{toolName}
 ```
 Agent.RunStream() → toolQueue → exeToolCall() → MCPTool.InvokableRun() → client.CallTool()
 ```
+
+当前默认工具集中没有 `mcp.*` 工具；只有在后续实现 lazy 启动或显式连接并调用 `RegisterMCPTools` 后，上述执行路径才会生效。
 
 ## /mcp 命令
 

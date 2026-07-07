@@ -75,11 +75,11 @@ cmd/5hagent/main.go
 初始化链路：
 
 1. `cmd/5hagent/main.go` 解析 CLI 参数，选择 TUI 或 headless。
-2. `internal/runtime.New` 统一初始化配置、logger、任务文件、session、LLM、Agent、工具和 MCP。
+2. `internal/runtime.New` 统一初始化配置、logger、任务文件、session、LLM、Agent 和本地工具。
 3. `tools.NewRegistry().Init` 注册 base/task/skill/sys 工具和 registry 级工具元数据。
 4. `toolRegistry.RegisterContextTool` 注册 `context.context`。
-5. MCP server 启动后向当前 registry 追加注册 `mcp.*` 工具。
-6. Runtime 收集当前 registry 的所有 `schema.ToolInfo`，调用 `WithTools` 生成绑定工具后的 model，再注入 Agent。
+5. Runtime 收集当前 registry 的所有 `schema.ToolInfo`，调用 `WithTools` 生成绑定工具后的 model，再注入 Agent。
+6. 启动阶段不启动 MCP stdio server，也不等待 MCP 工具注册；`/mcp` 当前只管理配置。
 
 运行链路：
 
@@ -106,6 +106,7 @@ cmd/5hagent/main.go
 - `toolRegistry.RegisterContextTool(llm, promptDir)` 注册 `context.context`，必须在 `WithTools` 前调用。
 - `toolRegistry.RegisterMCPTools(serverName, client, specs)` 注册 MCP 远端工具。
 - 包级 `InitRegistry/RegisterContextTool/RegisterMCPTools` 仍代理默认 registry，只用于兼容旧入口。
+- 当前启动链路不调用 `RegisterMCPTools`，避免 TUI/headless 启动等待外部 MCP 进程；需要恢复 MCP 工具执行时应做 lazy 启动或显式连接。
 
 LLM 可见工具当前包括：
 
@@ -120,7 +121,8 @@ LLM 可见工具当前包括：
 - `skill.skill`
 - `context.context`
 - `sys.ipc`
-- `mcp.<server>.<tool>`
+
+`mcp.<server>.<tool>` 当前不是默认启动后的 LLM 可见工具；只有后续实现 lazy 启动或显式连接并注册 MCP tools 后才会出现。
 
 当前执行策略：`RunStream` 中 LLM stream 读取和工具 worker 可以重叠；多个工具调用在单个 worker 内仍是串行执行。不要把当前实现描述成“只读工具并行”。
 
