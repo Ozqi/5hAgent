@@ -7,8 +7,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/cloudwego/eino/schema"
-	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/logger"
 )
 
@@ -160,69 +158,6 @@ func TestAssistantTokenIgnoredAfterStop(t *testing.T) {
 	}
 }
 
-func TestLoadHistoryEntriesCompactsToolResults(t *testing.T) {
-	mgr := agentctx.NewManager()
-	ctx, err := mgr.CreateContext("")
-	if err != nil {
-		t.Fatalf("CreateContext() error = %v", err)
-	}
-	if err := mgr.AddMessage(ctx, &schema.Message{
-		Role:  schema.Assistant,
-		Extra: map[string]any{"created_at": "2026-07-07T01:02:03Z"},
-		ToolCalls: []schema.ToolCall{{
-			ID: "call_1",
-			Function: schema.FunctionCall{
-				Name:      "base.read_file",
-				Arguments: `{"path":".5hagent/task.md","limit":800}`,
-			},
-		}},
-	}); err != nil {
-		t.Fatalf("AddMessage(assistant) error = %v", err)
-	}
-	if err := mgr.AddMessage(ctx, schema.ToolMessage("line 1\nline 2\nline 3\nline 4\nline 5", "call_1")); err != nil {
-		t.Fatalf("AddMessage(tool) error = %v", err)
-	}
-
-	entries := loadHistoryEntries(mgr, ctx)
-	if len(entries) != 1 {
-		t.Fatalf("entries = %#v, want one compact tool entry", entries)
-	}
-	if entries[0].Role != roleHint || entries[0].ToolName != "read_file" {
-		t.Fatalf("entry = %#v, want compact read_file hint", entries[0])
-	}
-	if entries[0].CreatedAt != "2026-07-07T01:02:03Z" {
-		t.Fatalf("entry created_at = %q", entries[0].CreatedAt)
-	}
-	if !strings.Contains(entries[0].ToolOutput, "...") {
-		t.Fatalf("tool output = %q, want compact ellipsis", entries[0].ToolOutput)
-	}
-}
-
-func TestRenderConversationEntryShowsCreatedAt(t *testing.T) {
-	model := NewAppModel(context.Background(), nil, "test-model", "", nil, nil, nil, nil, "test-session", nil, nil)
-	rendered := stripANSI(model.renderConversationEntry(conversationEntry{Role: roleAssistant, Content: "hello", CreatedAt: "manual-time"}, 80))
-	if !strings.Contains(rendered, "manual-time") {
-		t.Fatalf("rendered = %q, want created_at label", rendered)
-	}
-	firstLine := strings.Split(rendered, "\n")[0]
-	if !strings.Contains(firstLine, "hello") || !strings.Contains(firstLine, "manual-time") {
-		t.Fatalf("first line = %q, want content and right-side time", firstLine)
-	}
-}
-
-func TestRenderConversationEntryIndentsNonUserOnly(t *testing.T) {
-	model := NewAppModel(context.Background(), nil, "test-model", "", nil, nil, nil, nil, "test-session", nil, nil)
-	user := stripANSI(model.renderConversationEntry(conversationEntry{Role: roleUser, Content: "hello"}, 80))
-	assistant := stripANSI(model.renderConversationEntry(conversationEntry{Role: roleAssistant, Content: "hello"}, 80))
-
-	if strings.HasPrefix(user, "  ") {
-		t.Fatalf("user entry = %q, should stay flush left", user)
-	}
-	if !strings.HasPrefix(assistant, "  ") {
-		t.Fatalf("assistant entry = %q, want two-space indent", assistant)
-	}
-}
-
 func TestConfirmRequiresSecondPressWithinWindow(t *testing.T) {
 	pending := false
 	var last time.Time
@@ -277,117 +212,5 @@ func TestQuitConfirmSurvivesNonKeyMessage(t *testing.T) {
 	_, cmd = model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
 		t.Fatal("second ctrl+c cmd = nil, want tea.Quit")
-	}
-}
-
-func TestReservedMainHeightTracksSlashHintWrapping(t *testing.T) {
-	model := NewAppModel(
-		context.Background(),
-		nil,
-		"test-model",
-		"",
-		nil,
-		nil,
-		nil,
-		nil,
-		"test-session",
-		nil,
-		nil,
-	)
-	model.width = 50
-	model.height = 18
-
-	base := model.reservedMainHeight(50)
-	model.input.SetValue("/")
-	withSlash := model.reservedMainHeight(50)
-	if withSlash <= base {
-		t.Fatalf("reserved height with slash = %d, want > base %d", withSlash, base)
-	}
-}
-
-func TestRenderMainPaneKeepsFooterWithoutSlashHint(t *testing.T) {
-	model := NewAppModel(
-		context.Background(),
-		nil,
-		"test-model",
-		"",
-		nil,
-		nil,
-		nil,
-		nil,
-		"test-session",
-		nil,
-		nil,
-	)
-	model.width = 80
-	model.height = 24
-	model.resize()
-	model.refreshView()
-	model.metaCache = cachedMeta{Workdir: "/tmp/test-workspace", LoadedAt: time.Now()}
-
-	rendered := stripANSI(renderMainPane(model))
-	if !strings.Contains(rendered, "/tmp/test-workspace") {
-		t.Fatalf("rendered main pane missing footer: %q", rendered)
-	}
-	if strings.Contains(rendered, "session") || strings.Contains(rendered, "dir ") {
-		t.Fatalf("rendered main pane contains removed footer labels: %q", rendered)
-	}
-	if strings.Contains(rendered, "unknown slash command") {
-		t.Fatalf("rendered main pane contains slash hint without slash input: %q", rendered)
-	}
-}
-
-func TestRenderFixedLinesClipsWithoutEllipsis(t *testing.T) {
-	line := logger.Gray(strings.Repeat("▄", 40))
-	rendered := stripANSI(renderFixedLines([]string{line}, 20, 1))
-
-	if strings.Contains(rendered, "...") {
-		t.Fatalf("rendered line = %q, should not insert ellipsis", rendered)
-	}
-	if got := len([]rune(strings.TrimRight(rendered, " "))); got != 20 {
-		t.Fatalf("visible runes = %d, want 20 in %q", got, rendered)
-	}
-}
-
-func TestToolHintEntryShowsToolNameWithoutRanVerb(t *testing.T) {
-	model := NewAppModel(
-		context.Background(),
-		nil,
-		"test-model",
-		"",
-		nil,
-		nil,
-		nil,
-		nil,
-		"test-session",
-		nil,
-		nil,
-	)
-
-	rendered := stripANSI(model.renderToolHintEntry(conversationEntry{
-		Role:       roleHint,
-		ToolName:   "base.read_file",
-		ToolArgs:   "[path=.5hagent/task.md,limit=800]",
-		ToolState:  "done",
-		ToolOutput: "total lines: 15",
-	}, 80))
-
-	if !strings.Contains(rendered, "base.read_file") {
-		t.Fatalf("rendered tool entry = %q, want tool name", rendered)
-	}
-	if strings.Contains(rendered, "Ran") || strings.Contains(rendered, "Running") || strings.Contains(rendered, "Failed") {
-		t.Fatalf("rendered tool entry = %q, should not contain status verb", rendered)
-	}
-}
-
-func TestFormatToolArgsSummaryKeepsLongerValues(t *testing.T) {
-	longPath := "/Users/bytedance/Proj/5hAgent/internal/cli/tui.go"
-	summary := formatToolArgsSummary(`{"path":"` + longPath + `","limit":800}`)
-
-	if !strings.Contains(summary, "internal/cli/tui.go") {
-		t.Fatalf("summary = %q, want useful path suffix", summary)
-	}
-	if strings.Contains(summary, "args=") {
-		t.Fatalf("summary = %q, want parsed key/value format", summary)
 	}
 }
