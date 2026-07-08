@@ -210,6 +210,19 @@ func TestRenderConversationEntryShowsCreatedAt(t *testing.T) {
 	}
 }
 
+func TestRenderConversationEntryIndentsNonUserOnly(t *testing.T) {
+	model := NewAppModel(context.Background(), nil, "test-model", "", nil, nil, nil, nil, "test-session", nil, nil)
+	user := stripANSI(model.renderConversationEntry(conversationEntry{Role: roleUser, Content: "hello"}, 80))
+	assistant := stripANSI(model.renderConversationEntry(conversationEntry{Role: roleAssistant, Content: "hello"}, 80))
+
+	if strings.HasPrefix(user, "  ") {
+		t.Fatalf("user entry = %q, should stay flush left", user)
+	}
+	if !strings.HasPrefix(assistant, "  ") {
+		t.Fatalf("assistant entry = %q, want two-space indent", assistant)
+	}
+}
+
 func TestConfirmRequiresSecondPressWithinWindow(t *testing.T) {
 	pending := false
 	var last time.Time

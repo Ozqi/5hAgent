@@ -1384,24 +1384,29 @@ func cleanDisplayText(text string) string {
 }
 
 func (m *AppModel) renderConversationEntry(entry conversationEntry, width int) string {
+	innerWidth := max(8, width-2)
 	switch entry.Role {
 	case roleUser:
 		body := compactParagraph(strings.TrimSpace(entry.Content))
 		return withEntryTime(entry, renderUserEntry(body, width), width)
 	case roleAssistant:
 		content := strings.TrimRight(renderMarkdownForTerminal(normalizeAssistantContent(entry.Content), true), "\n")
-		return withEntryTime(entry, wrapVisibleText(content, max(8, width)), width)
+		return renderIndentedEntry(withEntryTime(entry, wrapVisibleText(content, innerWidth), innerWidth))
 	case roleHint:
-		return withEntryTime(entry, m.renderToolHintEntry(entry, width), width)
+		return renderIndentedEntry(withEntryTime(entry, m.renderToolHintEntry(entry, innerWidth), innerWidth))
 	case roleThinking:
-		return withEntryTime(entry, renderThinkingEntry(entry.Content, width), width)
+		return renderIndentedEntry(withEntryTime(entry, renderThinkingEntry(entry.Content, innerWidth), innerWidth))
 	case roleTool:
-		return withEntryTime(entry, renderToolEntry(entry.Content, width), width)
+		return renderIndentedEntry(withEntryTime(entry, renderToolEntry(entry.Content, innerWidth), innerWidth))
 	case roleSystem:
-		return withEntryTime(entry, renderSystemEntry(entry.SystemTitle, entry.Content, width), width)
+		return renderIndentedEntry(withEntryTime(entry, renderSystemEntry(entry.SystemTitle, entry.Content, innerWidth), innerWidth))
 	default:
-		return withEntryTime(entry, wrapVisibleText(strings.TrimSpace(entry.Content), width), width)
+		return renderIndentedEntry(withEntryTime(entry, wrapVisibleText(strings.TrimSpace(entry.Content), innerWidth), innerWidth))
 	}
+}
+
+func renderIndentedEntry(rendered string) string {
+	return indentLines(rendered, "  ", "  ")
 }
 
 func withEntryTime(entry conversationEntry, rendered string, width int) string {

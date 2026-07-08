@@ -182,9 +182,9 @@ func renderMarkdownBlock(block string, color bool) string {
 	case strings.HasPrefix(trimmed, "#"):
 		return applyInlineMarkdown(colorHeading(trimmed), color)
 	case strings.HasPrefix(trimmed, ">"):
-		return colorQuote(trimmed, color)
+		return renderQuoteBlock(block, color)
 	case isListLine(trimmed):
-		return colorListLine(trimmed, color)
+		return colorListLine(block, color)
 	case isTableLine(trimmed):
 		return renderTable(block, color)
 	default:
@@ -216,8 +216,7 @@ func renderCodeBlock(block string, color bool) string {
 	return strings.Join(lines, "\n")
 }
 
-// renderTable 渲染 markdown 表格为终端友好格式
-// 使用 box-drawing 字符: │ ─ ┬ ┴ ┤ ├ ┼
+// renderTable 渲染 markdown 表格，保留 Markdown 的管线形态并对齐列宽。
 func renderTable(block string, color bool) string {
 	lines := strings.Split(strings.TrimSpace(block), "\n")
 	if len(lines) < 1 {
@@ -263,23 +262,8 @@ func renderTable(block string, color bool) string {
 		}
 	}
 
-	// 构建渲染结果
 	var result []string
 	for r, row := range rawRows {
-		// 分隔行（在 header 之后）
-		if r == 1 && sepIdx >= 0 {
-			parts := make([]string, numCols)
-			for c := 0; c < numCols; c++ {
-				parts[c] = strings.Repeat("─", colWidths[c]+2)
-			}
-			sep := "├" + strings.Join(parts, "┼") + "┤"
-			if color {
-				sep = logger.Gray(sep)
-			}
-			result = append(result, sep)
-		}
-
-		// 数据行
 		parts := make([]string, numCols)
 		for c := 0; c < numCols; c++ {
 			cell := ""
@@ -292,7 +276,7 @@ func renderTable(block string, color bool) string {
 			}
 			parts[c] = " " + cell + strings.Repeat(" ", padding) + " "
 		}
-		line := "│" + strings.Join(parts, "│") + "│"
+		line := "|" + strings.Join(parts, "|") + "|"
 		if color {
 			if r == 0 {
 				line = logger.Bold(line)
@@ -301,6 +285,17 @@ func renderTable(block string, color bool) string {
 			}
 		}
 		result = append(result, line)
+		if r == 0 && sepIdx >= 0 {
+			sepParts := make([]string, numCols)
+			for c := 0; c < numCols; c++ {
+				sepParts[c] = " " + strings.Repeat("-", max(3, colWidths[c])) + " "
+			}
+			sep := "|" + strings.Join(sepParts, "|") + "|"
+			if color {
+				sep = logger.Gray(sep)
+			}
+			result = append(result, sep)
+		}
 	}
 
 	return strings.Join(result, "\n")
@@ -332,23 +327,50 @@ func colorHeading(line string) string {
 	return logger.Bold(logger.Cyan(text))
 }
 
-func colorQuote(line string, color bool) string {
-	trimmed := strings.TrimSpace(line)
-	text := strings.TrimSpace(strings.TrimPrefix(trimmed, ">"))
-	text = applyInlineMarkdown(text, color)
-	if !color {
-		return "> " + text
+func renderQuoteBlock(block string, color bool) string {
+	lines := strings.Split(strings.TrimSpace(block), "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, colorQuoteLine(line, color))
 	}
-	return logger.Gray(">") + " " + text
+	return strings.Join(out, "\n")
+}
+
+func colorQuoteLine(line string, color bool) string {
+	leading, rest := splitLeadingSpace(line)
+	rest = strings.TrimSpace(rest)
+	level := 0
+	for strings.HasPrefix(rest, ">") {
+		level++
+		rest = strings.TrimSpace(strings.TrimPrefix(rest, ">"))
+	}
+	if level == 0 {
+		level = 1
+	}
+	marker := strings.Repeat("> ", level)
+	text := applyInlineMarkdown(rest, color)
+	if !color {
+		return leading + marker + text
+	}
+	return leading + logger.Gray(marker) + text
 }
 
 func colorListLine(line string, color bool) string {
-	marker, content := splitListMarker(strings.TrimSpace(line))
+	leading, rest := splitLeadingSpace(line)
+	marker, content := splitListMarker(strings.TrimSpace(rest))
 	content = applyInlineMarkdown(content, color)
 	if !color {
-		return marker + content
+		return leading + marker + content
 	}
-	return logger.Yellow(marker) + content
+	return leading + logger.Yellow(marker) + content
+}
+
+func splitLeadingSpace(line string) (string, string) {
+	idx := 0
+	for idx < len(line) && (line[idx] == ' ' || line[idx] == '\t') {
+		idx++
+	}
+	return line[:idx], line[idx:]
 }
 
 func splitListMarker(line string) (string, string) {
