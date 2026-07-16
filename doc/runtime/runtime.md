@@ -52,6 +52,17 @@ runtime.New
 | headless report | `<project>/.5hagent/reports/<task-id>.md` |
 | process report | `<project>/.5hagent/reports/<task-id>.<process-id>.<timestamp>.md` |
 | worklog | `<project>/.5hagent/agents/<agent>/logs/*.md` |
+| tool failure stats | `~/.5hAgent/tool-stats/failures.jsonl` 和 `<project>/.5hagent/agents/<agent>/logs/tool-failures.jsonl` |
+
+## Runtime Hooks
+
+项目可选配置 `<project>/.5hagent/hooks.json`。首版只监听稳定工具事件：
+
+- `tool_start`
+- `tool_end`
+- `tool_error`
+
+hook 异步执行，默认 5s 超时，失败只写 warning，不阻塞主 Agent。事件 payload 通过 stdin 传入 JSON，包含 `event/tool/args_summary/result_summary/error/workspace/session_id/time`。
 
 ## 边界
 

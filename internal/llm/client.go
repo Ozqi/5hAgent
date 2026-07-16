@@ -41,11 +41,6 @@ func (c *LLMClient) GetModel() model.ToolCallingChatModel {
 	return c.model
 }
 
-// GetConfig 获取配置
-func (c *LLMClient) GetConfig() *Config {
-	return c.config
-}
-
 // NewClient 根据 Config.Provider 创建 LLM 客户端。
 // 步骤：规范化 provider -> 选择 provider -> 构造 Eino ToolCallingChatModel。
 func NewClient(ctx context.Context, config *Config) (*LLMClient, error) {

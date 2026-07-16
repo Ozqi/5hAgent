@@ -41,7 +41,7 @@ archived  -> pending/in_progress
 | `list` | 列任务和 progress |
 | `get` | 取单个任务 |
 | `create` | 创建任务 |
-| `update` | 改标题/描述/状态 |
+| `update` | 改任务状态 |
 | `delete` | 删除任务 |
 | `archive` | 归档任务 |
 | `reopen` | 从归档恢复 |

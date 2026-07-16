@@ -60,4 +60,4 @@ ReplaceMessages
 
 - pinned range 和 audit 只在内存中维护，不随 session 恢复。
 - session 是用户会话恢复；daemon/process report 不是 session。
-- `WithToolRuntime` / `WithSystemRuntime` 都是 merge 模式，可任意顺序组合。
+- `WithToolRuntime` 在当前 Agent 运行期间注入消息上下文，供 `context.context` 使用。

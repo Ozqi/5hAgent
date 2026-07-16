@@ -6,7 +6,7 @@
 go test ./internal/systemd ./internal/runtime ./internal/context ./internal/tools ./internal/agent
 ```
 
-覆盖点：事件 dispatch、异步失败、retry、IPC、runtime fake LLM、process report 命名。
+覆盖点：事件 dispatch、异步失败、runtime fake LLM、process report 命名。
 
 ## 构建
 

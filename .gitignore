@@ -35,3 +35,6 @@ testspace/*.txt
 
 # 5hAgent runtime data
 .5hagent/
+
+# Local handoff notes
+TODO.message.md

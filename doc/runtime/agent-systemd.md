@@ -17,10 +17,9 @@ Agent Systemd 是最小 task supervisor。它监听事件，串行启动 `AgentP
 
 | 文件 | 作用 |
 | --- | --- |
-| [systemd.go](../../internal/systemd/systemd.go) | 事件、进程表、调度循环、IPC |
+| [systemd.go](../../internal/systemd/systemd.go) | 事件、进程表、调度循环 |
 | [runtime.go](../../internal/runtime/runtime.go) | `RunProcess` 执行 AgentProcess |
 | [event_source_task.go](../../internal/runtime/event_source_task.go) | `.5hagent/task.md` -> `task.created` |
-| [ipctypes/ipc.go](../../internal/ipctypes/ipc.go) | IPC 消息结构 |
 
 ## 调度链路
 
@@ -44,7 +43,6 @@ Agent Systemd 是最小 task supervisor。它监听事件，串行启动 `AgentP
 | task 状态闭环 | 成功 `completed`；失败 `failed` |
 | report 命名 | `<task-id>.<process-id>.<timestamp>.md` |
 | worklog | `.5hagent/agents/<process-id>/logs/` |
-| IPC | `Send/Recv` 短消息；字段为 `from/to/summary/artifact` |
 | 去重 | `timer.tick` 不进入 seen；进程结束清理相关 key |
 
 ## 不要恢复

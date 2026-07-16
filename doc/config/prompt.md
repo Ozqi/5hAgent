@@ -20,7 +20,6 @@ Prompt 文件安装到 `~/.5hAgent/prompt/`，运行时以用户目录为准。
 | 函数 | 行为 |
 | --- | --- |
 | `utils.Load` | 严格读取 `<name>.md` |
-| `LoadSystemPrompt` | 加载 `main.md + optional prefix` |
 | `LoadSystemPromptBase` | 加载指定 base；TUI 使用 `tui.md`，缺失回退 `main.md` |
 | `ModelPrefixPromptName` | 生成 prefix 文件名 |
 

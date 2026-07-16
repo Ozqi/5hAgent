@@ -53,11 +53,6 @@ func ModelPrefixPromptName(provider, model string) string {
 	return "prefix." + ModelPromptSlug(provider, model)
 }
 
-// LoadSystemPrompt 加载 main.md，并在存在模型定制 prefix 时将其叠加到 main 前面。
-func LoadSystemPrompt(dir, provider, model string) (string, error) {
-	return LoadSystemPromptBase(dir, "main", provider, model)
-}
-
 // LoadSystemPromptBase 加载指定 base prompt，并在存在模型定制 prefix 时将其叠加到 base 前面。
 // 用途：TUI 和 headless 共用模型前缀，但 base prompt 可按入口分离。
 func LoadSystemPromptBase(dir, base, provider, model string) (string, error) {
@@ -253,7 +248,7 @@ func parseModelRef(ref string) (supplier string, model string, err error) {
 	}
 	before, after, ok := strings.Cut(ref, "/")
 	if !ok || before == "" || after == "" {
-		return "", "", fmt.Errorf("LLM_MODEL must use supplier/model format, got %q", ref)
+		return "", "", fmt.Errorf("LLM_MODEL must use provider/model format, got %q", ref)
 	}
 	return before, after, nil
 }

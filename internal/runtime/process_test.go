@@ -71,7 +71,7 @@ func TestRunProcessInjectsSystemPrompt(t *testing.T) {
 			SystemPrompt:  "process system",
 			ExitCondition: "finish",
 		},
-	}, nil)
+	})
 	if err != nil {
 		t.Fatalf("RunProcess() error = %v", err)
 	}
@@ -121,7 +121,7 @@ func TestRunProcessUpdatesSourceTaskAndReportTrace(t *testing.T) {
 			ExitCondition: "finish",
 		},
 	}
-	if err := rt.RunProcess(context.Background(), proc, nil); err != nil {
+	if err := rt.RunProcess(context.Background(), proc); err != nil {
 		t.Fatalf("RunProcess() error = %v", err)
 	}
 	updated, err := list.GetTask("task-a")
@@ -188,7 +188,7 @@ func TestRunProcessForbidsToolsWhenTaskSaysNoTools(t *testing.T) {
 			ExitCondition: "finish",
 		},
 	}
-	if err := rt.RunProcess(context.Background(), proc, nil); err != nil {
+	if err := rt.RunProcess(context.Background(), proc); err != nil {
 		t.Fatalf("RunProcess() error = %v", err)
 	}
 	if len(model.messages) != 0 {

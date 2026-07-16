@@ -82,7 +82,7 @@ func runTUI(cmd *cobra.Command, args []string) {
 	defer rt.Close()
 
 	runTasks := func(ctx context.Context, sink func(logger.ToolEvent)) (string, error) {
-		result, err := rt.RunTasksUntilDone(ctx, agentrt.RunOptions{WorkLog: true, ToolEventSink: sink})
+		result, err := rt.RunTasksUntilDone(ctx, agentrt.RunOptions{WorkLog: false, ToolEventSink: sink})
 		if result == nil {
 			return "", err
 		}
@@ -91,7 +91,10 @@ func runTUI(cmd *cobra.Command, args []string) {
 	switchModel := func(ctx context.Context, ref string) (string, error) {
 		return rt.SwitchModel(ctx, ref)
 	}
-	if err := cli.LaunchTUI(ctx, rt.Agent, rt.ModelName, rt.PromptDir, rt.TaskList, rt.Agent.GetSkillManager(), rt.CtxManager, rt.MessageCtx, rt.SessionID, runTasks, switchModel); err != nil {
+	onToolEvent := func(event logger.ToolEvent) {
+		rt.RecordToolEvent(event)
+	}
+	if err := cli.LaunchTUI(ctx, rt.Agent, rt.ModelName, rt.PromptDir, rt.TaskList, rt.Agent.GetSkillManager(), rt.CtxManager, rt.MessageCtx, rt.SessionID, runTasks, switchModel, onToolEvent); err != nil {
 		cli.PrintError(fmt.Errorf("tui error: %w", err))
 		os.Exit(1)
 	}

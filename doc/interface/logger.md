@@ -8,7 +8,7 @@
 
 | 文件 | 作用 |
 | --- | --- |
-| [logger.go](../../internal/logger/logger.go) | 带标签日志、debug log 文件 |
+| [logger.go](../../internal/logger/logger.go) | 带标签日志、普通 log 文件 |
 | [toolprint.go](../../internal/logger/toolprint.go) | 工具调用/结果/错误文本格式 |
 | [color.go](../../internal/logger/color.go) | ANSI 颜色 |
 | [worklog.go](../../internal/runtime/worklog.go) | headless/process 工作日志 |

@@ -8,12 +8,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
 	"time"
-
-	"github.com/lzq/5hAgent/internal/ipctypes"
 )
 
 // =============================================================================
@@ -100,14 +99,8 @@ func NewFileEventSource(path string, eventType string, source string, interval t
 }
 
 // =============================================================================
-// 调度器状态：进程表、事件队列、IPC mailbox
+// 调度器状态：进程表、事件队列
 // =============================================================================
-
-// IPC 是 Agent Systemd 内部使用的结构化进程通信接口。
-type IPC interface {
-	Send(msg ipctypes.Message) error
-	Recv(pid string) ([]ipctypes.Message, error)
-}
 
 // AgentProcess 是一个运行中的 Agent 进程记录。
 type AgentProcess struct {
@@ -125,19 +118,18 @@ type AgentProcess struct {
 
 // ProcessRunner 是 AgentProcess 的执行层接口。
 type ProcessRunner interface {
-	RunProcess(ctx context.Context, proc *AgentProcess, ipc IPC) error
+	RunProcess(ctx context.Context, proc *AgentProcess) error
 }
 
 // AgentSystemd 管理 AgentProcess 生命周期。
 // 必须通过 New 创建；cond 和内部 map 依赖 New 完成初始化。
 type AgentSystemd struct {
-	mu        sync.Mutex                    // 保护进程表和 nextPID
-	cond      *sync.Cond                    // 等待事件队列
-	processes map[string]*AgentProcess      // 进程表；后续实现前不得外泄可变引用
-	mailbox   map[string][]ipctypes.Message // 进程短消息队列
-	events    []Event                       // 内存事件队列
-	seen      map[string]bool               // 已入队事件 ID，用于去重
-	nextPID   int                           // 本地递增进程号
+	mu        sync.Mutex               // 保护进程表和 nextPID
+	cond      *sync.Cond               // 等待事件队列
+	processes map[string]*AgentProcess // 进程表；后续实现前不得外泄可变引用
+	events    []Event                  // 内存事件队列
+	seen      map[string]bool          // 已入队事件 ID，用于去重
+	nextPID   int                      // 本地递增进程号
 }
 
 // New 创建 AgentSystemd。
@@ -145,7 +137,7 @@ type AgentSystemd struct {
 // 调用层级：外部入口 -> New -> Run/RunProcess。
 // 步骤：初始化进程表；不读取配置，不创建 runtime，不调用 LLM。
 func New() *AgentSystemd {
-	s := &AgentSystemd{processes: map[string]*AgentProcess{}, mailbox: map[string][]ipctypes.Message{}, seen: map[string]bool{}, nextPID: 1}
+	s := &AgentSystemd{processes: map[string]*AgentProcess{}, seen: map[string]bool{}, nextPID: 1}
 	s.cond = sync.NewCond(&s.mu)
 	return s
 }
@@ -316,11 +308,21 @@ func (s *AgentSystemd) StartSource(ctx context.Context, source EventSource) {
 		for {
 			event, err := source.Next(ctx)
 			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				if isRecoverableSourceError(err) {
+					continue
+				}
 				return
 			}
 			s.Emit(event)
 		}
 	}()
+}
+
+func isRecoverableSourceError(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission)
 }
 
 // Next 等待文件变化并返回一个事件。
@@ -383,23 +385,6 @@ func (w *FileEventSource) poll() (Event, bool, error) {
 // 进程执行：串行创建 AgentProcess，并把执行交给外部 runner
 // =============================================================================
 
-// ListProcesses 返回当前进程表快照。
-// 参数：无。
-// 调用层级：调度状态观测 -> ListProcesses。
-// 步骤：复制进程结构体列表；不返回内部 map 和指针，避免外部改写进程表。
-func (s *AgentSystemd) ListProcesses() []AgentProcess {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	processes := make([]AgentProcess, 0, len(s.processes))
-	for _, proc := range s.processes {
-		if proc == nil {
-			continue
-		}
-		processes = append(processes, *proc)
-	}
-	return processes
-}
-
 // RunProcess 同步运行一个 AgentProcess。
 // 参数：ctx 控制执行生命周期；runner 是外部执行引擎；spec 只包含 SystemPrompt/ExitCondition。
 // 调用层级：Agent Systemd 单进程调度 -> RunProcess -> runner.RunProcess。
@@ -442,7 +427,7 @@ func (s *AgentSystemd) RunProcessWithSource(ctx context.Context, runner ProcessR
 	s.processes[id] = proc
 	s.mu.Unlock()
 
-	err := runner.RunProcess(runCtx, proc, s)
+	err := runner.RunProcess(runCtx, proc)
 	s.mu.Lock()
 	eventType := "process.exited"
 	if err != nil {
@@ -458,49 +443,4 @@ func (s *AgentSystemd) RunProcessWithSource(ctx context.Context, runner ProcessR
 	s.mu.Unlock()
 	s.Emit(Event{Type: eventType, Source: "systemd", ProcessID: proc.ID, CreatedAt: endedAt})
 	return proc, nil
-}
-
-// =============================================================================
-// IPC：只传短消息或 artifact 路径，不共享 context
-// =============================================================================
-
-// Send 投递一条进程间短消息。
-// 参数：msg.To 是目标进程 ID；Summary 是短文本；Artifact 是可选文件路径。
-// 调用层级：后续 sys.ipc.send 工具 -> Send。
-// 步骤：校验目标进程存在 -> 补 CreatedAt -> 放入目标进程 mailbox。
-func (s *AgentSystemd) Send(msg ipctypes.Message) error {
-	if msg.To == "" {
-		return fmt.Errorf("ipc target is required")
-	}
-	if msg.Summary == "" && msg.Artifact == "" {
-		return fmt.Errorf("ipc summary or artifact is required")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.processes[msg.To]; !ok {
-		return fmt.Errorf("process not found: %s", msg.To)
-	}
-	if msg.CreatedAt.IsZero() {
-		msg.CreatedAt = time.Now().UTC()
-	}
-	s.mailbox[msg.To] = append(s.mailbox[msg.To], msg)
-	return nil
-}
-
-// Recv 拉取并清空目标进程的短消息队列。
-// 参数：pid 是接收方进程 ID。
-// 调用层级：后续 sys.ipc.recv 工具 -> Recv。
-// 步骤：校验进程存在 -> 复制消息 -> 清空 mailbox；不返回任何 context。
-func (s *AgentSystemd) Recv(pid string) ([]ipctypes.Message, error) {
-	if pid == "" {
-		return nil, fmt.Errorf("process id is required")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.processes[pid]; !ok {
-		return nil, fmt.Errorf("process not found: %s", pid)
-	}
-	messages := append([]ipctypes.Message(nil), s.mailbox[pid]...)
-	delete(s.mailbox, pid)
-	return messages, nil
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/tool"
@@ -137,6 +138,34 @@ type execResult struct {
 type toolRequest struct {
 	idx int
 	tc  schema.ToolCall
+}
+
+func (a *Agent) executeToolWithRepeatGuard(ctx context.Context, repeatGuard *toolRepeatGuard, req toolRequest) execResult {
+	if repeatGuard != nil {
+		if err := repeatGuard.Check([]schema.ToolCall{req.tc}); err != nil {
+			return execResult{idx: req.idx, tc: req.tc, err: err}
+		}
+	}
+	result, execErr := a.exeToolCall(ctx, req.tc, req.idx, req.idx+1, false)
+	return execResult{idx: req.idx, tc: req.tc, result: result, err: execErr}
+}
+
+func (a *Agent) runToolWorker(ctx context.Context, repeatGuard *toolRepeatGuard, toolQueue <-chan toolRequest, toolResultCh chan<- execResult) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(toolResultCh)
+		for req := range toolQueue {
+			result := a.executeToolWithRepeatGuard(ctx, repeatGuard, req)
+			select {
+			case toolResultCh <- result:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return &wg
 }
 
 // exeToolCall 执行单个工具调用
@@ -271,13 +300,17 @@ func toolHint(tc schema.ToolCall) string {
 		return "check the tool arguments and retry with an absolute path under the workspace"
 	case "exec_shell":
 		return "check the shell command, quote paths with spaces, prefer commands inside workspace"
+	case "delete", "create", "update", "get", "list", "archive", "reopen":
+		if strings.HasPrefix(name, "task.") {
+			return fmt.Sprintf("there is no %s tool. Use tool name task.task with arguments {\"action\":\"%s\",\"id\":\"...\"}", name, display)
+		}
 	case "task":
 		return "use exact task action values only: create/update/get/list/delete/archive/reopen. To finish a task use {\"action\":\"update\",\"id\":\"...\",\"status\":\"completed\"}; create requires id/title/description"
 	case "skill":
 		return "use action=list or action=get with an existing skill name"
 	}
 
-	if meta, ok := tools.Lookup(name); ok && meta.Category == tools.CategoryMCP {
+	if strings.HasPrefix(name, "mcp.") {
 		// MCP 错误已在 mcp_tool.go 返回具体信息，不添加通用提示干扰
 		return ""
 	}

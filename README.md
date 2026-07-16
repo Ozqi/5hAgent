@@ -44,6 +44,8 @@ AGENT_CONTEXT_AUTO_COMPRESS=true
 
 这里的 `FORMAT=openai|claude` 表示接口协议，不是 provider 名。临时切换时可以不改 `.env`：
 
+安装脚本遇到旧版 `LLM_PROVIDER` / `LLM_SUPPLIER` 配置时会先备份原文件；如果能找到对应 `LLM_<PROVIDER>_MODEL`，会补充 `LLM_MODEL=provider/model`，但不会删除旧变量。
+
 ```bash
 5hagent --model openrouter/openrouter/owl-alpha run
 5hagent --llm-model claude-opus-4-6 run

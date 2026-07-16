@@ -89,29 +89,30 @@ Use systematic checks.
 	if createdTask.Status != task.StatusCompleted {
 		t.Fatalf("task status mismatch: %s", createdTask.Status)
 	}
-	if err := InitRegistry(taskList, skillMgr); err != nil {
+	registry := NewRegistry()
+	if err := registry.Init(taskList, skillMgr); err != nil {
 		t.Fatalf("init registry failed: %v", err)
 	}
-	if got := GetToolByName("task"); got == nil {
+	if got := registry.Get("task"); got == nil {
 		t.Fatalf("task tool was not exposed by registry")
 	}
-	if got := GetToolByName("skill"); got == nil {
+	if got := registry.Get("skill"); got == nil {
 		t.Fatalf("skill tool was not exposed by registry")
 	}
-	if got := GetToolByName("sys.session"); got != nil {
+	if got := registry.Get("sys.session"); got != nil {
 		t.Fatalf("sys.session should not be exposed by registry")
 	}
-	if got := GetToolByName("sys.ipc"); got == nil {
-		t.Fatalf("sys.ipc tool was not exposed by registry")
+	if got := registry.Get("sys.ipc"); got != nil {
+		t.Fatalf("sys.ipc should not be exposed by registry")
 	}
-	if err := RegisterMCPTools("demo", mcpClient, []mcp.ToolSpec{{
+	if err := registry.RegisterMCPTools("demo", mcpClient, []mcp.ToolSpec{{
 		Name:        "lookup",
 		Description: "lookup data",
 		InputSchema: json.RawMessage(`{"type":"object"}`),
 	}}); err != nil {
 		t.Fatalf("register mcp tools failed: %v", err)
 	}
-	if got := GetToolByName("mcp.demo.lookup"); got == nil {
+	if got := registry.Get("mcp.demo.lookup"); got == nil {
 		t.Fatalf("mcp tool was not exposed by registry")
 	}
 }

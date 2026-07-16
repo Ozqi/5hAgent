@@ -58,38 +58,6 @@ func TestInspectReturnsMessageIndexAndPinnedFlags(t *testing.T) {
 	}
 }
 
-func TestValidateEditableRangeRejectsProtectedRecentAndPinnedMessages(t *testing.T) {
-	mgr := NewManager()
-	ctx, err := mgr.CreateContext("")
-	if err != nil {
-		t.Fatalf("CreateContext() error = %v", err)
-	}
-	if err := mgr.AddMessage(ctx, &schema.Message{Role: schema.System, Content: "system prompt"}); err != nil {
-		t.Fatalf("AddMessage(system) error = %v", err)
-	}
-	for i := 0; i < KeepRecentMessages+4; i++ {
-		if err := mgr.AddMessage(ctx, &schema.Message{Role: schema.User, Content: "history"}); err != nil {
-			t.Fatalf("AddMessage(history %d) error = %v", i, err)
-		}
-	}
-
-	if err := mgr.ValidateEditableRange(ctx, ContextRange{Start: 1, End: 3}); err != nil {
-		t.Fatalf("ValidateEditableRange(editable old range) error = %v", err)
-	}
-	if err := mgr.ValidateEditableRange(ctx, ContextRange{Start: 0, End: 1}); err == nil {
-		t.Fatalf("ValidateEditableRange(system range) error = nil, want error")
-	}
-	if err := mgr.ValidateEditableRange(ctx, ContextRange{Start: 5, End: 6}); err == nil {
-		t.Fatalf("ValidateEditableRange(recent range) error = nil, want error")
-	}
-	if err := mgr.PinRange(ctx, ContextRange{Start: 2, End: 2, Reason: "keep"}); err != nil {
-		t.Fatalf("PinRange() error = %v", err)
-	}
-	if err := mgr.ValidateEditableRange(ctx, ContextRange{Start: 1, End: 3}); err == nil {
-		t.Fatalf("ValidateEditableRange(pinned range) error = nil, want error")
-	}
-}
-
 func TestAuditRecordsPinEvents(t *testing.T) {
 	mgr := NewManager()
 	ctx, err := mgr.CreateContext("")
@@ -113,6 +81,37 @@ func TestAuditRecordsPinEvents(t *testing.T) {
 	}
 	if events[0].CreatedAt.IsZero() {
 		t.Fatalf("Audit()[0].CreatedAt is zero")
+	}
+}
+
+func TestCompressFallbackPreservesSystemMessages(t *testing.T) {
+	mgr := NewManager()
+	ctx, err := mgr.CreateContext("")
+	if err != nil {
+		t.Fatalf("CreateContext() error = %v", err)
+	}
+	if err := mgr.AddMessage(ctx, &schema.Message{Role: schema.System, Content: "system prompt"}); err != nil {
+		t.Fatalf("AddMessage(system) error = %v", err)
+	}
+	for i := 0; i < MaxMessages+5; i++ {
+		if err := mgr.AddMessage(ctx, &schema.Message{Role: schema.User, Content: "history"}); err != nil {
+			t.Fatalf("AddMessage(history %d) error = %v", i, err)
+		}
+	}
+
+	before, after, err := mgr.Compress(ctx)
+	if err != nil {
+		t.Fatalf("Compress() error = %v", err)
+	}
+	if before <= after {
+		t.Fatalf("Compress() before=%d after=%d, want shrink", before, after)
+	}
+	messages, err := mgr.GetMessages(ctx)
+	if err != nil {
+		t.Fatalf("GetMessages() error = %v", err)
+	}
+	if messages[0].Role != schema.System || messages[0].Content != "system prompt" {
+		t.Fatalf("first message after compress = %+v, want original system prompt", messages[0])
 	}
 }
 

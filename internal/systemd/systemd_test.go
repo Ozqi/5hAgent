@@ -3,17 +3,16 @@ package systemd
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 	"time"
-
-	"github.com/lzq/5hAgent/internal/ipctypes"
 )
 
 type fakeRunner struct {
 	err error
 }
 
-func (r fakeRunner) RunProcess(ctx context.Context, proc *AgentProcess, ipc IPC) error {
+func (r fakeRunner) RunProcess(ctx context.Context, proc *AgentProcess) error {
 	return r.err
 }
 
@@ -22,7 +21,20 @@ type blockingRunner struct {
 	release chan struct{}
 }
 
-func (r blockingRunner) RunProcess(ctx context.Context, proc *AgentProcess, ipc IPC) error {
+type flakySource struct {
+	calls int
+}
+
+func (s *flakySource) Next(ctx context.Context) (Event, error) {
+	s.calls++
+	if s.calls == 1 {
+		return Event{}, &os.PathError{Op: "stat", Path: "missing", Err: os.ErrNotExist}
+	}
+	<-time.After(10 * time.Millisecond)
+	return Event{ID: "ok", Type: "file.changed", Source: "test"}, nil
+}
+
+func (r blockingRunner) RunProcess(ctx context.Context, proc *AgentProcess) error {
 	close(r.started)
 	select {
 	case <-ctx.Done():
@@ -102,43 +114,6 @@ func TestDispatchInvalidTaskSpecEmitsFailed(t *testing.T) {
 	}
 }
 
-func TestIPCMessageRoundTrip(t *testing.T) {
-	sys := New()
-	sys.processes["agent-1"] = &AgentProcess{ID: "agent-1", State: ProcessRunning}
-	msg := ipctypes.Message{From: "agent-0", To: "agent-1", Summary: "hello"}
-	if err := sys.Send(msg); err != nil {
-		t.Fatalf("Send() error = %v", err)
-	}
-	got, err := sys.Recv("agent-1")
-	if err != nil {
-		t.Fatalf("Recv() error = %v", err)
-	}
-	if len(got) != 1 || got[0].From != "agent-0" || got[0].Summary != "hello" {
-		t.Fatalf("messages = %+v, want one ipc message", got)
-	}
-	again, err := sys.Recv("agent-1")
-	if err != nil {
-		t.Fatalf("second Recv() error = %v", err)
-	}
-	if len(again) != 0 {
-		t.Fatalf("messages after recv = %+v, want empty mailbox", again)
-	}
-}
-
-func TestIPCRejectsInvalidMessage(t *testing.T) {
-	sys := New()
-	sys.processes["agent-1"] = &AgentProcess{ID: "agent-1", State: ProcessRunning}
-	if err := sys.Send(ipctypes.Message{Summary: "missing target"}); err == nil {
-		t.Fatal("Send() error = nil, want missing target error")
-	}
-	if err := sys.Send(ipctypes.Message{To: "agent-404", Summary: "missing process"}); err == nil {
-		t.Fatal("Send() error = nil, want missing process error")
-	}
-	if err := sys.Send(ipctypes.Message{To: "agent-1"}); err == nil {
-		t.Fatal("Send() error = nil, want empty message error")
-	}
-}
-
 func TestTaskCreatedPayloadStrictSchema(t *testing.T) {
 	spec := validSpec()
 	payload, err := json.Marshal(TaskCreatedPayload{ProcessSpec: spec, TaskID: "task-1", TaskTitle: "Task"})
@@ -174,5 +149,21 @@ func TestTaskCreatedPayloadKeepsSourceTrace(t *testing.T) {
 	}
 	if source.ID != "task-1" || source.Title != "Task" || source.EventID != "event-1" {
 		t.Fatalf("source = %+v, want task trace", source)
+	}
+}
+
+func TestStartSourceContinuesAfterRecoverableError(t *testing.T) {
+	sys := New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	source := &flakySource{}
+
+	sys.StartSource(ctx, source)
+	event, ok := sys.nextEvent(ctx)
+	if !ok {
+		t.Fatal("nextEvent() not ok")
+	}
+	if event.ID != "ok" || source.calls < 2 {
+		t.Fatalf("event=%+v calls=%d, want recovered event after retry", event, source.calls)
 	}
 }

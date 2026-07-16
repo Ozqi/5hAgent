@@ -1,7 +1,7 @@
 // ctx.go - 消息上下文管理
-// 功能：Context 创建/克隆、消息存储、LLM 压缩（当消息数超 MaxMessages 时）
+// 功能：Context 创建、消息存储、LLM 压缩（当消息数超 MaxMessages 时）
 // 主要类型：Context, Manager, CompressResult
-// 导出函数：NewManager, CreateContext, CloneContext, GetMessages, AddMessage, Clear, Compress, ShouldCompress, LMCompress, ManualCompress
+// 导出函数：NewManager, CreateContext, GetMessages, AddMessage, Compress, ShouldCompress, LMCompress, ManualCompress
 package context
 
 import (
@@ -10,11 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-	"github.com/lzq/5hAgent/internal/ipctypes"
 	"github.com/lzq/5hAgent/internal/utils"
 )
 
@@ -28,6 +28,7 @@ const (
 // Context Agent 运行上下文
 // 每个 Agent 实例拥有独立的 Context
 type Context struct {
+	mu       sync.RWMutex
 	messages []*schema.Message
 	Session  *Session // 关联的持久化会话（可选）
 	meta     ContextMeta
@@ -42,20 +43,11 @@ type Manager struct {
 
 type toolRuntimeKey struct{}
 
-// IPC 是 Agent Systemd 暴露给系统工具的最小进程通信接口。
-type IPC interface {
-	Send(msg ipctypes.Message) error
-	Recv(pid string) ([]ipctypes.Message, error)
-}
-
 type ToolRuntime struct {
-	Manager   *Manager
-	Context   *Context
-	ProcessID string
-	IPC       IPC
+	Manager *Manager
+	Context *Context
 }
 
-// WithToolRuntime 以 merge 模式注入消息上下文，可与 WithSystemRuntime 任意顺序组合。
 func WithToolRuntime(ctx context.Context, mgr *Manager, msgCtx *Context) context.Context {
 	rt, _ := ctx.Value(toolRuntimeKey{}).(ToolRuntime)
 	rt.Manager = mgr
@@ -63,24 +55,9 @@ func WithToolRuntime(ctx context.Context, mgr *Manager, msgCtx *Context) context
 	return context.WithValue(ctx, toolRuntimeKey{}, rt)
 }
 
-// WithSystemRuntime 以 merge 模式注入进程身份和 IPC，可与 WithToolRuntime 任意顺序组合。
-func WithSystemRuntime(ctx context.Context, mgr *Manager, msgCtx *Context, processID string, ipc IPC) context.Context {
-	rt, _ := ctx.Value(toolRuntimeKey{}).(ToolRuntime)
-	rt.Manager = mgr
-	rt.Context = msgCtx
-	rt.ProcessID = processID
-	rt.IPC = ipc
-	return context.WithValue(ctx, toolRuntimeKey{}, rt)
-}
-
 func ToolRuntimeFrom(ctx context.Context) (ToolRuntime, bool) {
 	rt, ok := ctx.Value(toolRuntimeKey{}).(ToolRuntime)
 	return rt, ok && rt.Manager != nil && rt.Context != nil
-}
-
-func SystemRuntimeFrom(ctx context.Context) (ToolRuntime, bool) {
-	rt, ok := ctx.Value(toolRuntimeKey{}).(ToolRuntime)
-	return rt, ok && rt.ProcessID != "" && rt.IPC != nil
 }
 
 type CompressResult struct {
@@ -149,15 +126,6 @@ func NewMemoryManagerWithStore(sessionDir string) *Manager {
 	return &Manager{store: store, autobind: false}
 }
 
-// NewManagerWithStore 创建带有持久化存储的上下文管理器
-// 参数:
-//   - store: 已初始化的会话存储
-//
-// 返回: Manager 实例
-func NewManagerWithStore(store *Store) *Manager {
-	return &Manager{store: store, autobind: store != nil}
-}
-
 // CreateContext 创建新的 Context
 // 参数:
 //   - sessionID: 会话 ID（可选，为空则创建新会话）
@@ -179,7 +147,7 @@ func (m *Manager) CreateContext(sessionID string) (*Context, error) {
 		// 从 Session 加载已有消息
 		messages, err := m.store.LoadMessages(session)
 		if err == nil && len(messages) > 0 {
-			ctx.messages = messages
+			ctx.messages = cloneMessages(messages)
 		}
 	}
 
@@ -188,6 +156,11 @@ func (m *Manager) CreateContext(sessionID string) (*Context, error) {
 
 // GetSessionID 返回 Context 关联的 Session ID
 func (m *Manager) GetSessionID(ctx *Context) string {
+	if ctx == nil {
+		return ""
+	}
+	ctx.mu.RLock()
+	defer ctx.mu.RUnlock()
 	if ctx.Session != nil {
 		return ctx.Session.ID
 	}
@@ -202,77 +175,17 @@ func (m *Manager) GetLatestSessionID() (string, error) {
 	return m.store.GetLatestID()
 }
 
-// GetStore 返回关联的 Store
-func (m *Manager) GetStore() *Store {
-	return m.store
-}
-
 // GetSessionTitle 返回 Context 关联的 Session 标题
 func (m *Manager) GetSessionTitle(ctx *Context) string {
+	if ctx == nil {
+		return ""
+	}
+	ctx.mu.RLock()
+	defer ctx.mu.RUnlock()
 	if ctx.Session == nil {
 		return ""
 	}
 	return ctx.Session.Title
-}
-
-// BindSession 将内存 Context 显式绑定到持久化 Session。
-// 参数：ctx 是当前内存上下文；sessionID 为空时创建新 session。
-// 调用层级：runtime/TUI/headless 内部入口 -> BindSession -> Store.GetOrCreate/ReplaceMessages。
-// 步骤：获取或创建 session -> 绑定到 ctx -> 把当前 messages 写入 session。
-func (m *Manager) BindSession(ctx *Context, sessionID string) (string, error) {
-	if ctx == nil {
-		return "", fmt.Errorf("context is nil")
-	}
-	if m.store == nil {
-		return "", fmt.Errorf("session store not initialized")
-	}
-	session, err := m.store.GetOrCreate(sessionID)
-	if err != nil {
-		return "", err
-	}
-	ctx.Session = session
-	if err := m.store.ReplaceMessages(session, ctx.messages); err != nil {
-		return "", fmt.Errorf("persist session: %w", err)
-	}
-	return session.ID, nil
-}
-
-// SaveSession 将当前 Context 写入已绑定的 Session。
-// 参数：ctx 必须已经通过 BindSession 或 CreateContext 绑定 Session。
-// 调用层级：runtime/TUI/headless 内部入口 -> SaveSession -> Store.ReplaceMessages。
-// 步骤：校验绑定 -> 重写 session messages。
-func (m *Manager) SaveSession(ctx *Context) error {
-	if ctx == nil {
-		return fmt.Errorf("context is nil")
-	}
-	if m.store == nil {
-		return fmt.Errorf("session store not initialized")
-	}
-	if ctx.Session == nil {
-		return fmt.Errorf("context has no bound session")
-	}
-	return m.store.ReplaceMessages(ctx.Session, ctx.messages)
-}
-
-// DropSession 解除 Context 和 Session 的绑定。
-// 参数：ctx 是当前上下文。
-// 调用层级：runtime/TUI/headless 内部入口 -> DropSession。
-// 步骤：只清空内存绑定，不删除 session 文件，不清空 messages。
-func (m *Manager) DropSession(ctx *Context) error {
-	if ctx == nil {
-		return fmt.Errorf("context is nil")
-	}
-	ctx.Session = nil
-	return nil
-}
-
-// CloneContext 克隆 Context（用于 sub-agent）
-func (m *Manager) CloneContext(parent *Context) (*Context, error) {
-	cloned := &Context{
-		messages: make([]*schema.Message, len(parent.messages)),
-	}
-	copy(cloned.messages, parent.messages)
-	return cloned, nil
 }
 
 // GetMessages 获取 Context 中的所有消息
@@ -281,7 +194,12 @@ func (m *Manager) CloneContext(parent *Context) (*Context, error) {
 //
 // 返回: 消息列表和可能的错误
 func (m *Manager) GetMessages(ctx *Context) ([]*schema.Message, error) {
-	return ctx.messages, nil
+	if ctx == nil {
+		return nil, fmt.Errorf("context is nil")
+	}
+	ctx.mu.RLock()
+	defer ctx.mu.RUnlock()
+	return cloneMessages(ctx.messages), nil
 }
 
 // Inspect 返回当前上下文的结构化视图，不返回完整消息内容。
@@ -289,6 +207,8 @@ func (m *Manager) Inspect(ctx *Context) (*ContextInspect, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("context is nil")
 	}
+	ctx.mu.RLock()
+	defer ctx.mu.RUnlock()
 
 	inspect := &ContextInspect{
 		MessageCount: len(ctx.messages),
@@ -337,6 +257,8 @@ func (m *Manager) PinRange(ctx *Context, r ContextRange) error {
 	if ctx == nil {
 		return fmt.Errorf("context is nil")
 	}
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
 	if err := validateRangeBounds(len(ctx.messages), r); err != nil {
 		return err
 	}
@@ -353,36 +275,17 @@ func (m *Manager) PinRange(ctx *Context, r ContextRange) error {
 
 // Audit 返回上下文管理操作记录。
 func (m *Manager) Audit(ctx *Context) []ContextEvent {
-	if ctx == nil || len(ctx.meta.Audit) == 0 {
+	if ctx == nil {
+		return nil
+	}
+	ctx.mu.RLock()
+	defer ctx.mu.RUnlock()
+	if len(ctx.meta.Audit) == 0 {
 		return nil
 	}
 	events := make([]ContextEvent, len(ctx.meta.Audit))
 	copy(events, ctx.meta.Audit)
 	return events
-}
-
-// ValidateEditableRange 检查指定范围是否允许被压缩或替换。
-func (m *Manager) ValidateEditableRange(ctx *Context, r ContextRange) error {
-	if ctx == nil {
-		return fmt.Errorf("context is nil")
-	}
-	if err := validateRangeBounds(len(ctx.messages), r); err != nil {
-		return err
-	}
-	if rangeContainsAny(ctx.meta.Pinned, r.Start, r.End) {
-		return fmt.Errorf("range %d..%d contains pinned messages", r.Start, r.End)
-	}
-	for i := r.Start; i <= r.End; i++ {
-		if ctx.messages[i].Role == schema.System {
-			return fmt.Errorf("range %d..%d contains protected system message at %d", r.Start, r.End, i)
-		}
-	}
-	for _, idx := range recentHistoryIndexes(ctx.messages) {
-		if idx >= r.Start && idx <= r.End {
-			return fmt.Errorf("range %d..%d contains recent message at %d", r.Start, r.End, idx)
-		}
-	}
-	return nil
 }
 
 // AddMessage 添加消息到 Context
@@ -392,11 +295,17 @@ func (m *Manager) ValidateEditableRange(ctx *Context, r ContextRange) error {
 //
 // 返回: 可能的错误
 func (m *Manager) AddMessage(ctx *Context, msg *schema.Message) error {
+	if ctx == nil {
+		return fmt.Errorf("context is nil")
+	}
+	ctx.mu.Lock()
 	ctx.messages = append(ctx.messages, msg)
+	session := ctx.Session
+	ctx.mu.Unlock()
 
 	// 持久化到 Session
-	if m.store != nil && ctx.Session != nil {
-		if err := m.store.Append(ctx.Session, msg); err != nil {
+	if m.store != nil && session != nil {
+		if err := m.store.Append(session, msg); err != nil {
 			return fmt.Errorf("persist message: %w", err)
 		}
 	}
@@ -406,22 +315,18 @@ func (m *Manager) AddMessage(ctx *Context, msg *schema.Message) error {
 
 // ReplaceMessages 替换上下文消息，并同步持久化 session。
 func (m *Manager) ReplaceMessages(ctx *Context, messages []*schema.Message) error {
-	ctx.messages = messages
-	if m.store != nil && ctx.Session != nil {
-		if err := m.store.ReplaceMessages(ctx.Session, messages); err != nil {
+	if ctx == nil {
+		return fmt.Errorf("context is nil")
+	}
+	ctx.mu.Lock()
+	ctx.messages = cloneMessages(messages)
+	session := ctx.Session
+	ctx.mu.Unlock()
+	if m.store != nil && session != nil {
+		if err := m.store.ReplaceMessages(session, messages); err != nil {
 			return fmt.Errorf("persist replaced messages: %w", err)
 		}
 	}
-	return nil
-}
-
-// Clear 只清空当前内存 Context。
-// 参数:
-//   - ctx: Context 实例
-//
-// 注意：它不会同步清空已绑定的 session 文件；需要持久化覆盖时使用 ReplaceMessages。
-func (m *Manager) Clear(ctx *Context) error {
-	ctx.messages = make([]*schema.Message, 0)
 	return nil
 }
 
@@ -458,7 +363,7 @@ func (m *Manager) SwitchSession(ctx *Context, sessionID string) (*Context, error
 
 	messages, err := m.store.LoadMessages(session)
 	if err == nil {
-		newCtx.messages = messages
+		newCtx.messages = cloneMessages(messages)
 	}
 
 	return newCtx, nil
@@ -471,25 +376,33 @@ func (m *Manager) SwitchSession(ctx *Context, sessionID string) (*Context, error
 // 返回: 压缩前的消息数、压缩后的消息数、可能的错误
 // 功能: 当消息数超过 MaxMessages 时，只保留最近的 KeepRecentMessages 条消息
 func (m *Manager) Compress(ctx *Context) (int, int, error) {
+	if ctx == nil {
+		return 0, 0, fmt.Errorf("context is nil")
+	}
+	ctx.mu.RLock()
 	beforeCount := len(ctx.messages)
 
 	if beforeCount <= MaxMessages {
+		ctx.mu.RUnlock()
 		return beforeCount, beforeCount, nil
 	}
 
-	// 保留最近的消息
-	keepStart := beforeCount - KeepRecentMessages
-	compressed := ctx.messages[keepStart:]
+	compressed := compressFallbackMessages(ctx.messages)
+	ctx.mu.RUnlock()
 	if err := m.ReplaceMessages(ctx, compressed); err != nil {
 		return beforeCount, beforeCount, err
 	}
 
-	afterCount := len(ctx.messages)
-	return beforeCount, afterCount, nil
+	return beforeCount, len(compressed), nil
 }
 
 // ShouldCompress 检查是否需要压缩
 func (m *Manager) ShouldCompress(ctx *Context) bool {
+	if ctx == nil {
+		return false
+	}
+	ctx.mu.RLock()
+	defer ctx.mu.RUnlock()
 	return len(ctx.messages) > MaxMessages
 }
 
@@ -497,7 +410,12 @@ func (m *Manager) ShouldCompress(ctx *Context) bool {
 // 将对话历史格式化后喂给 LLM，用摘要替换旧消息，保留最近 KeepRecentMessages 条。
 // promptDir: prompt 文件目录（用于加载 compress.md）
 func (m *Manager) LMCompress(goCtx context.Context, ctx *Context, llm model.ToolCallingChatModel, promptDir string) (int, int, error) {
+	if ctx == nil {
+		return 0, 0, fmt.Errorf("context is nil")
+	}
+	ctx.mu.RLock()
 	before := len(ctx.messages)
+	ctx.mu.RUnlock()
 	if before <= MaxMessages {
 		return before, before, nil
 	}
@@ -519,7 +437,12 @@ func (m *Manager) LMCompress(goCtx context.Context, ctx *Context, llm model.Tool
 }
 
 func (m *Manager) ManualCompress(goCtx context.Context, ctx *Context, llm model.ToolCallingChatModel, promptDir string, archiveDir string) (*CompressResult, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("context is nil")
+	}
+	ctx.mu.RLock()
 	before := len(ctx.messages)
+	ctx.mu.RUnlock()
 	compressPrompt, err := utils.Load(promptDir, "compress")
 	if err != nil {
 		return nil, fmt.Errorf("load compress prompt: %w", err)
@@ -549,10 +472,13 @@ func (m *Manager) compressWithPrompt(goCtx context.Context, ctx *Context, llm mo
 		return nil, "", nil, fmt.Errorf("compression model is required")
 	}
 	// 压缩边界：system 消息全部保留；较旧 history 汇总成一条摘要；最近消息原样保留。
-	systemMsgs, historyMsgs := splitMessages(ctx.messages)
+	ctx.mu.RLock()
+	messages := cloneMessages(ctx.messages)
+	ctx.mu.RUnlock()
+	systemMsgs, historyMsgs := splitMessages(messages)
 	compressEnd := len(historyMsgs) - KeepRecentMessages
 	if compressEnd <= 0 {
-		return ctx.messages, "", nil, nil
+		return messages, "", nil, nil
 	}
 	toCompress := historyMsgs[:compressEnd]
 	toKeep := historyMsgs[compressEnd:]
@@ -578,6 +504,26 @@ func splitMessages(messages []*schema.Message) (systemMsgs []*schema.Message, hi
 		historyMsgs = append(historyMsgs, msg)
 	}
 	return systemMsgs, historyMsgs
+}
+
+func compressFallbackMessages(messages []*schema.Message) []*schema.Message {
+	systemMsgs, historyMsgs := splitMessages(messages)
+	if len(historyMsgs) <= KeepRecentMessages {
+		return append(cloneMessages(systemMsgs), historyMsgs...)
+	}
+	keepStart := len(historyMsgs) - KeepRecentMessages
+	compressed := cloneMessages(systemMsgs)
+	compressed = append(compressed, historyMsgs[keepStart:]...)
+	return compressed
+}
+
+func cloneMessages(messages []*schema.Message) []*schema.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	cloned := make([]*schema.Message, len(messages))
+	copy(cloned, messages)
+	return cloned
 }
 
 func formatMessagesForCompression(messages []*schema.Message) string {

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/lzq/5hAgent/internal/task"
+	"github.com/mattn/go-runewidth"
 )
 
 // HandleTask 处理 /task 命令
@@ -78,8 +79,10 @@ func runTaskAction(list *task.TaskList, req task.TaskActionRequest) (string, err
 
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("Tasks (%s):\n", result.Source))
+		sb.WriteString("  " + taskListRow("ID", "Title", "Status", "Created") + "\n")
+		sb.WriteString("  " + taskListRow(strings.Repeat("-", 34), strings.Repeat("-", 28), strings.Repeat("-", 12), strings.Repeat("-", 10)) + "\n")
 		for _, t := range result.Tasks {
-			sb.WriteString(fmt.Sprintf("  [%s] %s - %s (%s)\n", t.ID, t.Title, t.Status, t.CreatedAt.Format("2006-01-02")))
+			sb.WriteString("  " + taskListRow(t.ID, t.Title, string(t.Status), t.CreatedAt.Format("2006-01-02")) + "\n")
 		}
 		p := result.Progress
 		sb.WriteString(fmt.Sprintf("\nProgress: %d total, %d pending, %d in_progress, %d blocked, %d completed, %d archived, %d failed\n", p.Total, p.Pending, p.InProgress, p.Blocked, p.Completed, p.Archived, p.Failed))
@@ -95,4 +98,38 @@ func runTaskAction(list *task.TaskList, req task.TaskActionRequest) (string, err
 		return fmt.Sprintf("%s:\n%s", result.Message, string(encoded)), nil
 	}
 	return string(encoded), nil
+}
+
+func taskListRow(id string, title string, status string, created string) string {
+	return padDisplayCell(id, 34) + "  " + padDisplayCell(title, 28) + "  " + padDisplayCell(status, 12) + "  " + padDisplayCell(created, 10)
+}
+
+func padDisplayCell(text string, width int) string {
+	text = trimCell(text, width)
+	padding := width - runewidth.StringWidth(text)
+	if padding > 0 {
+		text += strings.Repeat(" ", padding)
+	}
+	return text
+}
+
+func trimCell(text string, maxLen int) string {
+	runes := []rune(strings.TrimSpace(text))
+	var b strings.Builder
+	for _, r := range runes {
+		next := b.String() + string(r)
+		if runewidth.StringWidth(next) > maxLen {
+			break
+		}
+		b.WriteRune(r)
+	}
+	result := b.String()
+	if result == string(runes) {
+		return result
+	}
+	for runewidth.StringWidth(result+"…") > maxLen && result != "" {
+		rs := []rune(result)
+		result = string(rs[:len(rs)-1])
+	}
+	return result + "…"
 }

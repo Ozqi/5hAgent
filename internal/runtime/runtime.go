@@ -59,6 +59,7 @@ type Runtime struct {
 
 	ToolRegistry *tools.Registry            // 当前 Runtime 独立工具注册表
 	plainModel   model.ToolCallingChatModel // 未绑定工具的模型，用于 no-tool AgentProcess
+	hooks        *HookManager               // 项目级 runtime hooks
 }
 
 // RunOptions 描述一次文件任务执行。
@@ -204,6 +205,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		Debug:               appConfig.Agent.Debug,
 		DisableStream:       !appConfig.LLM.Stream,
 		SystemPrompt:        systemPrompt,
+		PromptDir:           promptDir,
 		ProjectDataDir:      projectDataDir,
 	})
 	if err != nil {
@@ -237,6 +239,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		ProjectDir:   projectRoot,
 		ToolRegistry: toolRegistry,
 		plainModel:   client.GetModel(),
+		hooks:        loadHookManager(projectRoot, sessionID),
 	}, nil
 }
 
@@ -281,6 +284,16 @@ func (r *Runtime) SwitchModel(ctx context.Context, modelRef string) (string, err
 	return r.ModelName, nil
 }
 
+func (r *Runtime) handleToolEvent(event logger.ToolEvent, taskID string, processID string) {
+	if r == nil {
+		return
+	}
+	r.recordToolFailure(event, taskID, processID)
+	if r.hooks != nil {
+		r.hooks.Run(event)
+	}
+}
+
 func bindTools(ctx context.Context, m model.ToolCallingChatModel, registry *tools.Registry) (model.ToolCallingChatModel, error) {
 	toolInfos, err := registry.ToolInfos(ctx)
 	if err != nil {
@@ -308,7 +321,7 @@ func NewInMemory(ctx context.Context, opts Options) (*Runtime, error) {
 // 参数：proc 只读取 SystemPrompt/ExitCondition；Project/WorkDir 仍由外层启动 runtime 时决定。
 // 调用层级：systemd.AgentSystemd.RunProcess -> Runtime.RunProcess -> Agent.RunStream。
 // 步骤：创建内存 context -> 注入 ProcessSpec.Prompt -> 调用 Agent.RunStream -> 写进程 report/worklog。
-func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess, ipc systemd.IPC) error {
+func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess) error {
 	if proc == nil {
 		return fmt.Errorf("process is nil")
 	}
@@ -323,9 +336,6 @@ func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess, ip
 	if err != nil {
 		return fmt.Errorf("create process context: %w", err)
 	}
-	if proc.ID != "" && ipc != nil {
-		ctx = agentctx.WithSystemRuntime(ctx, r.CtxManager, messageCtx, proc.ID, ipc)
-	}
 	if proc.Spec.SystemPrompt != "" {
 		if err := r.CtxManager.AddMessage(messageCtx, &schema.Message{Role: schema.System, Content: proc.Spec.SystemPrompt}); err != nil {
 			return fmt.Errorf("add process system prompt: %w", err)
@@ -337,6 +347,7 @@ func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess, ip
 	workLog.Start(logTask)
 	prevSink := r.Agent.SetToolEventSink(func(event logger.ToolEvent) {
 		workLog.printToolEvent(event)
+		r.handleToolEvent(event, proc.SourceTask.ID, proc.ID)
 	})
 	defer r.Agent.SetToolEventSink(prevSink)
 	input := fmt.Sprintf(`你正在以 Agent Systemd 进程模式运行。
@@ -381,7 +392,7 @@ Exit Condition:
 
 // Close 释放 Runtime 启动的外部资源。
 func (r *Runtime) Close() error {
-	logger.CloseDebugLog()
+	logger.CloseLog()
 	return nil
 }
 
@@ -415,6 +426,7 @@ func (r *Runtime) RunTaskOnce(ctx context.Context, opts RunOptions) (*RunReport,
 	workLog.Start(selected)
 	prevSink := r.Agent.SetToolEventSink(func(event logger.ToolEvent) {
 		workLog.printToolEvent(event)
+		r.handleToolEvent(event, selected.ID, "")
 		if opts.ToolEventSink != nil {
 			opts.ToolEventSink(event)
 		}
@@ -586,8 +598,16 @@ func taskPrompt(taskPath string, t *task.Task) string {
 要求：
 1. 先判断任务是否需要工具；如果任务明确禁止工具，不得调用任何工具。
 2. 如果任务明确指定某个工具名，必须按该工具名调用，不要用其他工具替代。
-3. 如需修改代码，保持极简 baseline，优先复用已有模块。
-4. 完成后给出可写入执行报告的简短结果、证据和后续建议。`, taskPath, t.ID, t.Title, t.Status, t.Description)
+3. 如果调用工具后发现任务目标仍未达成，必须继续调用工具推进，直到目标完成或遇到明确阻塞。
+4. 不要只做计划或询问确认；无头任务应自行推进到可验证结果。
+5. 工具失败不是完成信号；必须读取错误、修正参数并重试，不能在失败后声称成功。
+6. 如果任务要求写文件或生成报告，必须先写入，再读取或检查目标文件存在，验证成功后才能完成。
+7. 如果任务给出绝对路径，必须使用该路径，不要把不同项目中的同名文件混用。
+8. 最终回复前必须做内部验收清单：逐项核对任务描述中的文件、路径、小节标题、状态数量、命令和验证动作；缺任何一项都继续执行或修正。
+9. 长任务执行中不要输出阶段总结、进度说明或“下一步计划”来代替行动；只要还有未完成步骤，下一轮必须继续发起工具调用。
+10. 读取大文件或某函数附近内容时，先用 grep 定位行号，再用 read_file 的 offset/limit 读取小范围。
+11. 如需修改代码，保持极简 baseline，优先复用已有模块。
+12. 完成后给出可写入执行报告的简短结果、证据和后续建议。`, taskPath, t.ID, t.Title, t.Status, t.Description)
 }
 
 // =============================================================================

@@ -105,12 +105,13 @@ cmd/5hagent/main.go
 - `tools.NewRegistry().Init(taskList, skillMgr)` 注册 base/task/skill/sys 工具，并重置当前 registry 的工具列表和元数据。
 - `toolRegistry.RegisterContextTool(llm, promptDir)` 注册 `context.context`，必须在 `WithTools` 前调用。
 - `toolRegistry.RegisterMCPTools(serverName, client, specs)` 注册 MCP 远端工具。
-- 包级 `InitRegistry/RegisterContextTool/RegisterMCPTools` 仍代理默认 registry，只用于兼容旧入口。
+- 包级工具列表兼容入口已移除；runtime 应持有自己的 `tools.Registry` 实例。
 - 当前启动链路不调用 `RegisterMCPTools`，避免 TUI/headless 启动等待外部 MCP 进程；需要恢复 MCP 工具执行时应做 lazy 启动或显式连接。
 
 LLM 可见工具当前包括：
 
 - `base.read_file`
+- `base.read_md`
 - `base.write_file`
 - `base.edit`
 - `base.glob`
@@ -120,7 +121,6 @@ LLM 可见工具当前包括：
 - `task.task`
 - `skill.skill`
 - `context.context`
-- `sys.ipc`
 
 `mcp.<server>.<tool>` 当前不是默认启动后的 LLM 可见工具；只有后续实现 lazy 启动或显式连接并注册 MCP tools 后才会出现。
 
@@ -128,14 +128,12 @@ LLM 可见工具当前包括：
 
 `context.context` 支持 `inspect/pin/audit/compress`。它依赖 `Agent.RunStream()` 通过 `agentctx.WithToolRuntime(ctx, manager, messageCtx)` 注入当前上下文；脱离当前 Agent 上下文直接调用会失败。
 
-`sys.ipc` 依赖 Agent Systemd 进程模式下的 runtime 注入 `ProcessID` 和结构化 IPC；消息协议由 `internal/ipctypes.Message` 定义，字段限制为 `from/to/summary/artifact`，不能共享或读取其他进程 context。
-
 ## Agent Systemd 当前边界
 
 - `internal/systemd` 是纯调度核心，只依赖标准库；不要在该包重新引入 `agentctx`、`skill`、`task` 等执行层或业务包。
 - `ProcessSpec` 只包含 `SystemPrompt` 和 `ExitCondition`；Project、WorkDir、SessionID、工具白名单等执行期细节仍归 runtime 或工具层处理。
 - `AgentSystemd.Run(ctx, runner)` 是唯一调度循环入口；当前只执行硬编码 task supervisor 规则，不再包含 decision 升级点。
-- `ProcessRunner` 当前签名是 `RunProcess(ctx, proc, ipc)`；由 runtime 自己把 `ProcessID/IPC` 注入 `agentctx.WithSystemRuntime`。
+- `ProcessRunner` 当前签名是 `RunProcess(ctx, proc)`；runtime 只负责执行 AgentProcess，不再注入 IPC。
 - `TaskFileEventSource` 属于 `internal/runtime/event_source_task.go` 适配层；`internal/systemd` 只保留通用 `EventSource` 和 `FileEventSource`。
 - `task.created` 使用 `TaskCreatedPayload{process_spec, task_id, task_title}`；dispatch 严格解析并拒绝未知字段。
 - 非空事件 ID 会进入 `seen` 去重表，避免重复处理；当前没有 retry/max-retry 调度状态。
@@ -150,8 +148,8 @@ LLM 可见工具当前包括：
 ## 上下文和压缩
 
 - 自动压缩由 `AGENT_CONTEXT_AUTO_COMPRESS` 控制，默认 `true`。
-- `LMCompress()` 使用 `prompt/compress.md` 做摘要压缩；失败时 fallback 到 `Compress()`。
-- `Compress()` 是简单截断，只保留最近消息，仍可能丢早期 system 消息。
+- `LMCompress()` 使用运行时注入的 `prompt/compress.md` 做摘要压缩；失败时 fallback 到 `Compress()`。
+- `Compress()` 保留全部 system 消息，再保留最近非 system 消息，避免 fallback 丢失 system prompt / skill 注入。
 - 压缩后的消息通过 `Manager.ReplaceMessages()` 和 `Store.ReplaceMessages()` 同步内存 context 与 session JSONL。
 - pinned range 和 audit event 当前是内存 metadata，不随 session 恢复。
 
@@ -204,6 +202,7 @@ LLM 可见工具当前包括：
 - 改文档时要核对路径、命令、工具名和实际文件是否存在；不要为了小改动主动扩散文档范围。
 - 默认不要主动提交。只有用户明确要求，或一组改动已经完成并准备交付时，才整理文档并按提交规范统一 commit。
 - 默认不要为了每次改动主动运行测试。只有用户明确要求、改动进入阶段收尾、或风险明显需要验证时再运行测试；如果跳过测试，在最终回复里说明未运行。
+- TUI 改动的验收以真实 tmux 窗口为准；不要因为每个小改动都启动/重启 TUI 或跑单测。把一组相关 TUI 改动做完后，再统一用当前 `5hagent debug` 或临时 tmux session 人工验收。
 
 ## 设计阶段规则
 
@@ -247,6 +246,7 @@ LLM 可见工具当前包括：
 
 - 日常小步改动不强制测试，也不强制构建。
 - 阶段收尾、准备 commit、发布前或用户明确要求时，再按改动范围选择 `go test`、`go build -o 5hagent cmd/5hagent/main.go` 或真实 workspace smoke test。
+- TUI 视觉验收优先使用 tmux 真实画面；单测只作为辅助，不替代人工观察。TUI 小改动不要每次都启动，按一组改动统一验收。
 - 只改文档时，默认不跑代码测试；必要时只核对相关路径、命令、文件名和工具名。
 - 不要声称支持不存在的工具、skill、prompt 或脚本。
 

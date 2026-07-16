@@ -21,13 +21,50 @@ env_has_key() {
     grep -q "^[[:space:]]*$key=" "$file"
 }
 
+env_value() {
+    local file="$1"
+    local key="$2"
+    (grep "^[[:space:]]*$key=" "$file" || true) | tail -1 | sed "s/^[[:space:]]*$key=//" | sed 's/^["'\'']//; s/["'\'']$//'
+}
+
+append_if_missing() {
+    local file="$1"
+    local key="$2"
+    local value="$3"
+    if [ -n "$value" ] && ! env_has_key "$file" "$key"; then
+        printf "%s=%s\n" "$key" "$value" >> "$file"
+    fi
+}
+
 migrate_legacy_env() {
     local file="$1"
     if ! env_has_key "$file" "LLM_PROVIDER" && ! env_has_key "$file" "LLM_SUPPLIER"; then
         return
     fi
     cp "$file" "$file.bak.$(date +%Y%m%d%H%M%S)"
-    warn "检测到旧 LLM_PROVIDER/LLM_SUPPLIER 配置，已备份；请按 LLM_MODEL=provider/model 格式整理: $file"
+    if ! env_has_key "$file" "LLM_MODEL"; then
+        local provider
+        provider=$(env_value "$file" "LLM_SUPPLIER")
+        if [ -z "$provider" ]; then
+            provider=$(env_value "$file" "LLM_PROVIDER")
+        fi
+        provider=$(printf "%s" "$provider" | tr '[:upper:]' '[:lower:]')
+        local upper
+        upper=$(printf "%s" "$provider" | tr '[:lower:]' '[:upper:]')
+        local model
+        model=$(env_value "$file" "LLM_${upper}_MODEL")
+        if [ -z "$model" ] && [ "$provider" = "openai" ]; then
+            model=$(env_value "$file" "LLM_OPENAI_MODEL")
+        fi
+        if [ -n "$provider" ] && [ -n "$model" ]; then
+            append_if_missing "$file" "LLM_MODEL" "$provider/$model"
+            ok "已从旧配置补充 LLM_MODEL=$provider/$model"
+        else
+            warn "检测到旧 LLM_PROVIDER/LLM_SUPPLIER 配置，已备份；请按 LLM_MODEL=provider/model 格式整理: $file"
+        fi
+    else
+        warn "检测到旧 LLM_PROVIDER/LLM_SUPPLIER 配置，已备份；当前 LLM_MODEL 已存在，未自动改写。"
+    fi
 }
 
 # ── 1. 检查 Go ──

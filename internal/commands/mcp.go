@@ -1,7 +1,7 @@
 // mcp.go - /mcp 命令处理
 // 功能：解析 /mcp 命令（list/add/remove/enable/disable），管理 MCP 服务器配置
 // 配置文件：~/.5hAgent/mcp.json
-// 导出函数：HandleMCP, LoadMCPServers
+// 导出函数：HandleMCP
 package commands
 
 import (
@@ -14,8 +14,6 @@ import (
 
 	"github.com/lzq/5hAgent/internal/mcp"
 )
-
-var mcpServerStates = make(map[string]bool)
 
 type mcpServerEntry struct {
 	Name           string            `json:"name"`
@@ -120,7 +118,6 @@ func addMCPServer(name string, command string, args []string) (string, error) {
 		return "", fmt.Errorf("failed to save config: %w", err)
 	}
 
-	mcpServerStates[name] = true
 	return fmt.Sprintf("MCP server '%s' added and enabled (restart required to activate)", name), nil
 }
 
@@ -153,7 +150,6 @@ func removeMCPServer(name string) (string, error) {
 		return "", fmt.Errorf("failed to save config: %w", err)
 	}
 
-	delete(mcpServerStates, name)
 	return fmt.Sprintf("MCP server '%s' removed (restart required)", name), nil
 }
 
@@ -187,7 +183,6 @@ func enableMCPServer(name string) (string, error) {
 		return "", fmt.Errorf("failed to save config: %w", err)
 	}
 
-	mcpServerStates[name] = true
 	return fmt.Sprintf("MCP server '%s' enabled (restart required to activate)", name), nil
 }
 
@@ -221,36 +216,7 @@ func disableMCPServer(name string) (string, error) {
 		return "", fmt.Errorf("failed to save config: %w", err)
 	}
 
-	mcpServerStates[name] = false
 	return fmt.Sprintf("MCP server '%s' disabled (restart required)", name), nil
-}
-
-// LoadMCPServers 从 ~/.5hAgent/mcp.json 加载 MCP 服务器配置
-// 仅返回 Enabled=true 的服务器
-func LoadMCPServers() ([]mcp.ServerConfig, error) {
-	cfg, err := loadMCPConfig()
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	var servers []mcp.ServerConfig
-	for _, entry := range cfg.Servers {
-		if !entry.Enabled {
-			continue
-		}
-		mcpServerStates[entry.Name] = true
-		servers = append(servers, mcp.ServerConfig{
-			Name:           entry.Name,
-			Command:        entry.Command,
-			Args:           entry.Args,
-			Env:            entry.Env,
-			StartupTimeout: entry.StartupTimeout,
-		})
-	}
-	return servers, nil
 }
 
 func loadMCPConfig() (*mcpConfigFile, error) {

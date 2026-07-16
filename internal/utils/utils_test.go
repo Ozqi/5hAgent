@@ -181,8 +181,8 @@ func TestLoadConfigRejectsInvalidModelRef(t *testing.T) {
 	if err == nil {
 		t.Fatal("LoadConfig() error = nil, want model ref error")
 	}
-	if !strings.Contains(err.Error(), "supplier/model") {
-		t.Fatalf("LoadConfig() error = %v, want supplier/model hint", err)
+	if !strings.Contains(err.Error(), "provider/model") {
+		t.Fatalf("LoadConfig() error = %v, want provider/model hint", err)
 	}
 }
 

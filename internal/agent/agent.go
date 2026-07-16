@@ -59,6 +59,7 @@ type Config struct {
 	ContextAutoCompress bool   // 是否自动触发上下文压缩
 	DisableStream       bool   // 是否禁用流式模型调用；部分兼容供应商需要关闭
 	SystemPrompt        string // 系统提示词
+	PromptDir           string // prompt 文件目录，用于上下文压缩等内部 prompt
 	ProjectDataDir      string // 项目 .5hagent 数据目录；为空时使用当前工作目录
 }
 
@@ -149,11 +150,6 @@ func (a *Agent) SetToolEventSink(sink func(logger.ToolEvent)) func(logger.ToolEv
 	prev := a.toolEventSink
 	a.toolEventSink = sink
 	return prev
-}
-
-// GetCtxManager 获取上下文管理器
-func (a *Agent) GetCtxManager() *agentctx.Manager {
-	return a.ctxManager
 }
 
 // TokenCallback 流式输出的回调函数类型
@@ -298,7 +294,7 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 
 	// 2.5 检查是否需要压缩上下文
 	if a.config.ContextAutoCompress && a.ctxManager.ShouldCompress(messageCtx) {
-		before, after, err := a.ctxManager.LMCompress(ctx, messageCtx, a.model, "prompt")
+		before, after, err := a.ctxManager.LMCompress(ctx, messageCtx, a.model, a.config.PromptDir)
 		if err != nil {
 			return "", fmt.Errorf("failed to compress context: %w", err)
 		}
@@ -309,6 +305,7 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 	a.state.IsRunning = true
 	defer func() { a.state.IsRunning = false }()
 	repeatGuard := newToolRepeatGuard(a.config.RepeatToolLimit)
+	emptyResponseRetries := 0
 
 	for turn := 0; ; turn++ {
 		a.state.CurrentTurn = turn + 1
@@ -383,13 +380,8 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 					return "", fmt.Errorf("failed to add assistant message: %w", err)
 				}
 				for idx, tc := range finalMessage.ToolCalls {
-					result, execErr := a.exeToolCall(ctx, tc, idx, len(finalMessage.ToolCalls), false)
-					if execErr == nil {
-						if err := repeatGuard.Check([]schema.ToolCall{tc}); err != nil {
-							logger.WarnTag("TOOL", "%v", err)
-						}
-					}
-					if err := a.addToolResult(messageCtx, tc, result, execErr); err != nil {
+					res := a.executeToolWithRepeatGuard(ctx, repeatGuard, toolRequest{idx: idx, tc: tc})
+					if err := a.addToolResult(messageCtx, tc, res.result, res.err); err != nil {
 						return "", fmt.Errorf("tool execution failed: %w", err)
 					}
 				}
@@ -401,7 +393,15 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 					return "", fmt.Errorf("failed to add assistant message: %w", err)
 				}
 			} else {
-				logger.Debug("Skipping empty assistant message")
+				logger.DebugTag("REACT", "Skipping empty assistant message")
+				if emptyResponseRetries >= 2 {
+					return "", fmt.Errorf("LLM returned empty response without tool calls")
+				}
+				emptyResponseRetries++
+				if err := a.addEmptyResponseReminder(messageCtx); err != nil {
+					return "", err
+				}
+				continue
 			}
 			return msg.Content, nil
 		}
@@ -425,20 +425,13 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 		toolQueue := make(chan toolRequest, 8)
 		toolResultCh := make(chan execResult, 8)
 		queuedCalls := make([]schema.ToolCall, 0)
-
-		go func() {
-			for req := range toolQueue {
-				result, execErr := a.exeToolCall(ctx, req.tc, req.idx, req.idx+1, false)
-				// 只对成功的调用计数重复，失败的不计入
-				if execErr == nil {
-					if err := repeatGuard.Check([]schema.ToolCall{req.tc}); err != nil {
-						logger.WarnTag("TOOL", "%v", err)
-					}
-				}
-				toolResultCh <- execResult{idx: req.idx, tc: req.tc, result: result, err: execErr}
-			}
-			close(toolResultCh)
-		}()
+		toolCtx, toolCancel := context.WithCancel(ctx)
+		toolWorkerDone := a.runToolWorker(toolCtx, repeatGuard, toolQueue, toolResultCh)
+		closeToolQueue := func() {
+			close(toolQueue)
+			toolWorkerDone.Wait()
+			toolCancel()
+		}
 
 		// 读取流式响应
 		for {
@@ -460,6 +453,8 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 			case <-time.After(90 * time.Second):
 				streamCancel()
 				reader.Close()
+				toolCancel()
+				closeToolQueue()
 				cb.OnModelError(ctx, nil, context.DeadlineExceeded)
 				return "", fmt.Errorf("LLM stream idle timeout: no text or tool call chunk received for 90s")
 			}
@@ -469,6 +464,8 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 			if err != nil {
 				reader.Close()
 				streamCancel()
+				toolCancel()
+				closeToolQueue()
 				cb.OnModelError(ctx, nil, err)
 				return "", fmt.Errorf("stream read failed: %w", err)
 			}
@@ -512,6 +509,7 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 			toolQueue <- toolRequest{idx: idx, tc: tc}
 		}
 		close(toolQueue)
+		toolWorkerDone.Wait()
 
 		content := fullContent.String()
 		reasoningContent := fullReasoning.String()
@@ -561,6 +559,7 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 
 		// c. 检查是否有工具调用
 		if len(finalMessage.ToolCalls) > 0 {
+			emptyResponseRetries = 0
 			cb.LogToolCalls(finalMessage.ToolCalls)
 
 			// 添加 assistant 消息（即使 content 为空，只要有效工具调用就要加入上下文）
@@ -588,11 +587,30 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 				return "", fmt.Errorf("failed to add assistant message: %w", err)
 			}
 		} else {
-			logger.Debug("Skipping empty assistant message")
+			logger.DebugTag("REACT", "Skipping empty assistant message")
+			if emptyResponseRetries >= 2 {
+				return "", fmt.Errorf("LLM returned empty response without tool calls")
+			}
+			emptyResponseRetries++
+			if err := a.addEmptyResponseReminder(messageCtx); err != nil {
+				return "", err
+			}
+			continue
 		}
 
 		return content, nil
 	}
+}
+
+func (a *Agent) addEmptyResponseReminder(messageCtx *agentctx.Context) error {
+	msg := &schema.Message{
+		Role:    schema.User,
+		Content: "上一轮没有输出也没有工具调用。任务尚未完成，下一轮必须立即调用一个必要工具继续推进；如果已经具备足够信息且任务要求写文件，必须先调用写文件工具，再读取目标文件验证。不要只思考、不要只总结、不要请求确认；只有确实无法继续时才输出明确阻塞原因。",
+	}
+	if err := a.ctxManager.AddMessage(messageCtx, msg); err != nil {
+		return fmt.Errorf("failed to add empty response reminder: %w", err)
+	}
+	return nil
 }
 
 // =============================================================================

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/schema"
@@ -29,6 +30,7 @@ type Session struct {
 type Store struct {
 	dir   string              // 存储目录
 	cache map[string]*Session // 内存缓存
+	mu    sync.Mutex          // 保护 cache 和 Session 文件写入
 }
 
 // sessionFileEntry JSONL 文件中的单条记录
@@ -68,6 +70,8 @@ func NewStore(dir string) (*Store, error) {
 //
 // 返回: Session 实例和可能的错误
 func (s *Store) GetOrCreate(id string) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if id == "" {
 		id = generateSessionID()
 	}
@@ -84,7 +88,7 @@ func (s *Store) GetOrCreate(id string) (*Session, error) {
 			s.cache[id] = session
 			return session, nil
 		}
-		// 加载失败，继续创建新的
+		return nil, fmt.Errorf("load session %s: %w", filePath, err)
 	}
 
 	// 创建新会话
@@ -134,32 +138,6 @@ func (s *Store) List() ([]*Session, error) {
 	return sessions, nil
 }
 
-// Delete 删除会话
-// 参数:
-//   - id: 会话 ID
-//
-// 返回: 可能的错误
-func (s *Store) Delete(id string) error {
-	filePath := s.sessionFilePath(id)
-
-	// 从缓存移除
-	if _, ok := s.cache[id]; ok {
-		delete(s.cache, id)
-	}
-
-	// 删除文件
-	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("delete session file: %w", err)
-	}
-
-	return nil
-}
-
-// GetSessionDir 返回会话存储目录
-func (s *Store) GetSessionDir() string {
-	return s.dir
-}
-
 // GetLatestID 返回最新会话的 ID（按更新时间倒序）
 // 返回: 最新会话 ID，如果不存在则返回空字符串
 func (s *Store) GetLatestID() (string, error) {
@@ -180,6 +158,8 @@ func (s *Store) GetLatestID() (string, error) {
 //
 // 返回: 可能的错误
 func (s *Store) Append(session *Session, msg *schema.Message) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	ensureMessageCreatedAt(msg, time.Now().UTC())
 	session.messages = append(session.messages, msg)
 	session.UpdatedAt = time.Now().UTC()
@@ -195,6 +175,8 @@ func (s *Store) Append(session *Session, msg *schema.Message) error {
 
 // ReplaceMessages replaces all session messages and persists the session.
 func (s *Store) ReplaceMessages(session *Session, messages []*schema.Message) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	session.messages = messages
 	session.UpdatedAt = time.Now().UTC()
 	session.dirty = true
@@ -207,8 +189,10 @@ func (s *Store) ReplaceMessages(session *Session, messages []*schema.Message) er
 //
 // 返回: 消息列表和可能的错误
 func (s *Store) LoadMessages(session *Session) ([]*schema.Message, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if len(session.messages) > 0 {
-		return session.messages, nil
+		return cloneMessages(session.messages), nil
 	}
 
 	data, err := os.ReadFile(session.filePath)
@@ -216,7 +200,12 @@ func (s *Store) LoadMessages(session *Session) ([]*schema.Message, error) {
 		return nil, fmt.Errorf("read session file: %w", err)
 	}
 
-	return s.parseMessages(data)
+	messages, err := s.parseMessages(data)
+	if err != nil {
+		return nil, err
+	}
+	session.messages = cloneMessages(messages)
+	return messages, nil
 }
 
 func (s *Store) sessionFilePath(id string) string {
@@ -255,21 +244,29 @@ func (s *Store) saveToFile(session *Session) error {
 		entries = append(entries, entry)
 	}
 
-	// 写入文件
-	file, err := os.OpenFile(session.filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	tmpFile, err := os.CreateTemp(s.dir, filepath.Base(session.filePath)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("open session file: %w", err)
+		return fmt.Errorf("create session temp file: %w", err)
 	}
-	defer file.Close()
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
 
 	for _, entry := range entries {
 		line, err := json.Marshal(entry)
 		if err != nil {
+			tmpFile.Close()
 			return fmt.Errorf("marshal entry: %w", err)
 		}
-		if _, err := file.Write(append(line, '\n')); err != nil {
+		if _, err := tmpFile.Write(append(line, '\n')); err != nil {
+			tmpFile.Close()
 			return fmt.Errorf("write entry: %w", err)
 		}
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close session temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, session.filePath); err != nil {
+		return fmt.Errorf("replace session file: %w", err)
 	}
 
 	session.dirty = false
@@ -281,7 +278,7 @@ func (s *Store) loadFromFile(filePath string, data []byte) (*Session, error) {
 	for _, line := range splitJSONLines(data) {
 		var entry sessionFileEntry
 		if err := json.Unmarshal(line, &entry); err != nil {
-			continue
+			return nil, fmt.Errorf("parse session jsonl: %w", err)
 		}
 		if entry.Type == "session" {
 			session.ID, session.Title = entry.ID, entry.Title
@@ -295,6 +292,9 @@ func (s *Store) loadFromFile(filePath string, data []byte) (*Session, error) {
 			session.messages = append(session.messages, messageFromEntry(entry))
 		}
 	}
+	if session.ID == "" {
+		return nil, fmt.Errorf("missing session header")
+	}
 	return session, nil
 }
 
@@ -302,7 +302,10 @@ func (s *Store) parseMessages(data []byte) ([]*schema.Message, error) {
 	var messages []*schema.Message
 	for _, line := range splitJSONLines(data) {
 		var entry sessionFileEntry
-		if err := json.Unmarshal(line, &entry); err != nil || entry.Role == "" || entry.Type == "session" {
+		if err := json.Unmarshal(line, &entry); err != nil {
+			return nil, fmt.Errorf("parse session message: %w", err)
+		}
+		if entry.Role == "" || entry.Type == "session" {
 			continue
 		}
 		messages = append(messages, messageFromEntry(entry))

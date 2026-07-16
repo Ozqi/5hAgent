@@ -1,7 +1,7 @@
 // toolmeta.go - 工具元数据类型
 // 功能：定义工具分类、只读属性和显示名 fallback。
 // 主要类型：Meta, Category
-// 导出函数：DisplayNameFallback, IsReadOnlyFallback
+// 导出函数：DisplayNameFallback
 package toolmeta
 
 import "strings"
@@ -31,12 +31,4 @@ func DisplayNameFallback(name string) string {
 		return name[idx+1:]
 	}
 	return name
-}
-
-func IsReadOnlyFallback(name string) bool {
-	switch name {
-	case "base.read_file", "base.glob", "base.grep", "base.list_dir":
-		return true
-	}
-	return false
 }

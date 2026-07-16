@@ -1,6 +1,6 @@
 // callbacks.go - Eino Callback 实现
 // 功能: 统一的日志、监控、调试输出，替代分散的 logger.DebugTag
-// 导出: AgentCallbacks, NewAgentCallbacks, GetTokenUsage
+// 导出: AgentCallbacks, NewAgentCallbacks
 package agent
 
 import (
@@ -27,11 +27,6 @@ func NewAgentCallbacks(debug bool) *AgentCallbacks {
 		debug:       debug,
 		tokenBudget: utils.NewTokenBudget(0),
 	}
-}
-
-// GetTokenUsage 获取累计 token
-func (c *AgentCallbacks) GetTokenUsage() int {
-	return c.tokenBudget.SessionTotal()
 }
 
 // region Model Callback

@@ -28,10 +28,10 @@ bottom spacer        # 空白占位，不显示 busy spinner
 | 命令 | 行为 |
 | --- | --- |
 | `/task` | 调 `commands.HandleTask` |
-| `/skill` | 调 `commands.HandleSkill` |
-| `/compress` | 调 `commands.HandleCompress` |
+| `/skill list|get` | 调 `commands.HandleSkill` |
+| `/compress` | 调 `commands.HandleCompress`，当前不接收参数 |
 | `/mcp` | 管理 MCP 配置 |
-| `/session` | new/list/switch/save/drop |
+| `/session` | new/list/切换到指定 session id |
 | `/run` | 执行 task.md 中可运行任务 |
 | `/model` | 切换 provider/model |
 | `/stop` | cancel 当前 Agent run |
@@ -42,6 +42,7 @@ bottom spacer        # 空白占位，不显示 busy spinner
 - `runCancel` 保存当前 run 的 cancel func；`/stop` 调用它。
 - 迟到 token 在 `busy=false` 后被忽略。
 - footer 显示路径但不显示 `dir` 字样。
+- git 主仓库显示 `git <branch>`；linked worktree 显示 `worktree <branch>`。
 - 消息时间显示在首行右侧。
 
 ## 工具事件
@@ -60,8 +61,10 @@ ToolEvent(error)  -> 原地更新为 error
 
 ## 验证
 
+TUI 视觉改动以真实 tmux 画面为准。不要每个小改动都启动/重启；一组相关改动完成后，再用当前 `5hagent debug` 或临时 tmux session 验收。
+
+单测只在阶段收尾、准备提交或风险明显时补充使用：
+
 ```bash
 go test ./internal/cli
 ```
-
-TUI 视觉改动必须用 tmux 抓屏验证。

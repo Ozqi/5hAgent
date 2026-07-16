@@ -6,12 +6,8 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -25,7 +21,6 @@ import (
 	ansi "github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
 	"github.com/lzq/5hAgent/internal/agent"
-	"github.com/lzq/5hAgent/internal/commands"
 	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/skill"
@@ -115,6 +110,8 @@ type AppModel struct {
 	switchModel SwitchModelFunc
 	ctx         context.Context
 	runCancel   context.CancelFunc
+	runEntry    int
+	runLines    []string
 
 	width  int
 	height int
@@ -179,6 +176,9 @@ type RunTasksFunc func(context.Context, func(logger.ToolEvent)) (string, error)
 // SwitchModelFunc 是 TUI /model 命令切换当前 Runtime 模型的薄接口。
 type SwitchModelFunc func(context.Context, string) (string, error)
 
+// ToolEventFunc 接收 TUI 普通对话中的工具事件。
+type ToolEventFunc func(logger.ToolEvent)
+
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 var launchMu sync.Mutex
@@ -220,16 +220,18 @@ type slashCommandHint struct {
 
 var slashCommandHints = []slashCommandHint{
 	{Name: "/task", Usage: "/task <list|create|update|get|delete|archive|reopen>", Desc: "task file"},
-	{Name: "/skill", Usage: "/skill <list|enable|disable|show>", Desc: "skills"},
-	{Name: "/compress", Usage: "/compress [compact|truncate]", Desc: "context"},
+	{Name: "/skill", Usage: "/skill <list|get>", Desc: "skills"},
+	{Name: "/compress", Usage: "/compress", Desc: "context"},
 	{Name: "/mcp", Usage: "/mcp <list|add|remove|enable|disable>", Desc: "mcp servers"},
-	{Name: "/session", Usage: "/session <new|list|switch|save|drop>", Desc: "sessions"},
+	{Name: "/session", Usage: "/session <new|list|id>", Desc: "sessions"},
 	{Name: "/run", Usage: "/run", Desc: "run task.md until no pending tasks"},
 	{Name: "/stop", Usage: "/stop", Desc: "stop current run"},
-	{Name: "/model", Usage: "/model <provider/model>", Desc: "mira/gpt-5.4, mira/gpt-5.5, mira/glm-5.2"},
+	{Name: "/model", Usage: "/model <provider/model>", Desc: "ollama/gemma4, mira/gpt-5.5"},
 }
 
 var modelHints = []string{
+	"ollama/gemma4",
+	"ollama/qwen3:14b",
 	"mira/gpt-5.4",
 	"mira/gpt-5.5",
 	"mira/glm-5.2",
@@ -274,6 +276,7 @@ func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, promptD
 		runTasks:         runTasks,
 		switchModel:      switchModel,
 		ctx:              ctx,
+		runEntry:         -1,
 		viewport:         vp,
 		input:            input,
 		currentAssistant: -1,
@@ -424,10 +427,10 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if strings.TrimSpace(msg.summary) != "" {
 				content = strings.TrimSpace(msg.summary) + "\n\n" + content
 			}
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: "/run", Content: content})
+			m.finishRunEntry(content)
 		} else {
 			m.currentStatus = "idle"
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: "/run", Content: msg.summary})
+			m.finishRunEntry(msg.summary)
 		}
 		m.refreshView()
 		return m, nil
@@ -436,7 +439,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toolCalls++
 			m.lastTool = fallback(tools.DisplayName(msg.event.Name), msg.event.Name)
 		}
-		m.applyToolEvent(msg.event)
+		if m.runEntry >= 0 {
+			m.applyRunToolEvent(msg.event)
+		} else {
+			m.applyToolEvent(msg.event)
+		}
 		m.currentAssistant = -1
 		m.refreshView()
 		if msg.event.Kind == "call" {
@@ -455,6 +462,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	case tea.KeyMsg:
+		// tmux mouse 转义序列偶尔会以普通按键漏进来；这里直接吞掉，
+		// 避免 `[<65;...M` 之类的滚轮事件污染输入框。
+		if isMouseEscapeKey(msg.String()) {
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+c":
 			if confirm(&m.quitPending, &m.lastQuitAt, quitConfirmDelay) {
@@ -463,10 +475,12 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.currentStatus = "ctrl+c again to quit"
 			m.refreshView()
 			return m, nil
-		case "ctrl+d":
-			m.currentStatus = "detached"
+		case "ctrl+u":
+			m.input.Reset()
 			m.refreshView()
-			return m, tea.Suspend
+			return m, nil
+		case "ctrl+d":
+			return m, tea.Quit
 		case "esc":
 			if confirm(&m.escPending, &m.lastEscAt, quitConfirmDelay) {
 				return m, tea.Quit
@@ -475,6 +489,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshView()
 			return m, nil
 		case "enter":
+			if msg.Paste {
+				break
+			}
 			return m, m.submit()
 		case "pgdown", "ctrl+f":
 			m.autoScroll = m.viewport.AtBottom()
@@ -521,6 +538,10 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func isMouseEscapeKey(text string) bool {
+	return strings.HasPrefix(text, "\x1b[<") || strings.HasPrefix(text, "[<")
+}
+
 // confirm 处理“短时间内二次按键确认”的通用状态。
 func confirm(pending *bool, last *time.Time, within time.Duration) bool {
 	now := time.Now()
@@ -545,298 +566,6 @@ func (m *AppModel) View() string {
 	)
 }
 
-func (m *AppModel) submit() tea.Cmd {
-	text := strings.TrimSpace(m.input.Value())
-	if text == "" {
-		return nil
-	}
-	if fields := strings.Fields(text); len(fields) > 0 && fields[0] == "/stop" {
-		return m.handleStopCommand(text)
-	}
-	if m.busy {
-		m.currentStatus = "busy"
-		return nil
-	}
-
-	m.input.Reset()
-	m.entries = append(m.entries, conversationEntry{Role: roleUser, Content: text})
-	m.refreshView()
-
-	if strings.HasPrefix(text, "/debug") && os.Getenv("5HAGENT_TUI_DEBUG") == "1" {
-		return m.handleDebugCommand(text)
-	}
-
-	if strings.HasPrefix(text, "/skill") {
-		result, err := commands.HandleSkill(text, m.skillMgr)
-		if err != nil {
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: err.Error()})
-		} else {
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: result})
-		}
-		m.refreshView()
-		return nil
-	}
-
-	if strings.HasPrefix(text, "/task") {
-		result, err := commands.HandleTask(text, m.taskList)
-		if err != nil {
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: err.Error()})
-		} else {
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: result})
-		}
-		m.refreshView()
-		return nil
-	}
-
-	if strings.HasPrefix(text, "/compress") {
-		result, err := commands.HandleCompress(m.ctx, text, m.ctxManager, m.messageCtx, m.ag.GetModel(), m.promptDir, "compact")
-		if err != nil {
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: err.Error()})
-		} else {
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: result})
-		}
-		m.refreshView()
-		return nil
-	}
-
-	if strings.HasPrefix(text, "/mcp") {
-		result, err := commands.HandleMCP(text)
-		if err != nil {
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: err.Error()})
-		} else {
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: result})
-		}
-		m.refreshView()
-		return nil
-	}
-
-	if strings.HasPrefix(text, "/session") {
-		result, err := m.handleSessionCommand(text)
-		if err != nil {
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: err.Error()})
-		} else {
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: result})
-		}
-		m.refreshView()
-		return nil
-	}
-
-	if fields := strings.Fields(text); len(fields) > 0 && fields[0] == "/model" {
-		return m.handleModelCommand(text)
-	}
-
-	if fields := strings.Fields(text); len(fields) > 0 && fields[0] == "/run" {
-		return m.handleRunCommand(text)
-	}
-
-	if strings.HasPrefix(text, "/") {
-		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "unknown slash command"})
-		m.refreshView()
-		return nil
-	}
-
-	m.busy = true
-	m.currentStatus = "thinking"
-	m.currentAssistant = -1
-	runCtx, cancel := context.WithCancel(m.ctx)
-	m.runCancel = cancel
-	m.refreshView()
-
-	go m.runAgent(runCtx, cancel, text)
-	return tickSpinner()
-}
-
-// handleDebugCommand 仅用于本地 TUI 样式自查，默认不启用。
-// 调用层级：submit -> handleDebugCommand -> applyToolEvent/refreshView。
-// 主要步骤：注入可控 tool running 事件，再延迟注入 result，方便 tmux 捕获中间态。
-func (m *AppModel) handleDebugCommand(text string) tea.Cmd {
-	fields := strings.Fields(text)
-	if len(fields) >= 2 && fields[1] == "tool-running" {
-		event := logger.ToolEvent{Kind: "call", Name: "base.exec_shell", Args: `{"cmd":"sleep 5 && echo debug-done"}`}
-		m.toolCalls++
-		m.lastTool = fallback(tools.DisplayName(event.Name), event.Name)
-		m.applyToolEvent(event)
-		m.currentStatus = "debug tool running"
-		m.refreshView()
-		return tea.Batch(tickSpinner(), func() tea.Msg {
-			time.Sleep(5 * time.Second)
-			return debugToolResultMsg{event: logger.ToolEvent{Kind: "result", Name: "base.exec_shell", Args: event.Args, Text: "  ⎿ debug-done\n"}}
-		})
-	}
-	m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: "unknown debug command"})
-	m.refreshView()
-	return nil
-}
-
-// handleModelCommand 切换当前 TUI runtime 使用的模型。
-// 调用层级：submit -> handleModelCommand -> runtime.SwitchModel。
-// 主要步骤：解析 provider/model；调用 runtime 回调重建并绑定模型；更新状态栏 modelName。
-func (m *AppModel) handleModelCommand(text string) tea.Cmd {
-	fields := strings.Fields(text)
-	if len(fields) == 1 {
-		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: modelUsage()})
-		m.currentStatus = "idle"
-		m.refreshView()
-		return nil
-	}
-	if len(fields) != 2 {
-		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: modelUsage()})
-		m.currentStatus = "idle"
-		m.refreshView()
-		return nil
-	}
-	if m.switchModel == nil {
-		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "/model is not available in this runtime"})
-		m.refreshView()
-		return nil
-	}
-	modelName, err := m.switchModel(m.ctx, fields[1])
-	if err != nil {
-		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: err.Error()})
-		m.currentStatus = "error"
-		m.refreshView()
-		return nil
-	}
-	m.modelName = modelName
-	m.currentStatus = "idle"
-	m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "Switched model: " + modelName})
-	m.refreshView()
-	return nil
-}
-
-func modelUsage() string {
-	var sb strings.Builder
-	sb.WriteString("usage: /model <provider/model>\n\nAvailable examples:\n")
-	for _, ref := range modelHints {
-		sb.WriteString("  ")
-		sb.WriteString(ref)
-		sb.WriteByte('\n')
-	}
-	return strings.TrimRight(sb.String(), "\n")
-}
-
-// handleRunCommand 启动 task.md 连续执行模式。
-// 调用层级：submit -> handleRunCommand -> runtime.RunTasksUntilDone。
-// 主要步骤：校验命令参数；标记 TUI busy；后台执行 runtime 回调；完成后显示汇总。
-func (m *AppModel) handleRunCommand(text string) tea.Cmd {
-	fields := strings.Fields(text)
-	if len(fields) > 1 {
-		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "usage: /run"})
-		m.refreshView()
-		return nil
-	}
-	if m.runTasks == nil {
-		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "/run is not available in this runtime"})
-		m.refreshView()
-		return nil
-	}
-	m.busy = true
-	m.currentStatus = "running tasks"
-	m.currentAssistant = -1
-	m.refreshView()
-	return tea.Batch(tickSpinner(), func() tea.Msg {
-		summary, err := m.runTasks(m.ctx, func(event logger.ToolEvent) {
-			if m.program != nil {
-				m.program.Send(toolEventMsg{event: event})
-			}
-		})
-		return runTasksDoneMsg{summary: summary, err: err}
-	})
-}
-
-func (m *AppModel) handleStopCommand(text string) tea.Cmd {
-	m.input.Reset()
-	if !m.busy || m.runCancel == nil {
-		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "no active run"})
-		m.refreshView()
-		return nil
-	}
-	m.runCancel()
-	m.runCancel = nil
-	m.busy = false
-	m.currentAssistant = -1
-	m.currentStatus = "stopped"
-	m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "stopped current run"})
-	m.refreshView()
-	return nil
-}
-
-func (m *AppModel) runAgent(runCtx context.Context, cancel context.CancelFunc, input string) {
-	if m.program == nil {
-		return
-	}
-	defer func() {
-		m.runCancel = nil
-		cancel()
-	}()
-	_, err := m.ag.RunStream(runCtx, m.messageCtx, input, func(token string) {
-		m.program.Send(assistantTokenMsg{token: token})
-	}, func(token string) {
-		m.program.Send(assistantThinkingMsg{token: token})
-	})
-	if err != nil {
-		if runCtx.Err() != nil {
-			return
-		}
-		m.program.Send(assistantErrorMsg{err: err})
-		return
-	}
-	m.program.Send(assistantDoneMsg{})
-}
-
-// handleSessionCommand 处理 /session 命令
-// /session list - 列出所有会话
-// /session new - 创建新会话
-// /session <id> - 切换到指定会话
-func (m *AppModel) handleSessionCommand(text string) (string, error) {
-	parts := strings.Fields(text)
-	if len(parts) < 2 {
-		return fmt.Sprintf("Current session: %s (%s)", m.sessionID, m.ctxManager.GetSessionTitle(m.messageCtx)), nil
-	}
-
-	cmd := parts[1]
-	switch cmd {
-	case "list", "ls":
-		sessions, err := m.ctxManager.ListSessions()
-		if err != nil {
-			return "", err
-		}
-		if len(sessions) == 0 {
-			return "No sessions found", nil
-		}
-		var sb strings.Builder
-		sb.WriteString("Sessions:\n")
-		for _, s := range sessions {
-			marker := "  "
-			if s.ID == m.sessionID {
-				marker = "→ "
-			}
-			sb.WriteString(fmt.Sprintf("  %s%s - %s (updated: %s)\n", marker, s.ID, cleanDisplayText(s.Title), s.UpdatedAt.Format("2006-01-02 15:04")))
-		}
-		return sb.String(), nil
-	case "new":
-		newCtx, err := m.ctxManager.CreateContext("")
-		if err != nil {
-			return "", err
-		}
-		m.messageCtx = newCtx
-		m.sessionID = m.ctxManager.GetSessionID(newCtx)
-		m.entries = nil
-		m.refreshView()
-		return fmt.Sprintf("Created new session: %s", m.sessionID), nil
-	default:
-		newCtx, err := m.ctxManager.SwitchSession(m.messageCtx, cmd)
-		if err != nil {
-			return "", err
-		}
-		m.messageCtx = newCtx
-		m.sessionID = cmd
-		m.entries = nil
-		m.refreshView()
-		return fmt.Sprintf("Switched to session: %s (%s)", m.sessionID, m.ctxManager.GetSessionTitle(newCtx)), nil
-	}
-}
-
 func (m *AppModel) resize() {
 	if m.width <= 0 {
 		m.width = defaultTUIWidth
@@ -847,7 +576,7 @@ func (m *AppModel) resize() {
 
 	mainWidth := max(20, m.width)
 	m.input.SetWidth(max(8, mainWidth-2))
-	m.input.SetHeight(2)
+	m.input.SetHeight(1)
 	m.viewport.Width = max(8, mainWidth)
 	m.viewport.Height = max(1, m.height-1-m.reservedMainHeight(mainWidth))
 }
@@ -856,7 +585,7 @@ func (m *AppModel) resize() {
 // 这里按真实渲染文本计数，避免窄屏 slash hint 或长输入换行后挤到输入框下方。
 func (m *AppModel) reservedMainHeight(width int) int {
 	headerHeight := 1
-	inputHeight := 2 + renderedLineCount(compactInputView(m.input.View()))
+	inputHeight := renderedLineCount(renderInputBar(m.input.View(), width))
 	footerHeight := 1
 	slashHeight := renderedLineCount(m.renderSlashHint(max(12, width-4)))
 	return headerHeight + slashHeight + inputHeight + footerHeight
@@ -972,204 +701,6 @@ func (m *AppModel) loadRuntimeLocation() (string, gitMeta) {
 	return cwd, meta
 }
 
-func readGitMeta(dir string) gitMeta {
-	root := gitOutput(dir, "rev-parse", "--show-toplevel")
-	if root == "" {
-		return gitMeta{}
-	}
-	gitDir := gitOutput(dir, "rev-parse", "--git-dir")
-	branch := gitOutput(dir, "branch", "--show-current")
-	if branch == "" {
-		branch = gitOutput(dir, "rev-parse", "--short", "HEAD")
-	}
-	status := gitOutput(dir, "status", "--porcelain")
-	shortstat := gitOutput(dir, "diff", "--shortstat")
-	return gitMeta{
-		Repo:      true,
-		Worktree:  gitDir != "" && !filepath.IsAbs(gitDir),
-		Branch:    branch,
-		Dirty:     strings.TrimSpace(status) != "",
-		Shortstat: compactShortstat(shortstat),
-	}
-}
-
-func gitOutput(dir string, args ...string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-func compactShortstat(text string) string {
-	text = strings.TrimSpace(text)
-	text = strings.ReplaceAll(text, " files changed", " files")
-	text = strings.ReplaceAll(text, " file changed", " file")
-	text = strings.ReplaceAll(text, " insertions(+)", "+")
-	text = strings.ReplaceAll(text, " insertion(+)", "+")
-	text = strings.ReplaceAll(text, " deletions(-)", "-")
-	text = strings.ReplaceAll(text, " deletion(-)", "-")
-	text = strings.ReplaceAll(text, ",", "")
-	return strings.Join(strings.Fields(text), " ")
-}
-
-// renderMainPane 渲染单列 TUI 主体。
-// 调用层级：View -> renderMainPane -> renderTopStatus/renderViewportPane/renderInputFooter。
-// 布局：顶部运行状态、历史 viewport、slash hint、亮灰输入框、底部补充状态。
-func renderMainPane(m *AppModel) string {
-	width := max(20, m.width)
-	snapshot := m.snapshot()
-	header := renderTopStatus(snapshot, m.modelName, m.agentName, width)
-	conversationHeight := max(1, m.viewport.Height)
-	conversation := lipgloss.NewStyle().Height(conversationHeight).Render(renderViewportPane(m.viewport, m.viewText))
-	inputBlock := renderInputBar(m.input.View(), width)
-	slashHint := m.renderSlashHint(max(12, width-4))
-	footer := renderInputFooter(snapshot, m.sessionID, width)
-	blocks := []string{
-		conversation,
-		header,
-	}
-	if slashHint != "" {
-		blocks = append(blocks, slashHint)
-	}
-	blocks = append(blocks, inputBlock, footer)
-	content := lipgloss.JoinVertical(lipgloss.Left, blocks...)
-	return mainViewStyle.Width(width).Render(content)
-}
-
-// renderInputBar 使用参考 tmux 对话窗口的上下深灰线样式包住输入行。
-// 参数：inputView 是 textarea 当前输出；width 是终端主列宽度。
-func renderInputBar(inputView string, width int) string {
-	width = max(12, width)
-	line := lipgloss.NewStyle().Foreground(colorInputBg).Render(strings.Repeat("▄", width))
-	bottom := lipgloss.NewStyle().Foreground(colorInputBg).Render(strings.Repeat("▀", width))
-	body := inputShellStyle.Width(width).Render(compactInputView(inputView))
-	return strings.Join([]string{line, body, bottom}, "\n")
-}
-
-func compactInputView(inputView string) string {
-	lines := strings.Split(inputView, "\n")
-	for len(lines) > 1 && isEmptyInputPromptLine(lines[len(lines)-1]) {
-		lines = lines[:len(lines)-1]
-	}
-	return strings.Join(lines, "\n")
-}
-
-func isEmptyInputPromptLine(line string) bool {
-	plain := strings.TrimSpace(stripANSI(line))
-	return plain == "" || plain == ">"
-}
-
-// renderTopStatus 渲染输入框上方的高频运行状态。
-// 参数：snapshot 为运行快照；modelName/agentName 来自 AppModel；width 为当前主列宽度。
-func renderTopStatus(snapshot statusSnapshot, modelName string, _ string, width int) string {
-	meta := snapshot.Runtime
-	if width < 72 {
-		parts := []string{
-			lipgloss.NewStyle().Foreground(colorCommand).Render(truncateMiddle(fallback(modelName, "-"), 22)),
-			renderState(meta.State, meta.Busy),
-		}
-		if meta.Turn > 0 {
-			parts = append(parts, lipgloss.NewStyle().Foreground(colorPurple).Render(fmt.Sprintf("turn %d", meta.Turn)))
-		}
-		if meta.ToolCallsTotal > 0 {
-			parts = append(parts, lipgloss.NewStyle().Foreground(colorYellow).Render(fmt.Sprintf("tools %d", meta.ToolCallsTotal)))
-		}
-		return strings.Join(parts, lipgloss.NewStyle().Faint(true).Render(" · "))
-	}
-	parts := []string{
-		lipgloss.NewStyle().Foreground(colorCommand).Render(truncateMiddle(fallback(modelName, "-"), max(16, width/3))),
-		renderState(meta.State, meta.Busy),
-	}
-	if meta.Turn > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorPurple).Render(fmt.Sprintf("turn %d", meta.Turn)))
-	}
-	if meta.ToolCallsTotal > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorYellow).Render(fmt.Sprintf("tools %d", meta.ToolCallsTotal)))
-	}
-	if meta.LastToolName != "" {
-		last := truncateMiddle(fallback(tools.DisplayName(meta.LastToolName), meta.LastToolName), 24)
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorYellow).Render("last "+last))
-	}
-	if meta.TokenUsed > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorMuted).Render(fmt.Sprintf("tok %d/%d", meta.TokenUsed, meta.TokenLimit)))
-	}
-	return strings.Join(parts, lipgloss.NewStyle().Faint(true).Render(" · "))
-}
-
-// renderInputFooter 渲染输入框下方的低频上下文状态。
-// 参数：snapshot 为运行快照；width 为当前主列宽度。
-func renderInputFooter(snapshot statusSnapshot, _ string, width int) string {
-	meta := snapshot.Runtime
-	if width < 72 {
-		parts := make([]string, 0, 4)
-		if meta.Workdir != "" && meta.Workdir != "-" {
-			parts = append(parts, lipgloss.NewStyle().Foreground(colorWhite).Render(truncateMiddle(meta.Workdir, 24)))
-		}
-		if meta.Git.Repo {
-			branch := truncateMiddle(fallback(meta.Git.Branch, "detached"), 12)
-			if meta.Git.Dirty {
-				branch += "*"
-			}
-			if meta.Git.Worktree {
-				parts = append(parts, lipgloss.NewStyle().Foreground(colorGreen).Render("worktree "+branch))
-			} else {
-				parts = append(parts, lipgloss.NewStyle().Foreground(colorBlue).Render("git "+branch))
-			}
-		}
-		if meta.TotalTasks > 0 {
-			parts = append(parts, lipgloss.NewStyle().Foreground(colorCommand).Render(fmt.Sprintf("tasks %d active / %d total", meta.ActiveTasks, meta.TotalTasks)))
-		}
-		if meta.ScrollPercent < 100 {
-			parts = append(parts, lipgloss.NewStyle().Foreground(colorPurple).Render(fmt.Sprintf("scroll %d%%", meta.ScrollPercent)))
-		}
-		return strings.Join(parts, lipgloss.NewStyle().Faint(true).Render(" · "))
-	}
-	parts := make([]string, 0, 8)
-	if meta.Workdir != "" && meta.Workdir != "-" {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorWhite).Render(truncateMiddle(meta.Workdir, 36)))
-	}
-	if meta.Git.Repo {
-		branch := truncateMiddle(fallback(meta.Git.Branch, "detached"), 18)
-		prefix := "git "
-		color := colorBlue
-		if meta.Git.Worktree {
-			prefix = "worktree "
-			color = colorGreen
-		}
-		if meta.Git.Dirty {
-			branch += "*"
-		}
-		parts = append(parts, lipgloss.NewStyle().Foreground(color).Render(prefix+branch))
-		if meta.Git.Shortstat != "" {
-			parts = append(parts, lipgloss.NewStyle().Foreground(colorError).Render("diff "+truncateMiddle(meta.Git.Shortstat, 20)))
-		}
-	}
-	if meta.ContextMessages > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorMuted).Render(fmt.Sprintf("msgs %d", meta.ContextMessages)))
-	}
-	if meta.ContextSummaries > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorMuted).Render(fmt.Sprintf("sum %d", meta.ContextSummaries)))
-	}
-	if meta.TotalTasks > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorCommand).Render(fmt.Sprintf("tasks %d active / %d total", meta.ActiveTasks, meta.TotalTasks)))
-	}
-	if meta.ScrollPercent < 100 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorPurple).Render(fmt.Sprintf("scroll %d%%", meta.ScrollPercent)))
-	}
-	if len(snapshot.EnabledSkills) > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorGreen).Render(skillSummary(snapshot.EnabledSkills)))
-	}
-	if len(snapshot.HighlightedTaskLine) > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorCommand).Render("focus "+truncateMiddle(strings.Join(snapshot.HighlightedTaskLine, ","), 48)))
-	}
-	return strings.Join(parts, lipgloss.NewStyle().Faint(true).Render(" · "))
-}
-
 func renderState(state string, busy bool) string {
 	color := colorGreen
 	if busy {
@@ -1231,156 +762,6 @@ func slashHintMatches(input string) []slashCommandHint {
 
 func renderBottomStatusBar(width int) string {
 	return statusBarStyle.Width(max(1, width)).Render(strings.Repeat(" ", max(1, width)))
-}
-
-func (m *AppModel) applyToolEvent(event logger.ToolEvent) {
-	displayName := fallback(tools.DisplayName(event.Name), event.Name)
-	key := toolEventKey(event.Name, event.Args)
-	summary := formatToolArgsSummary(event.Args)
-
-	// result/error 依赖 tool name + args 回填最近的 running 行；找不到时补一条完成记录，避免丢事件。
-	switch event.Kind {
-	case "call":
-		m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "running", ToolOutput: "running..."})
-	case "result":
-		idx := m.findRunningToolEntry(key, event.Name)
-		output := summarizeToolEventOutput(event)
-		if idx < 0 {
-			m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "done", ToolOutput: output})
-			return
-		}
-		m.entries[idx].ToolState = "done"
-		m.entries[idx].ToolOutput = output
-	case "error":
-		idx := m.findRunningToolEntry(key, event.Name)
-		output := summarizeToolEventOutput(event)
-		if idx < 0 {
-			m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "error", ToolOutput: output})
-			return
-		}
-		m.entries[idx].ToolState = "error"
-		m.entries[idx].ToolOutput = output
-	default:
-		m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "done", ToolOutput: strings.TrimSpace(stripANSI(event.Text))})
-	}
-}
-
-func (m *AppModel) findRunningToolEntry(key string, name string) int {
-	displayName := tools.DisplayName(name)
-	for i := len(m.entries) - 1; i >= 0; i-- {
-		entry := m.entries[i]
-		if entry.Role != roleHint || entry.ToolState != "running" {
-			continue
-		}
-		if key != "" && entry.ToolKey == key {
-			return i
-		}
-		if entry.ToolName == name || entry.ToolName == displayName {
-			return i
-		}
-	}
-	return -1
-}
-
-func toolEventKey(name string, args string) string {
-	return name + "\x00" + strings.TrimSpace(args)
-}
-
-func formatToolArgsSummary(args string) string {
-	args = strings.TrimSpace(args)
-	if args == "" || args == "{}" {
-		return ""
-	}
-	var raw map[string]interface{}
-	if err := json.Unmarshal([]byte(args), &raw); err != nil {
-		return "[args=" + truncateMiddle(args, 180) + "]"
-	}
-	keys := make([]string, 0, len(raw))
-	for key := range raw {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts = append(parts, key+"="+truncateMiddle(toolArgValue(raw[key]), 120))
-	}
-	return "[" + strings.Join(parts, ",") + "]"
-}
-
-func toolArgValue(v interface{}) string {
-	switch vv := v.(type) {
-	case string:
-		return vv
-	case float64:
-		return fmt.Sprintf("%g", vv)
-	case bool:
-		if vv {
-			return "true"
-		}
-		return "false"
-	case nil:
-		return "null"
-	default:
-		data, err := json.Marshal(v)
-		if err != nil {
-			return fmt.Sprintf("%v", v)
-		}
-		return string(data)
-	}
-}
-
-func summarizeToolEventOutput(event logger.ToolEvent) string {
-	clean := strings.TrimSpace(stripANSI(event.Text))
-	// 兼容 logger 旧文本块格式（●/⎿/✗），也兼容当前 ToolEvent.Text 的短摘要。
-	entry := parseToolBlock(clean)
-	switch event.Kind {
-	case "result":
-		fields := append([]string{}, entry.Result...)
-		if len(fields) == 0 {
-			fields = strings.Split(strings.TrimSpace(strings.TrimPrefix(clean, "⎿ ")), "\n")
-		}
-		return compactOutputLines(fields, 4)
-	case "error":
-		if entry.Error != "" {
-			return compactOutputLines([]string{entry.Error}, 2)
-		}
-		if event.Error != "" {
-			return "error: " + truncateMiddle(event.Error, 180)
-		}
-		return compactOutputLines(strings.Split(clean, "\n"), 2)
-	default:
-		return compactOutputLines(strings.Split(clean, "\n"), 3)
-	}
-}
-
-func compactOutputLines(lines []string, limit int) string {
-	result := make([]string, 0, limit)
-	for _, line := range lines {
-		line = strings.TrimSpace(strings.TrimPrefix(line, "⎿ "))
-		if line == "" {
-			continue
-		}
-		result = append(result, truncateMiddle(line, 160))
-		if len(result) >= limit {
-			break
-		}
-	}
-	if len(result) == 0 {
-		return "(no output)"
-	}
-	if len(lines) > len(result) {
-		result = append(result, "...")
-	}
-	return strings.Join(result, "\n")
-}
-
-func truncateInline(text string, maxLen int) string {
-	text = strings.Join(strings.Fields(text), " ")
-	return truncateMiddle(text, maxLen)
-}
-
-func cleanDisplayText(text string) string {
-	return strings.ReplaceAll(text, "\uFFFD", "")
 }
 
 func (m *AppModel) renderConversationEntry(entry conversationEntry, width int) string {
@@ -1502,51 +883,6 @@ func renderThinkingEntry(content string, width int) string {
 	return label + "\n" + indentLines(body, "  └ ", "    ")
 }
 
-func (m *AppModel) renderToolHintEntry(entry conversationEntry, width int) string {
-	stateIcon := "▮"
-	stateColor := colorBlue
-	switch entry.ToolState {
-	case "running":
-		stateIcon = spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
-		stateColor = colorBlue
-	case "error":
-		stateIcon = "▮"
-		stateColor = colorError
-	}
-
-	name := fallback(entry.ToolName, "tool")
-	args := strings.TrimSpace(entry.ToolArgs)
-	if entry.ToolState != "running" {
-		stateIcon = "▮"
-	}
-	header := lipgloss.NewStyle().Foreground(stateColor).Bold(true).Render(stateIcon) + " " + lipgloss.NewStyle().Foreground(stateColor).Render(name)
-	if args != "" {
-		header += " " + logger.Gray(args)
-	}
-
-	output := strings.TrimSpace(entry.ToolOutput)
-	if output == "" {
-		return header
-	}
-	lineWidth := max(8, width-4)
-	lines := wrapVisibleText(output, lineWidth)
-	if entry.ToolState == "error" {
-		lines = loggerColorLines(lines, colorError)
-	} else {
-		lines = loggerColorLines(lines, colorResult)
-	}
-	return header + "\n" + indentLines(lines, "  └ ", "  └ ")
-}
-
-func loggerColorLines(text string, color lipgloss.Color) string {
-	style := lipgloss.NewStyle().Foreground(color)
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		lines[i] = style.Render(line)
-	}
-	return strings.Join(lines, "\n")
-}
-
 func indentLines(text string, firstPrefix string, nextPrefix string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
@@ -1656,136 +992,6 @@ func fallback(value string, defaultValue string) string {
 	return value
 }
 
-var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
-
-// toolEntry 表示解析后的工具条目
-type toolEntry struct {
-	Name   string
-	Args   []string
-	Result []string
-	Error  string
-}
-
-func parseToolBlock(text string) toolEntry {
-	clean := strings.TrimSpace(ansiPattern.ReplaceAllString(text, ""))
-	if clean == "" {
-		return toolEntry{}
-	}
-
-	lines := strings.Split(clean, "\n")
-	entry := toolEntry{}
-	seenResult := false
-	for _, raw := range lines {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "● ") {
-			rest := strings.TrimPrefix(line, "● ")
-			rest = strings.TrimSuffix(rest, " [并发]")
-			entry.Name = extractToolNameFromCall(rest)
-			continue
-		}
-		if strings.HasPrefix(line, "⎿ ") {
-			seenResult = true
-			line = strings.TrimSpace(strings.TrimPrefix(line, "⎿ "))
-		}
-		if strings.HasPrefix(line, "✗") {
-			entry.Error = strings.TrimSpace(line)
-			seenResult = true
-			continue
-		}
-		if !seenResult {
-			entry.Args = append(entry.Args, line)
-			continue
-		}
-		entry.Result = append(entry.Result, line)
-	}
-	return entry
-}
-
-// extractToolName 从工具调用行提取工具名称
-func extractToolNameFromCall(text string) string {
-	// 格式: ToolName(args...) 或 ToolName
-	text = strings.TrimSpace(text)
-	// 找到第一个括号的位置
-	if idx := strings.Index(text, "("); idx > 0 {
-		text = text[:idx]
-	}
-	return strings.TrimSpace(text)
-}
-
-func renderToolEntry(content string, width int) string {
-	entry := parseToolBlock(content)
-	if entry.Name == "" && len(entry.Args) == 0 && len(entry.Result) == 0 && entry.Error == "" {
-		return renderToolUnknownEntry(content, width)
-	}
-	return renderToolCompactEntry(entry, width)
-}
-
-func renderToolCompactEntry(entry toolEntry, width int) string {
-	var b strings.Builder
-	icon := lipgloss.NewStyle().Foreground(colorBlue).Bold(true).Render("▮")
-	name := lipgloss.NewStyle().Foreground(colorBlue).Render(fallback(entry.Name, "tool"))
-	b.WriteString(icon + " " + name)
-
-	if len(entry.Args) > 0 {
-		joined := strings.Join(entry.Args, "   ·   ")
-		wrapped := wrapVisibleLines(joined, max(8, width-2))
-		b.WriteString("\n")
-		for _, wl := range wrapped {
-			b.WriteString(lipgloss.NewStyle().Foreground(colorGray).Faint(true).Render("  │ " + wl))
-			b.WriteString("\n")
-		}
-	}
-
-	if entry.Error != "" {
-		b.WriteString("\n")
-		for _, wl := range wrapVisibleLines(entry.Error, max(8, width-2)) {
-			b.WriteString(lipgloss.NewStyle().Foreground(colorError).Render("  └ " + wl))
-			b.WriteString("\n")
-		}
-		return strings.TrimRight(b.String(), "\n")
-	}
-
-	if len(entry.Result) > 0 {
-		showLines := entry.Result
-		truncated := false
-		if len(showLines) > 2 {
-			showLines = showLines[:2]
-			truncated = true
-		}
-		if len(entry.Args) == 0 {
-			b.WriteString("\n")
-		}
-		for _, line := range showLines {
-			wrapped := wrapVisibleLines(truncateMiddle(line, max(24, width+12)), max(8, width-2))
-			for _, wl := range wrapped {
-				b.WriteString(lipgloss.NewStyle().Foreground(colorResult).Render("  └ " + wl))
-				b.WriteString("\n")
-			}
-		}
-		if truncated {
-			b.WriteString(lipgloss.NewStyle().Foreground(colorGray).Render("  └ ..."))
-			b.WriteString("\n")
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-// renderToolUnknownEntry 渲染未知工具条目
-func renderToolUnknownEntry(content string, width int) string {
-	clean := strings.TrimSpace(ansiPattern.ReplaceAllString(content, ""))
-	if clean == "" {
-		return lipgloss.NewStyle().Foreground(colorGray).Render("▮ tool\n  └ (empty)")
-	}
-	maxLen := width - 10
-	if maxLen < 20 {
-		maxLen = 20
-	}
-	return lipgloss.NewStyle().Foreground(colorBlue).Bold(true).Render("▮") + " " + lipgloss.NewStyle().Foreground(colorGray).Render(truncateMiddle(clean, maxLen))
-}
-
 // truncateMiddle 截断中间部分
 func truncateMiddle(s string, maxLen int) string {
 	runes := []rune(s)
@@ -1818,7 +1024,7 @@ func tickSpinner() tea.Cmd {
 	})
 }
 
-func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string, runTasks RunTasksFunc, switchModel SwitchModelFunc) error {
+func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string, runTasks RunTasksFunc, switchModel SwitchModelFunc, onToolEvent ToolEventFunc) error {
 	launchMu.Lock()
 	defer launchMu.Unlock()
 	model := NewAppModel(ctx, ag, modelName, promptDir, taskList, skillMgr, ctxManager, messageCtx, sessionID, runTasks, switchModel)
@@ -1826,6 +1032,9 @@ func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, promptDir
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	model.program = p
 	prevSink := ag.SetToolEventSink(func(event logger.ToolEvent) {
+		if onToolEvent != nil {
+			onToolEvent(event)
+		}
 		p.Send(toolEventMsg{event: event})
 	})
 	defer ag.SetToolEventSink(prevSink)

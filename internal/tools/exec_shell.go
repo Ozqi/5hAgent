@@ -30,6 +30,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -94,13 +95,15 @@ func NewExecShellTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, erro
 			cmd := exec.CommandContext(ctx, "sh", "-c", input.Command)
 			cmd.Dir = root
 
-			stdout, err := cmd.Output()
-			var stderr []byte
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			err := cmd.Run()
 			var returnCode int
 
 			if err != nil {
 				if exitErr, ok := err.(*exec.ExitError); ok {
-					stderr = exitErr.Stderr
 					returnCode = exitErr.ExitCode()
 				} else {
 					return nil, fmt.Errorf("failed to execute command: %w. Check that the command exists and is in your PATH.", err)
@@ -109,7 +112,7 @@ func NewExecShellTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, erro
 				returnCode = 0
 			}
 
-			output := ExecShellOutput{Stdout: string(stdout), Stderr: string(stderr), ReturnCode: returnCode}
+			output := ExecShellOutput{Stdout: stdout.String(), Stderr: stderr.String(), ReturnCode: returnCode}
 			return JSONResult(output)
 		},
 	)

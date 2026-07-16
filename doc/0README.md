@@ -32,7 +32,6 @@ flowchart TB
   reg --> tasktool[task.task]
   reg --> skilltool[skill.skill]
   reg --> ctxtool[context.context]
-  reg --> ipc[sys.ipc]
 ```
 
 ## 模块索引

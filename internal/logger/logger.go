@@ -4,9 +4,7 @@
 //	启动时写入独立日志文件 ~/.5hAgent/logs/，不污染 TUI
 //
 // 主要类型：Logger, Level
-// 导出函数：SetLevel, InitDebugLog, CloseDebugLog, Debug, Info, Warn, Error,
-//
-//	DebugTag, InfoTag, WarnTag, ErrorTag, TruncateString
+// 导出函数：SetLevel, InitLog, CloseLog, DebugTag, InfoTag, WarnTag, ErrorTag, TruncateString
 package logger
 
 import (
@@ -101,17 +99,12 @@ func InitLog() (string, error) {
 	// logger 只写文件，避免 stdout/stderr 干扰 Bubble Tea/TUI 渲染。
 	std.output = colorStripWriter{w: f}
 	std.file = f
+	cleanOldLogs(logDir)
 	return logFile, nil
 }
 
-// InitDebugLog 初始化日志文件。
-// Deprecated: use InitLog. Debug 级别由 SetLevel(DEBUG) 控制。
-func InitDebugLog() (string, error) {
-	return InitLog()
-}
-
-// CloseDebugLog 关闭日志文件，恢复静默输出
-func CloseDebugLog() {
+// CloseLog 关闭日志文件，恢复静默输出。
+func CloseLog() {
 	std.mu.Lock()
 	defer std.mu.Unlock()
 	std.closeFileLocked()
@@ -171,28 +164,6 @@ func (l *Logger) log(level Level, tag string, format string, args ...interface{}
 		fmt.Fprintf(l.output, "[%s][%-5s] %s\n", Gray(timestamp), levelStr, msg)
 	}
 }
-
-// Debug 输出 DEBUG 级别日志
-func Debug(format string, args ...interface{}) {
-	std.log(DEBUG, "", format, args...)
-}
-
-// Info 输出 INFO 级别日志
-func Info(format string, args ...interface{}) {
-	std.log(INFO, "", format, args...)
-}
-
-// Warn 输出 WARN 级别日志
-func Warn(format string, args ...interface{}) {
-	std.log(WARN, "", format, args...)
-}
-
-// Error 输出 ERROR 级别日志
-func Error(format string, args ...interface{}) {
-	std.log(ERROR, "", format, args...)
-}
-
-// 带标签的日志函数
 
 // DebugTag 输出带标签的 DEBUG 日志
 func DebugTag(tag string, format string, args ...interface{}) {

@@ -48,6 +48,8 @@ const (
 - path: required absolute file path. Use glob/list_dir first if unsure.
 - offset: optional 1-based start line. Default 1.
 - limit: optional max lines. Default 100. Use smaller chunks for large files.
+- Default output is only a prefix chunk, not the whole file. For functions, grep the symbol first and read a small offset range.
+- Do not use a partial read to count whole-file occurrences. For counts, use base.grep or base.exec_shell with an exact command.
 Example: {"path":"/home/user/project/main.go","offset":1,"limit":120}`
 	readFileToolErrors = `MISSING 'path': 必须提供文件绝对路径，不能为空
 offset < 1: offset 必须 >= 1

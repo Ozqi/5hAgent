@@ -1,7 +1,7 @@
 // toolprint.go - 工具调用格式化输出
 // 功能：ToolCall/ToolResult/ToolError 的终端展示（带颜色和缩进）
 // 主要类型：ToolPrinter, ToolEvent, toolCallSummary, toolResultSummary
-// 导出函数：PrintToolCall, PrintToolResult, PrintToolError, PrintToolStatus, PrintSummary, SetToolEventSink
+// 导出函数：PrintToolCall, PrintToolResult, PrintToolError, SetToolEventSink
 package logger
 
 import (
@@ -67,8 +67,7 @@ func currentToolEventSink() func(ToolEvent) {
 	return toolEventSink
 }
 
-// NewToolPrinter 创建新的工具打印器
-func NewToolPrinter() *ToolPrinter {
+func newToolPrinter() *ToolPrinter {
 	return &ToolPrinter{
 		indent: "  ",
 	}
@@ -230,30 +229,8 @@ func summarizeToolError(name string, err error) string {
 	return fmt.Sprintf("%s failed: %s", displayName, TruncateString(strings.TrimSpace(message), 180))
 }
 
-// PrintToolStatus 打印工具状态信息
-// 格式: ⎿ status message
-func (p *ToolPrinter) PrintToolStatus(message string) {
-	text := fmt.Sprintf("%s⎿ %s\n", p.indent, Gray(message))
-	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "status", Text: text})
-		return
-	}
-	fmt.Print(text)
-}
-
-// PrintSummary 打印工具执行汇总
-// 格式: Searched for N patterns, read M files (ctrl+o to expand)
-func (p *ToolPrinter) PrintSummary(message string) {
-	text := fmt.Sprintf("\n%s%s\n", p.indent, Gray(message))
-	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "summary", Text: text})
-		return
-	}
-	fmt.Print(text)
-}
-
 // Global instance
-var defaultToolPrinter = NewToolPrinter()
+var defaultToolPrinter = newToolPrinter()
 
 // PrintToolCall 全局函数：打印工具调用
 func PrintToolCall(name string, args string, concurrent bool) {
@@ -280,16 +257,6 @@ func PrintToolError(name string, args string, err error) {
 
 func FormatToolError(name string, args string, err error) (string, string) {
 	return formatToolErrorText(defaultToolPrinter.indent, name, args, err)
-}
-
-// PrintToolStatus 全局函数：打印工具状态
-func PrintToolStatus(message string) {
-	defaultToolPrinter.PrintToolStatus(message)
-}
-
-// PrintToolSummary 全局函数：打印工具汇总
-func PrintToolSummary(message string) {
-	defaultToolPrinter.PrintSummary(message)
 }
 
 func summarizeToolCall(name string, args string) toolCallSummary {

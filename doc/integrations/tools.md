@@ -11,7 +11,6 @@ Registry.Init(taskList, skillMgr)
   -> base.*
   -> task.task
   -> skill.skill
-  -> sys.ipc
 RegisterContextTool(model, promptDir)
   -> context.context
 ```
@@ -23,6 +22,7 @@ RegisterContextTool(model, promptDir)
 | 工具 | 读写 | 说明 |
 | --- | --- | --- |
 | `base.read_file` | 读 | offset/limit 读文件 |
+| `base.read_md` | 读 | 列 Markdown 标题树、读取标题 section |
 | `base.write_file` | 写 | 创建/覆盖文件 |
 | `base.edit` | 写 | 精确字符串替换 |
 | `base.glob` | 读 | glob 文件匹配 |
@@ -32,7 +32,6 @@ RegisterContextTool(model, promptDir)
 | `task.task` | 混合 | task CRUD |
 | `skill.skill` | 读 | 查看 skill |
 | `context.context` | 混合 | inspect/pin/audit/compress |
-| `sys.ipc` | 写 | systemd process IPC |
 
 ## 执行
 
