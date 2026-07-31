@@ -70,8 +70,9 @@ type runtimeMeta struct {
 	Busy             bool
 	State            string
 	Turn             int
-	TokenUsed        int
-	TokenLimit       int
+	ContextTokens    int
+	ContextWindow    int
+	SessionTokens    int
 	ScrollPercent    int
 	ContextMessages  int
 	ContextSummaries int
@@ -613,7 +614,7 @@ func (m *AppModel) refreshView() {
 	if len(parts) == 0 {
 		parts = append(parts, renderEmptyState(contentWidth))
 	}
-	m.viewText = strings.Join(parts, "\n")
+	m.viewText = strings.Join(parts, "\n\n")
 	m.viewport.SetContent(m.viewText)
 	if stickToBottom {
 		m.viewport.GotoBottom()
@@ -637,18 +638,19 @@ func renderEmptyState(width int) string {
 // 调用层级：View -> renderMainPane -> snapshot。
 // 主要步骤：读取 token、context、skill、task 的只读摘要；不在渲染函数里直接散落业务查询。
 func (m *AppModel) snapshot() statusSnapshot {
-	used, limit := 0, 0
+	contextTokens, sessionTokens, contextWindow := 0, 0, 0
 	turn := 0
 	if m.ag != nil {
-		used, limit = m.ag.TokenUsage()
+		contextTokens, sessionTokens, contextWindow = m.ag.TokenUsage()
 		turn = m.ag.CurrentTurn()
 	}
 	snapshot := statusSnapshot{Runtime: runtimeMeta{
 		Busy:           m.busy,
 		State:          animatedStateLabel(m.busy, m.currentStatus, m.spinnerFrame),
 		Turn:           turn,
-		TokenUsed:      used,
-		TokenLimit:     limit,
+		ContextTokens:  contextTokens,
+		ContextWindow:  contextWindow,
+		SessionTokens:  sessionTokens,
 		ScrollPercent:  int(m.viewport.ScrollPercent() * 100),
 		ToolCallsTotal: m.toolCalls,
 		LastToolName:   m.lastTool,

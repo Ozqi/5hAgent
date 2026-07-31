@@ -6,8 +6,12 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino-ext/components/model/claude"
 	"github.com/cloudwego/eino-ext/components/model/openai"
@@ -22,6 +26,7 @@ const (
 // Config 描述一次 LLM provider 初始化所需配置。
 // Provider 选择底层模型适配器；ThinkingBudgetTokens 仅对 Claude 生效。
 type Config struct {
+	Supplier             string // 配置块名称，例如 ollama / mira
 	Provider             string // claude / openai
 	APIKey               string // API Key；Ollama OpenAI-compatible 本地模式可填 dummy
 	BaseURL              string // provider endpoint，例如 Anthropic 或 http://localhost:11434/v1
@@ -39,6 +44,50 @@ type LLMClient struct {
 // GetModel 获取底层的 Eino ToolCallingChatModel
 func (c *LLMClient) GetModel() model.ToolCallingChatModel {
 	return c.model
+}
+
+// ContextWindow 返回本地 Ollama 当前已加载模型的实际上下文窗口。
+func (c *LLMClient) ContextWindow(ctx context.Context) int {
+	if c == nil || c.config == nil {
+		return 0
+	}
+	if !strings.EqualFold(c.config.Supplier, "ollama") {
+		return 0
+	}
+	baseURL, err := url.Parse(c.config.BaseURL)
+	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
+		return 0
+	}
+	endpoint := baseURL.Scheme + "://" + baseURL.Host + "/api/ps"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return 0
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return 0
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return 0
+	}
+	var result struct {
+		Models []struct {
+			Name          string `json:"name"`
+			Model         string `json:"model"`
+			ContextLength int    `json:"context_length"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return 0
+	}
+	for _, loaded := range result.Models {
+		if loaded.Name == c.config.Model || loaded.Model == c.config.Model {
+			return loaded.ContextLength
+		}
+	}
+	return 0
 }
 
 // NewClient 根据 Config.Provider 创建 LLM 客户端。

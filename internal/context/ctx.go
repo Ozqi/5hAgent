@@ -313,6 +313,63 @@ func (m *Manager) AddMessage(ctx *Context, msg *schema.Message) error {
 	return nil
 }
 
+// EditMessage 修改一条普通对话消息，并同步持久化 session。
+func (m *Manager) EditMessage(ctx *Context, index int, content string, reason string) error {
+	if ctx == nil {
+		return fmt.Errorf("context is nil")
+	}
+	if content == "" {
+		return fmt.Errorf("content is required")
+	}
+	if reason == "" {
+		return fmt.Errorf("reason is required")
+	}
+
+	ctx.mu.Lock()
+	if index < 0 || index >= len(ctx.messages) {
+		ctx.mu.Unlock()
+		return fmt.Errorf("invalid message index %d for %d messages", index, len(ctx.messages))
+	}
+	if rangeContainsAny(ctx.meta.Pinned, index, index) {
+		ctx.mu.Unlock()
+		return fmt.Errorf("message %d is pinned", index)
+	}
+	msg := ctx.messages[index]
+	if msg == nil {
+		ctx.mu.Unlock()
+		return fmt.Errorf("message %d is nil", index)
+	}
+	if msg.Role != schema.User && msg.Role != schema.Assistant {
+		ctx.mu.Unlock()
+		return fmt.Errorf("message %d with role %q cannot be edited", index, msg.Role)
+	}
+	if len(msg.ToolCalls) > 0 {
+		ctx.mu.Unlock()
+		return fmt.Errorf("assistant message %d contains tool calls", index)
+	}
+
+	edited := *msg
+	edited.Content = content
+	ctx.messages[index] = &edited
+	ctx.meta.Audit = append(ctx.meta.Audit, ContextEvent{
+		Op:          "edit",
+		Range:       ContextRange{Start: index, End: index, Reason: reason},
+		BeforeCount: len(ctx.messages),
+		AfterCount:  len(ctx.messages),
+		CreatedAt:   time.Now().UTC(),
+	})
+	messages := cloneMessages(ctx.messages)
+	session := ctx.Session
+	ctx.mu.Unlock()
+
+	if m.store != nil && session != nil {
+		if err := m.store.ReplaceMessages(session, messages); err != nil {
+			return fmt.Errorf("persist edited message: %w", err)
+		}
+	}
+	return nil
+}
+
 // ReplaceMessages 替换上下文消息，并同步持久化 session。
 func (m *Manager) ReplaceMessages(ctx *Context, messages []*schema.Message) error {
 	if ctx == nil {

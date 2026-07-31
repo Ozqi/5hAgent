@@ -15,6 +15,21 @@ LLM_<PROVIDER>_API_KEY=...
 
 `provider` 只用于查配置块；`model-name` 原样传给上游。
 
+## 本地模型
+
+本地模型推荐先走 Ollama 的 OpenAI-compatible `/v1` 接口，不需要为每个模型新增 Go provider：
+
+```env
+LLM_MODEL=ollama/ornith:9b
+LLM_OLLAMA_FORMAT=openai
+LLM_OLLAMA_BASE_URL=http://localhost:11434/v1
+LLM_OLLAMA_API_KEY=dummy
+```
+
+`LLM_MODEL` 后半段会原样传给 Ollama，例如 `qwen3:14b`、`ornith:9b`、`ornith:35b` 或 HuggingFace GGUF 引用。Ollama library 中的 Ornith-1.0 面向 agentic coding，当前可用标签包括 `ornith:9b` 和 `ornith:35b`；日常 smoke test 优先用 `ornith:9b`，更重的代码任务再尝试 `ornith:35b`。
+
+Ornith 属于较新的 Ollama library 模型；如果拉取时报 `requires a newer version of Ollama`，先升级 Ollama 客户端。
+
 ## 文件
 
 | 文件 | 作用 |

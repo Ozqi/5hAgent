@@ -175,6 +175,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 
 	llmConfig := &llm.Config{
+		Supplier:             appConfig.LLM.Supplier,
 		Provider:             appConfig.LLM.Provider,
 		APIKey:               appConfig.LLM.APIKey,
 		BaseURL:              appConfig.LLM.BaseURL,
@@ -226,6 +227,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 	ag.SetModel(modelWithTools)
 	ag.SetTools(toolRegistry.All())
+	ag.SetContextWindow(client.ContextWindow(ctx))
 
 	return &Runtime{
 		Agent:        ag,
@@ -252,6 +254,7 @@ func (r *Runtime) SwitchModel(ctx context.Context, modelRef string) (string, err
 		return "", fmt.Errorf("load model config: %w", err)
 	}
 	llmConfig := &llm.Config{
+		Supplier:             appConfig.LLM.Supplier,
 		Provider:             appConfig.LLM.Provider,
 		APIKey:               appConfig.LLM.APIKey,
 		BaseURL:              appConfig.LLM.BaseURL,
@@ -279,6 +282,7 @@ func (r *Runtime) SwitchModel(ctx context.Context, modelRef string) (string, err
 	r.Agent.SetModel(modelWithTools)
 	r.Agent.SetTools(r.ToolRegistry.All())
 	r.Agent.SetSystemPrompt(systemPrompt)
+	r.Agent.SetContextWindow(client.ContextWindow(ctx))
 	r.ModelName = llmConfig.Model
 	r.plainModel = client.GetModel()
 	return r.ModelName, nil

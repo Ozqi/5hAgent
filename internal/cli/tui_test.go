@@ -158,6 +158,29 @@ func TestAssistantTokenIgnoredAfterStop(t *testing.T) {
 	}
 }
 
+func TestRefreshViewSeparatesConversationEntries(t *testing.T) {
+	model := NewAppModel(context.Background(), nil, "test-model", "", nil, nil, nil, nil, "test-session", nil, nil)
+	model.width = 80
+	model.height = 24
+	model.entries = []conversationEntry{
+		{Role: roleUser, Content: "first"},
+		{Role: roleAssistant, Content: "second"},
+	}
+
+	model.refreshView()
+
+	if !strings.Contains(stripANSI(model.viewText), "\n\n") {
+		t.Fatalf("viewText = %q, want a blank line between conversation entries", model.viewText)
+	}
+}
+
+func TestRenderTokenStatusShowsContextAndSessionUsage(t *testing.T) {
+	got := renderTokenStatus(runtimeMeta{ContextTokens: 1200, ContextWindow: 32768, SessionTokens: 4500})
+	if got != "ctx 1200/32768 tokens · total 4500 tokens · spent $--" {
+		t.Fatalf("renderTokenStatus() = %q", got)
+	}
+}
+
 func TestConfirmRequiresSecondPressWithinWindow(t *testing.T) {
 	pending := false
 	var last time.Time

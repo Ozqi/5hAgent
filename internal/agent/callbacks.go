@@ -22,10 +22,10 @@ type AgentCallbacks struct {
 }
 
 // NewAgentCallbacks 创建 Callback 处理器
-func NewAgentCallbacks(debug bool) *AgentCallbacks {
+func NewAgentCallbacks(debug bool, tokenBudget *utils.TokenBudget) *AgentCallbacks {
 	return &AgentCallbacks{
 		debug:       debug,
-		tokenBudget: utils.NewTokenBudget(0),
+		tokenBudget: tokenBudget,
 	}
 }
 
@@ -42,19 +42,21 @@ func (c *AgentCallbacks) OnModelStart(ctx context.Context, info *callbacks.RunIn
 
 // OnModelEnd 模型调用结束
 func (c *AgentCallbacks) OnModelEnd(ctx context.Context, info *callbacks.RunInfo, output *model.CallbackOutput) context.Context {
+	if output.TokenUsage != nil {
+		c.tokenBudget.AddUsage(output.TokenUsage)
+	}
 	if !c.debug {
 		return ctx
 	}
-	if output.TokenUsage != nil {
-		c.tokenBudget.AddUsage(output.TokenUsage)
-		logger.DebugTag("LLM", "End: prompt=%d completion=%d total=%d (session=%d)",
-			output.TokenUsage.PromptTokens,
-			output.TokenUsage.CompletionTokens,
-			output.TokenUsage.TotalTokens,
-			c.tokenBudget.SessionTotal())
-	} else {
+	if output.TokenUsage == nil {
 		logger.DebugTag("LLM", "End")
+		return ctx
 	}
+	logger.DebugTag("LLM", "End: prompt=%d completion=%d total=%d (session=%d)",
+		output.TokenUsage.PromptTokens,
+		output.TokenUsage.CompletionTokens,
+		output.TokenUsage.TotalTokens,
+		c.tokenBudget.SessionTotal())
 	return ctx
 }
 

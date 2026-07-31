@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/schema"
+	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/mcp"
 	"github.com/lzq/5hAgent/internal/skill"
 	"github.com/lzq/5hAgent/internal/task"
@@ -114,6 +116,31 @@ Use systematic checks.
 	}
 	if got := registry.Get("mcp.demo.lookup"); got == nil {
 		t.Fatalf("mcp tool was not exposed by registry")
+	}
+}
+
+func TestContextToolEditsNextTurnContext(t *testing.T) {
+	manager := agentctx.NewManager()
+	messageCtx, err := manager.CreateContext("")
+	if err != nil {
+		t.Fatalf("CreateContext() error = %v", err)
+	}
+	if err := manager.AddMessage(messageCtx, &schema.Message{Role: schema.User, Content: "old"}); err != nil {
+		t.Fatalf("AddMessage() error = %v", err)
+	}
+
+	contextTool := NewContextTool(nil, "")
+	ctx := agentctx.WithToolRuntime(context.Background(), manager, messageCtx)
+	if _, err := contextTool.InvokableRun(ctx, `{"action":"edit","index":0,"content":"new","reason":"remove stale detail"}`); err != nil {
+		t.Fatalf("context edit failed: %v", err)
+	}
+
+	messages, err := manager.GetMessages(messageCtx)
+	if err != nil {
+		t.Fatalf("GetMessages() error = %v", err)
+	}
+	if messages[0].Content != "new" {
+		t.Fatalf("message content = %q, want new", messages[0].Content)
 	}
 }
 

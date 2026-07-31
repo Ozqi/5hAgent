@@ -83,6 +83,15 @@ Ollama 当前使用哪个模型由 `LLM_MODEL` 的后半段决定。例如使用
 LLM_MODEL=ollama/hf.co/bartowski/Qwen_Qwen3.6-27B-GGUF:Q3_K_M
 ```
 
+Ornith-1.0 是面向 agentic coding 的开源模型，Ollama library 已提供 `ornith:9b` 和 `ornith:35b`。如果只想快速验证本地 Agent 链路，优先从 `ornith:9b` 开始；如果机器内存足够，可以再切到 `ornith:35b`：
+
+```bash
+ollama pull ornith:9b
+5hagent --model ollama/ornith:9b run
+```
+
+如果 `ollama pull ornith:9b` 返回 `requires a newer version of Ollama`，先升级 Ollama 客户端再重试。
+
 Ollama 本地模型不校验 API key，`dummy` 即可。建议先用 `5hagent run` 执行一个只读任务验证 chat、工具调用和报告落盘。
 
 ## 无头运行

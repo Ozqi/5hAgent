@@ -69,6 +69,9 @@ func renderTopStatus(snapshot statusSnapshot, modelName string, _ string, width 
 		if meta.ToolCallsTotal > 0 {
 			parts = append(parts, lipgloss.NewStyle().Foreground(colorYellow).Render(fmt.Sprintf("tools %d", meta.ToolCallsTotal)))
 		}
+		if meta.ContextTokens > 0 {
+			parts = append(parts, lipgloss.NewStyle().Foreground(colorMuted).Render(renderTokenStatus(meta)))
+		}
 		return strings.Join(parts, lipgloss.NewStyle().Faint(true).Render(" · "))
 	}
 	parts := []string{
@@ -85,10 +88,18 @@ func renderTopStatus(snapshot statusSnapshot, modelName string, _ string, width 
 		last := truncateMiddle(fallback(tools.DisplayName(meta.LastToolName), meta.LastToolName), 24)
 		parts = append(parts, lipgloss.NewStyle().Foreground(colorYellow).Render("last "+last))
 	}
-	if meta.TokenUsed > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorMuted).Render(fmt.Sprintf("tok %d/%d", meta.TokenUsed, meta.TokenLimit)))
+	if meta.ContextTokens > 0 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(colorMuted).Render(renderTokenStatus(meta)))
 	}
 	return strings.Join(parts, lipgloss.NewStyle().Faint(true).Render(" · "))
+}
+
+func renderTokenStatus(meta runtimeMeta) string {
+	context := fmt.Sprintf("ctx %d tokens", meta.ContextTokens)
+	if meta.ContextWindow > 0 {
+		context = fmt.Sprintf("ctx %d/%d tokens", meta.ContextTokens, meta.ContextWindow)
+	}
+	return fmt.Sprintf("%s · total %d tokens · spent $--", context, meta.SessionTokens)
 }
 
 // renderInputFooter 渲染输入框下方的低频上下文状态。

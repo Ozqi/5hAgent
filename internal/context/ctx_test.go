@@ -84,6 +84,57 @@ func TestAuditRecordsPinEvents(t *testing.T) {
 	}
 }
 
+func TestEditMessageUpdatesContentAndAudit(t *testing.T) {
+	mgr := NewManager()
+	ctx, err := mgr.CreateContext("")
+	if err != nil {
+		t.Fatalf("CreateContext() error = %v", err)
+	}
+	if err := mgr.AddMessage(ctx, &schema.Message{Role: schema.User, Content: "old"}); err != nil {
+		t.Fatalf("AddMessage() error = %v", err)
+	}
+
+	if err := mgr.EditMessage(ctx, 0, "new", "remove stale detail"); err != nil {
+		t.Fatalf("EditMessage() error = %v", err)
+	}
+
+	messages, err := mgr.GetMessages(ctx)
+	if err != nil {
+		t.Fatalf("GetMessages() error = %v", err)
+	}
+	if messages[0].Content != "new" {
+		t.Fatalf("message content = %q, want new", messages[0].Content)
+	}
+	events := mgr.Audit(ctx)
+	if len(events) != 1 || events[0].Op != "edit" || events[0].Range.Start != 0 || events[0].Range.Reason != "remove stale detail" {
+		t.Fatalf("Audit() = %+v", events)
+	}
+}
+
+func TestEditMessageRejectsPinnedAndToolMessages(t *testing.T) {
+	mgr := NewManager()
+	ctx, err := mgr.CreateContext("")
+	if err != nil {
+		t.Fatalf("CreateContext() error = %v", err)
+	}
+	if err := mgr.AddMessage(ctx, &schema.Message{Role: schema.User, Content: "pinned"}); err != nil {
+		t.Fatalf("AddMessage(user) error = %v", err)
+	}
+	if err := mgr.AddMessage(ctx, &schema.Message{Role: schema.Tool, Content: "result"}); err != nil {
+		t.Fatalf("AddMessage(tool) error = %v", err)
+	}
+	if err := mgr.PinRange(ctx, ContextRange{Start: 0, End: 0, Reason: "keep"}); err != nil {
+		t.Fatalf("PinRange() error = %v", err)
+	}
+
+	if err := mgr.EditMessage(ctx, 0, "changed", "rewrite"); err == nil {
+		t.Fatal("EditMessage(pinned) error = nil")
+	}
+	if err := mgr.EditMessage(ctx, 1, "changed", "rewrite"); err == nil {
+		t.Fatal("EditMessage(tool) error = nil")
+	}
+}
+
 func TestCompressFallbackPreservesSystemMessages(t *testing.T) {
 	mgr := NewManager()
 	ctx, err := mgr.CreateContext("")

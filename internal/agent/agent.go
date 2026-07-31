@@ -117,6 +117,7 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 		toolMap[info.Name] = t
 	}
 
+	tokenBudget := utils.NewTokenBudget(config.MaxTotalTokens)
 	return &Agent{
 		model:        model,
 		tools:        tools,
@@ -124,12 +125,12 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 		config:       config,
 		ctxManager:   agentctx.NewManager(),
 		skillManager: skillMgr,
-		tokenBudget:  utils.NewTokenBudget(config.MaxTotalTokens),
+		tokenBudget:  tokenBudget,
 		state: &State{
 			CurrentTurn: 0,
 			IsRunning:   false,
 		},
-		callbacks: NewAgentCallbacks(config.Debug),
+		callbacks: NewAgentCallbacks(config.Debug, tokenBudget),
 	}, nil
 }
 
@@ -667,13 +668,20 @@ func (a *Agent) Name() string {
 	return a.config.Name
 }
 
-// TokenUsage 获取当前 token 使用情况
-// 返回: (已用 token 数, token 上限)
-func (a *Agent) TokenUsage() (used int, limit int) {
+// TokenUsage 返回最近一次请求的输入 token、会话累计 token 和模型上下文窗口。
+func (a *Agent) TokenUsage() (prompt int, total int, window int) {
 	if a == nil || a.tokenBudget == nil {
-		return 0, 0
+		return 0, 0, 0
 	}
 	return a.tokenBudget.Usage()
+}
+
+// SetContextWindow 设置当前模型实际使用的上下文窗口。
+func (a *Agent) SetContextWindow(window int) {
+	if a == nil || a.tokenBudget == nil {
+		return
+	}
+	a.tokenBudget.SetContextWindow(window)
 }
 
 // CurrentTurn 返回当前 ReAct 轮次。

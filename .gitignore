@@ -1,5 +1,15 @@
 # Environment
 .env
+.env.*
+!.env.example
+*.local
+*.local.*
+*.secret
+*.secret.*
+
+# Hidden workspace directories
+/.*/
+!/.git/
 
 # Python (legacy)
 __pycache__/
