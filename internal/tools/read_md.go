@@ -1,5 +1,5 @@
 // read_md.go - Markdown 结构化读取工具
-// 功能：列出 Markdown 标题树，或读取指定标题下的 section。
+// 功能：列出、读取、替换或删除指定 Markdown 标题下的 section。
 package tools
 
 import (
@@ -18,16 +18,18 @@ import (
 const (
 	readMDToolName = "base.read_md"
 	readMDToolDesc = `Read Markdown structurally. Always send JSON object arguments.
-- action: required, one of list_headings or read_section.
+- action: required, one of list_headings, read_section, replace_section, or delete_section.
 - path: required Markdown file path.
-- heading: required for read_section. Match heading text exactly, without leading #.
-Use list_headings before read_section when unsure about the exact heading. This tool is read-only.`
+- heading: required for section actions. Match heading text exactly, without leading #.
+- content: required for replace_section. Include the replacement heading line itself.
+Use list_headings before a section action when unsure about the exact heading.`
 )
 
 type ReadMDInput struct {
-	Action  string `json:"action" jsonschema:"required,description=Action to run: list_headings or read_section."`
+	Action  string `json:"action" jsonschema:"required,description=Action to run: list_headings, read_section, replace_section, or delete_section."`
 	Path    string `json:"path" jsonschema:"required,description=Required Markdown file path."`
-	Heading string `json:"heading,omitempty" jsonschema:"description=Required for read_section. Exact heading text without leading #."`
+	Heading string `json:"heading,omitempty" jsonschema:"description=Required for section actions. Exact heading text without leading #."`
+	Content string `json:"content,omitempty" jsonschema:"description=Required for replace_section. Full replacement section including its heading line."`
 }
 
 type MarkdownHeading struct {
@@ -37,6 +39,7 @@ type MarkdownHeading struct {
 }
 
 type ReadMDOutput struct {
+	Success    bool              `json:"success,omitempty"`
 	Path       string            `json:"path"`
 	Action     string            `json:"action"`
 	Headings   []MarkdownHeading `json:"headings,omitempty"`
@@ -78,8 +81,16 @@ func NewReadMDTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) 
 					return nil, err
 				}
 				return JSONResult(output)
+			case "replace_section", "delete_section":
+				if strings.TrimSpace(input.Heading) == "" {
+					return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'heading' is required for %s", input.Action)
+				}
+				if input.Action == "replace_section" && strings.TrimSpace(input.Content) == "" {
+					return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'content' is required for replace_section")
+				}
+				return writeMarkdownSection(input.Path, lines, headings, input)
 			default:
-				return nil, fmt.Errorf("unknown action %q: expected list_headings or read_section", input.Action)
+				return nil, fmt.Errorf("unknown action %q: expected list_headings, read_section, replace_section, or delete_section", input.Action)
 			}
 		},
 	)
@@ -121,6 +132,26 @@ func readMarkdownLines(path string) ([]string, []MarkdownHeading, error) {
 }
 
 func markdownSection(path string, lines []string, headings []MarkdownHeading, heading string) (ReadMDOutput, error) {
+	start, end, err := markdownSectionRange(path, lines, headings, heading)
+	if err != nil {
+		return ReadMDOutput{}, err
+	}
+	content := strings.Join(lines[start-1:end], "\n")
+	if content != "" {
+		content += "\n"
+	}
+	return ReadMDOutput{
+		Path:       path,
+		Action:     "read_section",
+		Heading:    strings.TrimSpace(heading),
+		StartLine:  start,
+		EndLine:    end,
+		Content:    content,
+		TotalLines: len(lines),
+	}, nil
+}
+
+func markdownSectionRange(path string, lines []string, headings []MarkdownHeading, heading string) (int, int, error) {
 	heading = strings.TrimSpace(heading)
 	idx := -1
 	for i, candidate := range headings {
@@ -130,7 +161,7 @@ func markdownSection(path string, lines []string, headings []MarkdownHeading, he
 		}
 	}
 	if idx < 0 {
-		return ReadMDOutput{}, fmt.Errorf("heading %q not found in %s", heading, path)
+		return 0, 0, fmt.Errorf("heading %q not found in %s", heading, path)
 	}
 	start := headings[idx].Line
 	end := len(lines)
@@ -140,17 +171,38 @@ func markdownSection(path string, lines []string, headings []MarkdownHeading, he
 			break
 		}
 	}
-	content := strings.Join(lines[start-1:end], "\n")
-	if content != "" {
+	return start, end, nil
+}
+
+func writeMarkdownSection(path string, lines []string, headings []MarkdownHeading, input ReadMDInput) (*schema.ToolResult, error) {
+	start, end, err := markdownSectionRange(path, lines, headings, input.Heading)
+	if err != nil {
+		return nil, err
+	}
+	updated := append([]string{}, lines[:start-1]...)
+	if input.Content != "" {
+		// Split 保留末尾空元素，让调用方给出的 section 尾部换行继续分隔下一个标题。
+		updated = append(updated, strings.Split(input.Content, "\n")...)
+	}
+	updated = append(updated, lines[end:]...)
+	content := strings.Join(updated, "\n")
+	if len(updated) > 0 {
 		content += "\n"
 	}
-	return ReadMDOutput{
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat Markdown file %q: %w", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), info.Mode().Perm()); err != nil {
+		return nil, fmt.Errorf("%s heading %q in %s: %w", input.Action, input.Heading, path, err)
+	}
+	return JSONResult(ReadMDOutput{
+		Success:    true,
 		Path:       path,
-		Action:     "read_section",
-		Heading:    heading,
+		Action:     input.Action,
+		Heading:    strings.TrimSpace(input.Heading),
 		StartLine:  start,
 		EndLine:    end,
-		Content:    content,
-		TotalLines: len(lines),
-	}, nil
+		TotalLines: len(updated),
+	})
 }

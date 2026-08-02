@@ -22,7 +22,7 @@ RegisterContextTool(model, promptDir)
 | 工具 | 读写 | 说明 |
 | --- | --- | --- |
 | `base.read_file` | 读 | offset/limit 读文件 |
-| `base.read_md` | 读 | 列 Markdown 标题树、读取标题 section |
+| `base.read_md` | 读写 | 列标题树，读取、替换或删除标题 section |
 | `base.write_file` | 写 | 创建/覆盖文件 |
 | `base.edit` | 写 | 精确字符串替换 |
 | `base.glob` | 读 | glob 文件匹配 |

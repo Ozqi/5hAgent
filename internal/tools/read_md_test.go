@@ -58,3 +58,47 @@ func TestReadMDListsHeadingsAndReadsSection(t *testing.T) {
 		t.Fatalf("section content = %q, should stop before Usage", sectionOutput.Content)
 	}
 }
+
+func TestReadMDReplacesAndDeletesSection(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "guide.md")
+	content := "# Intro\n\nstart\n\n## Install\n\nold\n\n### Detail\n\nold detail\n\n## Usage\n\nrun\n"
+	if err := os.WriteFile(path, []byte(content), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := NewReadMDTool(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	replace := `{"action":"replace_section","path":"guide.md","heading":"Install","content":"## Install\n\nnew\n"}`
+	if _, err := candidate.InvokableRun(context.Background(), &schema.ToolArgument{Text: replace}); err != nil {
+		t.Fatalf("replace section error = %v", err)
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(updated), "## Install\n\nnew\n\n## Usage") || strings.Contains(string(updated), "old detail") {
+		t.Fatalf("updated Markdown = %q", updated)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o640 {
+		t.Fatalf("mode after replace = %v, want 0640", info.Mode().Perm())
+	}
+
+	deleteInput := `{"action":"delete_section","path":"guide.md","heading":"Install"}`
+	if _, err := candidate.InvokableRun(context.Background(), &schema.ToolArgument{Text: deleteInput}); err != nil {
+		t.Fatalf("delete section error = %v", err)
+	}
+	updated, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(updated), "## Install") || !strings.Contains(string(updated), "## Usage") {
+		t.Fatalf("Markdown after delete = %q", updated)
+	}
+}
