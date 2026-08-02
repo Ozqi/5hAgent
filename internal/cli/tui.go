@@ -128,6 +128,7 @@ type AppModel struct {
 	currentAssistant int
 	currentStatus    string
 	spinnerFrame     int
+	lastInput        string
 	escPending       bool
 	lastEscAt        time.Time
 	quitPending      bool
@@ -511,7 +512,13 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.autoScroll = m.viewport.AtBottom()
 			m.refreshView()
 			return m, nil
-		case "up", "ctrl+p":
+		case "up":
+			// 只保留最近一次提交，满足快速重复输入；多级 shell history 暂不引入。
+			if m.lastInput != "" {
+				m.input.SetValue(m.lastInput)
+			}
+			return m, nil
+		case "ctrl+p":
 			m.autoScroll = false
 			m.viewport.LineUp(1)
 			m.refreshView()

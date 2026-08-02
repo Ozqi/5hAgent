@@ -21,6 +21,7 @@ func (m *AppModel) submit() tea.Cmd {
 	if text == "" {
 		return nil
 	}
+	m.lastInput = text
 	fields := strings.Fields(text)
 	cmdName := ""
 	if len(fields) > 0 {
