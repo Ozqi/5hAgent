@@ -51,7 +51,7 @@ func (r *Registry) Init(taskList *task.TaskList, skillMgr *skill.Manager) error 
 		fn   func() (tool.BaseTool, error)
 	}{
 		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "read_file", FullName: "base.read_file", OriginalName: "read_file", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewReadFileTool(r.workspaceRoot) }},
-		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "read_md", FullName: "base.read_md", OriginalName: "read_md", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewReadMDTool(r.workspaceRoot) }},
+		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "read_md", FullName: "base.read_md", OriginalName: "read_md"}, fn: func() (tool.BaseTool, error) { return NewReadMDTool(r.workspaceRoot) }},
 		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "exec_shell", FullName: "base.exec_shell", OriginalName: "exec_shell"}, fn: func() (tool.BaseTool, error) { return NewExecShellTool(r.workspaceRoot) }},
 		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "glob", FullName: "base.glob", OriginalName: "glob", ReadOnly: true}, fn: func() (tool.BaseTool, error) { return NewGlobTool(r.workspaceRoot) }},
 		{meta: toolmeta.Meta{Category: toolmeta.CategoryBase, Source: "local", DisplayName: "edit", FullName: "base.edit", OriginalName: "edit"}, fn: func() (tool.BaseTool, error) { return NewEditTool(r.workspaceRoot) }},
