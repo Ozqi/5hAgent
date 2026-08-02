@@ -37,20 +37,13 @@ func runPS(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	count := 0
+	fmt.Fprintln(writer, "TARGET\tSTATE\tWORK\tCWD")
 	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
 		fields := strings.Split(line, "\t")
 		// pane_current_command 用于确认前台确实是 5hAgent；普通 shell 和其他 CLI 不属于这里。
 		if len(fields) == 4 && fields[1] == "5hagent" {
-			if count == 0 {
-				fmt.Fprintln(writer, "TARGET\tSTATE\tWORK\tCWD")
-			}
 			fmt.Fprintf(writer, "%s\trunning\t%s\t%s\n", fields[0], fields[2], fields[3])
-			count++
 		}
-	}
-	if count == 0 {
-		fmt.Fprintln(writer, "No running 5hAgent instances.")
 	}
 	_ = writer.Flush()
 }
