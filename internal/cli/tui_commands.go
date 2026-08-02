@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -27,6 +28,9 @@ func (m *AppModel) submit() tea.Cmd {
 	}
 	if cmdName == "/stop" {
 		return m.handleStopCommand(text)
+	}
+	if cmdName == "/detach" {
+		return m.handleDetachCommand(text)
 	}
 	if m.busy {
 		m.currentStatus = "busy"
@@ -241,6 +245,17 @@ func (m *AppModel) handleStopCommand(text string) tea.Cmd {
 	m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "stopped current run"})
 	m.refreshView()
 	return nil
+}
+
+func (m *AppModel) handleDetachCommand(text string) tea.Cmd {
+	m.input.Reset()
+	if os.Getenv("TMUX") == "" {
+		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "not inside tmux"})
+		m.refreshView()
+		return nil
+	}
+	// Detach 是 tmux 客户端动作；runtime 继续在 pane 里跑，之后用 `5hagent attach <target>` 回来。
+	return tea.ExecProcess(exec.Command("tmux", "detach-client"), nil)
 }
 
 func (m *AppModel) runAgent(runCtx context.Context, cancel context.CancelFunc, input string) {
