@@ -496,6 +496,14 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			return m, m.submit()
+		case "tab":
+			text := strings.TrimSpace(m.input.Value())
+			if strings.HasPrefix(text, "/") && !strings.Contains(text, " ") {
+				if matches := slashHintMatches(text); len(matches) == 1 {
+					m.input.SetValue(matches[0].Name + " ")
+				}
+			}
+			return m, nil
 		case "pgdown", "ctrl+f":
 			m.autoScroll = m.viewport.AtBottom()
 			m.viewport.ViewDown()
