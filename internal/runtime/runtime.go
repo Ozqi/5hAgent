@@ -351,6 +351,7 @@ func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess) er
 	workLog := newHeadlessWorkLog(false, dataDir, proc.ID, started)
 	workLog.useGlobalSink = false
 	workLog.Start(logTask)
+	proc.SetWorkLogPath(workLog.path)
 	prevSink := r.Agent.SetToolEventSink(func(event logger.ToolEvent) {
 		workLog.printToolEvent(event)
 		r.handleToolEvent(event, proc.SourceTask.ID, proc.ID)
@@ -366,7 +367,6 @@ Exit Condition:
 	defer restoreModel()
 	response, runErr := r.Agent.RunStreamWithOptions(ctx, messageCtx, input, workLog.OnToken, r.processModelOptions(proc), workLog.OnReasoning)
 	workLog.End(runErr)
-	proc.WorkLogPath = workLog.path
 	if proc.SourceTask.ID != "" {
 		finalStatus := task.StatusCompleted
 		if runErr != nil {
@@ -378,7 +378,7 @@ Exit Condition:
 			logger.ErrorTag("TASK", "mark source task %s: %v", finalStatus, err)
 		}
 	}
-	report := &processReport{ProcessID: proc.ID, Source: proc.SourceTask, WorkLog: proc.WorkLogPath, SystemPrompt: proc.Spec.SystemPrompt, ExitCondition: proc.Spec.ExitCondition, Response: response, Err: runErr, StartedAt: started, EndedAt: time.Now().UTC()}
+	report := &processReport{ProcessID: proc.ID, Source: proc.SourceTask, WorkLog: workLog.path, SystemPrompt: proc.Spec.SystemPrompt, ExitCondition: proc.Spec.ExitCondition, Response: response, Err: runErr, StartedAt: started, EndedAt: time.Now().UTC()}
 	path, writeErr := r.writeProcessReport("", report)
 	proc.ReportPath = path
 	if writeErr != nil {

@@ -8,12 +8,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/lzq/5hAgent/internal/cli"
 	"github.com/lzq/5hAgent/internal/logger"
 	agentrt "github.com/lzq/5hAgent/internal/runtime"
 	"github.com/lzq/5hAgent/internal/systemd"
+	"github.com/lzq/5hAgent/internal/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -35,6 +37,7 @@ func main() {
 		Long:  `5hAgent is a Go-based AI agent runtime powered by Eino. It can run with a TUI or process file-backed tasks headlessly.`,
 		Run:   runTUI,
 	}
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
 	rootCmd.PersistentFlags().BoolVar(&debugMode, "debug", false, "Enable debug mode with verbose logging")
 	rootCmd.PersistentFlags().StringVar(&sessionID, "session", "", "Resume from existing session ID")
 	rootCmd.PersistentFlags().BoolVarP(&continueLast, "continue", "c", false, "Resume from the last session")
@@ -52,6 +55,7 @@ func main() {
 	runCmd.Flags().StringVar(&runReportDir, "report-dir", "", "Directory for Markdown task reports; defaults to .5hagent/reports")
 	runCmd.Flags().BoolVar(&runQuiet, "quiet", false, "Suppress headless work log output; only print report path and errors")
 	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(newPSCommand(), newAttachCommand())
 
 	daemonCmd := &cobra.Command{
 		Use:   "daemon",
@@ -133,6 +137,17 @@ func runDaemon(cmd *cobra.Command, args []string) {
 	defer rt.Close()
 
 	sys := systemd.New()
+	configDir, err := utils.GetConfigDir()
+	if err != nil {
+		cli.PrintError(err)
+		os.Exit(1)
+	}
+	control, err := systemd.StartControlServer(ctx, filepath.Join(configDir, "run"), sys, rt.ProjectDir)
+	if err != nil {
+		cli.PrintError(err)
+		os.Exit(1)
+	}
+	defer control.Close()
 	sys.StartSource(ctx, agentrt.NewTaskFileEventSource(rt.TaskList, daemonPoll, rt.TaskProcessSpec))
 	if err := rt.EmitCurrentTask(sys); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: %v\n", err)

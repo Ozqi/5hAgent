@@ -104,6 +104,7 @@ func NewFileEventSource(path string, eventType string, source string, interval t
 
 // AgentProcess 是一个运行中的 Agent 进程记录。
 type AgentProcess struct {
+	mu          sync.RWMutex // 保护由 runtime 执行期间更新、控制通道同时读取的路径。
 	ID          string       // 进程 ID
 	Name        string       // 进程名
 	State       ProcessState // 生命周期状态
@@ -114,6 +115,19 @@ type AgentProcess struct {
 	ReportPath  string       // 进程报告路径
 	WorkLogPath string       // 进程工作日志路径
 	cancel      context.CancelFunc
+}
+
+// SetWorkLogPath 发布运行中 worklog，供 attach 客户端读取。
+func (p *AgentProcess) SetWorkLogPath(path string) {
+	p.mu.Lock()
+	p.WorkLogPath = path
+	p.mu.Unlock()
+}
+
+func (p *AgentProcess) workLogPath() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.WorkLogPath
 }
 
 // ProcessRunner 是 AgentProcess 的执行层接口。
