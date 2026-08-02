@@ -118,14 +118,6 @@ cp "$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
 chmod +x "$INSTALL_DIR/$BINARY_NAME"
 ok "已安装到 $INSTALL_DIR/$BINARY_NAME"
 
-# ── 5.5. 安装 shell 补全 ──
-if command -v zsh >/dev/null 2>&1 && [ -d "${ZSH:-$HOME/.oh-my-zsh}" ]; then
-    ZSH_COMPLETION_DIR="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/completions"
-    mkdir -p "$ZSH_COMPLETION_DIR"
-    "$INSTALL_DIR/$BINARY_NAME" completion zsh > "$ZSH_COMPLETION_DIR/_$BINARY_NAME"
-    ok "已安装 zsh Tab 补全到 $ZSH_COMPLETION_DIR/_$BINARY_NAME"
-fi
-
 # ── 6. 初始化配置目录 ──
 mkdir -p "$CONFIG_DIR"
 if [ ! -f "$CONFIG_DIR/.env" ]; then
