@@ -18,16 +18,17 @@ func (m *AppModel) applyToolEvent(event logger.ToolEvent) {
 	displayName := fallback(tools.DisplayName(event.Name), event.Name)
 	key := toolEventKey(event.Name, event.Args)
 	summary := formatToolArgsSummary(event.Args)
+	intent := toolIntent(event.Name, event.Args)
 
 	// result/error 依赖 tool name + args 回填最近的 running 行；找不到时补一条完成记录，避免丢事件。
 	switch event.Kind {
 	case "call":
-		m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "running", ToolOutput: "running..."})
+		m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolIntent: intent, ToolArgs: summary, ToolKey: key, ToolState: "running", ToolOutput: "running..."})
 	case "result":
 		idx := m.findRunningToolEntry(key, event.Name)
 		output := summarizeToolEventOutput(event)
 		if idx < 0 {
-			m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "done", ToolOutput: output})
+			m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolIntent: intent, ToolArgs: summary, ToolKey: key, ToolState: "done", ToolOutput: output})
 			return
 		}
 		m.entries[idx].ToolState = "done"
@@ -36,13 +37,13 @@ func (m *AppModel) applyToolEvent(event logger.ToolEvent) {
 		idx := m.findRunningToolEntry(key, event.Name)
 		output := summarizeToolEventOutput(event)
 		if idx < 0 {
-			m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "error", ToolOutput: output})
+			m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolIntent: intent, ToolArgs: summary, ToolKey: key, ToolState: "error", ToolOutput: output})
 			return
 		}
 		m.entries[idx].ToolState = "error"
 		m.entries[idx].ToolOutput = output
 	default:
-		m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolArgs: summary, ToolKey: key, ToolState: "done", ToolOutput: strings.TrimSpace(stripANSI(event.Text))})
+		m.entries = append(m.entries, conversationEntry{Role: roleHint, ToolName: displayName, ToolIntent: intent, ToolArgs: summary, ToolKey: key, ToolState: "done", ToolOutput: strings.TrimSpace(stripANSI(event.Text))})
 	}
 }
 
@@ -113,6 +114,35 @@ func toolActionTarget(args string) (string, string) {
 		return action, "-"
 	}
 	return action, strings.Join(targetParts, " ")
+}
+
+func toolIntent(name string, args string) string {
+	var raw map[string]interface{}
+	if json.Unmarshal([]byte(strings.TrimSpace(args)), &raw) == nil {
+		if action, ok := raw["action"]; ok {
+			return strings.ReplaceAll(toolArgValue(action), "_", " ")
+		}
+	}
+	switch tools.DisplayName(name) {
+	case "exec_shell":
+		return "run shell command"
+	case "read_file":
+		return "read file"
+	case "read_md":
+		return "read Markdown"
+	case "write_file":
+		return "write file"
+	case "edit":
+		return "edit file"
+	case "grep":
+		return "search text"
+	case "glob":
+		return "match paths"
+	case "list_dir":
+		return "list directory"
+	default:
+		return ""
+	}
 }
 
 func padCell(text string, width int) string {
@@ -286,11 +316,15 @@ func (m *AppModel) renderToolHintEntry(entry conversationEntry, width int) strin
 	}
 
 	name := fallback(entry.ToolName, "tool")
+	intent := strings.TrimSpace(entry.ToolIntent)
 	args := strings.TrimSpace(entry.ToolArgs)
 	if entry.ToolState != "running" {
 		stateIcon = "▮"
 	}
 	header := lipgloss.NewStyle().Foreground(stateColor).Bold(true).Render(stateIcon) + " " + lipgloss.NewStyle().Foreground(stateColor).Render(name)
+	if intent != "" {
+		header += lipgloss.NewStyle().Foreground(colorMuted).Render(" · " + intent)
+	}
 	if args != "" {
 		header += " " + logger.Gray(args)
 	}

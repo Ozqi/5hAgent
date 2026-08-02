@@ -46,6 +46,7 @@ type conversationEntry struct {
 	Content     string
 	CreatedAt   string
 	ToolName    string
+	ToolIntent  string
 	ToolArgs    string
 	ToolKey     string
 	ToolState   string
@@ -313,12 +314,13 @@ func loadHistoryEntries(ctxManager *agentctx.Manager, messageCtx *agentctx.Conte
 			for _, tc := range msg.ToolCalls {
 				name := fallback(tools.DisplayName(tc.Function.Name), tc.Function.Name)
 				entry := conversationEntry{
-					Role:      roleHint,
-					CreatedAt: messageCreatedAt(msg),
-					ToolName:  name,
-					ToolArgs:  formatToolArgsSummary(tc.Function.Arguments),
-					ToolKey:   toolEventKey(tc.Function.Name, tc.Function.Arguments),
-					ToolState: "done",
+					Role:       roleHint,
+					CreatedAt:  messageCreatedAt(msg),
+					ToolName:   name,
+					ToolIntent: toolIntent(tc.Function.Name, tc.Function.Arguments),
+					ToolArgs:   formatToolArgsSummary(tc.Function.Arguments),
+					ToolKey:    toolEventKey(tc.Function.Name, tc.Function.Arguments),
+					ToolState:  "done",
 				}
 				entries = append(entries, entry)
 				if tc.ID != "" {
