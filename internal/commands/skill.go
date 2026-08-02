@@ -40,7 +40,7 @@ func listSkills(mgr *skill.Manager) string {
 	var sb strings.Builder
 	sb.WriteString("Available Skills:\n")
 	for _, s := range skills {
-		sb.WriteString(fmt.Sprintf("  - %s [%s]: %s\n", s.Name, s.Scope, s.Description))
+		sb.WriteString(fmt.Sprintf("  - %s [%s]\n    path: %s\n    %s\n", s.Name, s.Scope, s.Path, s.Description))
 	}
 	return sb.String()
 }
