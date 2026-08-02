@@ -228,7 +228,6 @@ var slashCommandHints = []slashCommandHint{
 	{Name: "/session", Usage: "/session <new|list|id>", Desc: "sessions"},
 	{Name: "/run", Usage: "/run", Desc: "run task.md until no pending tasks"},
 	{Name: "/stop", Usage: "/stop", Desc: "stop current run"},
-	{Name: "/detach", Usage: "/detach", Desc: "detach tmux client"},
 	{Name: "/model", Usage: "/model <provider/model>", Desc: "ollama/gemma4, mira/gpt-5.5"},
 }
 

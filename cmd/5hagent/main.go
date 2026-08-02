@@ -53,8 +53,6 @@ func main() {
 	runCmd.Flags().BoolVar(&runQuiet, "quiet", false, "Suppress headless work log output; only print report path and errors")
 	rootCmd.AddCommand(runCmd)
 
-	rootCmd.AddCommand(newPSCommand(), newAttachCommand())
-
 	daemonCmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Run the Agent Systemd task supervisor",
