@@ -84,6 +84,34 @@ func TestReloadSkillsReplacesOnlyValidSnapshot(t *testing.T) {
 	}
 }
 
+func TestReloadSkillsKeepsProjectOverride(t *testing.T) {
+	root := t.TempDir()
+	globalDir := filepath.Join(root, "global")
+	projectDir := filepath.Join(root, "project")
+	writeSkill(t, globalDir, "debugging", "---\nname: debugging\ndescription: global\n---\nglobal\n")
+	writeSkill(t, projectDir, "debugging", "---\nname: debugging\ndescription: project v1\n---\nproject v1\n")
+	mgr := NewManagerFromDirs(
+		Source{Scope: "global", Dir: globalDir},
+		Source{Scope: "project", Dir: projectDir},
+	)
+	if err := mgr.LoadSkills(); err != nil {
+		t.Fatal(err)
+	}
+
+	writeSkill(t, globalDir, "debugging", "---\nname: debugging\ndescription: global v2\n---\nglobal v2\n")
+	writeSkill(t, projectDir, "debugging", "---\nname: debugging\ndescription: project v2\n---\nproject v2\n")
+	if err := mgr.ReloadSkills(); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := mgr.GetSkill("debugging")
+	if !ok {
+		t.Fatal("debugging skill missing after reload")
+	}
+	if got.Scope != "project" || got.Description != "project v2" || got.Content != "project v2" {
+		t.Fatalf("debugging = %#v, want reloaded project override", got)
+	}
+}
+
 func writeSkill(t *testing.T, root string, name string, content string) {
 	t.Helper()
 	dir := filepath.Join(root, name)
