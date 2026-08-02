@@ -159,14 +159,14 @@ func renderInputFooter(snapshot statusSnapshot, _ string, width int) string {
 	if meta.TotalTasks > 0 {
 		parts = append(parts, lipgloss.NewStyle().Foreground(colorCommand).Render(fmt.Sprintf("tasks %d active / %d total", meta.ActiveTasks, meta.TotalTasks)))
 	}
-	if meta.ScrollPercent < 100 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorPurple).Render(fmt.Sprintf("scroll %d%%", meta.ScrollPercent)))
-	}
 	if len(snapshot.EnabledSkills) > 0 {
 		parts = append(parts, lipgloss.NewStyle().Foreground(colorGreen).Render(skillSummary(snapshot.EnabledSkills)))
 	}
 	if len(snapshot.HighlightedTaskLine) > 0 {
 		parts = append(parts, lipgloss.NewStyle().Foreground(colorCommand).Render("focus "+truncateMiddle(strings.Join(snapshot.HighlightedTaskLine, ","), 48)))
+	}
+	if meta.ScrollPercent < 100 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(colorPurple).Render(fmt.Sprintf("scroll %d%%", meta.ScrollPercent)))
 	}
 	return strings.Join(parts, lipgloss.NewStyle().Faint(true).Render(" · "))
 }
