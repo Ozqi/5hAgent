@@ -1,5 +1,5 @@
 // skill.go - /skill 命令处理
-// 功能：解析 /skill 命令（list/get），查看 Agent 启动时加载的技能快照
+// 功能：解析 /skill 命令（list/get/reload），查看或刷新技能快照
 // 导出函数：HandleSkill, listSkills, getSkill
 package commands
 
@@ -14,7 +14,7 @@ import (
 func HandleSkill(cmd string, mgr *skill.Manager) (string, error) {
 	parts := strings.Fields(cmd)
 	if len(parts) < 2 {
-		return "", fmt.Errorf("usage: /skill <list|get> [name]")
+		return "", fmt.Errorf("usage: /skill <list|get|reload> [name]")
 	}
 
 	action := parts[1]
@@ -26,6 +26,11 @@ func HandleSkill(cmd string, mgr *skill.Manager) (string, error) {
 			return "", fmt.Errorf("usage: /skill get <name>")
 		}
 		return getSkill(mgr, parts[2])
+	case "reload":
+		if err := mgr.ReloadSkills(); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Reloaded %d skills; current context keeps already injected skill messages", len(mgr.ListSkills())), nil
 	default:
 		return "", fmt.Errorf("unknown action: %s", action)
 	}

@@ -27,4 +27,5 @@
 - 启动时加载。
 - Agent 生命周期内不热加载。
 - enabled skill 作为独立 system message 注入。
-- `/skill list|get` 只读取当前 skill manager 快照，不重新扫描磁盘。
+- `/skill list|get` 读取当前 skill manager 快照。
+- `/skill reload` 原子重扫磁盘；失败保留旧快照，成功后只影响后续查询和新 context，不替换当前 context 已注入的 skill message。

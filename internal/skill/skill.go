@@ -63,14 +63,29 @@ func (m *Manager) LoadSkills() error {
 		sources = []Source{{Scope: "global", Dir: m.skillsDir}}
 	}
 	for _, source := range sources {
-		if err := m.loadDir(source); err != nil {
+		if err := m.loadDir(source, false); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (m *Manager) loadDir(source Source) error {
+// ReloadSkills 先完整构建新快照，扫描成功后才替换当前 skills。
+func (m *Manager) ReloadSkills() error {
+	next := NewManagerFromDirs(m.skillDirs...)
+	if len(m.skillDirs) == 0 {
+		next = NewManager(m.skillsDir)
+	}
+	for _, source := range next.skillDirs {
+		if err := next.loadDir(source, true); err != nil {
+			return err
+		}
+	}
+	m.skills = next.skills
+	return nil
+}
+
+func (m *Manager) loadDir(source Source, strict bool) error {
 	if source.Dir == "" {
 		return nil
 	}
@@ -91,6 +106,9 @@ func (m *Manager) loadDir(source Source) error {
 		}
 		skill, err := m.loadSkillFile(skillPath)
 		if err != nil {
+			if strict {
+				return fmt.Errorf("load skill %s: %w", skillPath, err)
+			}
 			continue
 		}
 		skill.Scope = source.Scope

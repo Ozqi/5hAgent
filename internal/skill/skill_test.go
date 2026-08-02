@@ -53,6 +53,37 @@ planning body
 	}
 }
 
+func TestReloadSkillsReplacesOnlyValidSnapshot(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "first", "---\nname: first\ndescription: first\n---\nbody\n")
+	mgr := NewManager(root)
+	if err := mgr.LoadSkills(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.RemoveAll(filepath.Join(root, "first")); err != nil {
+		t.Fatal(err)
+	}
+	writeSkill(t, root, "second", "---\nname: second\ndescription: second\n---\nbody\n")
+	if err := mgr.ReloadSkills(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := mgr.GetSkill("first"); ok {
+		t.Fatal("deleted skill still present after reload")
+	}
+	if _, ok := mgr.GetSkill("second"); !ok {
+		t.Fatal("new skill missing after reload")
+	}
+
+	writeSkill(t, root, "broken", "missing frontmatter")
+	if err := mgr.ReloadSkills(); err == nil {
+		t.Fatal("ReloadSkills() error = nil for invalid skill")
+	}
+	if _, ok := mgr.GetSkill("second"); !ok {
+		t.Fatal("failed reload replaced previous valid snapshot")
+	}
+}
+
 func writeSkill(t *testing.T, root string, name string, content string) {
 	t.Helper()
 	dir := filepath.Join(root, name)

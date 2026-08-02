@@ -222,7 +222,7 @@ type slashCommandHint struct {
 
 var slashCommandHints = []slashCommandHint{
 	{Name: "/task", Usage: "/task <list|create|update|get|delete|archive|reopen>", Desc: "task file"},
-	{Name: "/skill", Usage: "/skill <list|get>", Desc: "skills"},
+	{Name: "/skill", Usage: "/skill <list|get|reload>", Desc: "skills"},
 	{Name: "/compress", Usage: "/compress", Desc: "context"},
 	{Name: "/mcp", Usage: "/mcp <list|add|remove|enable|disable>", Desc: "mcp servers"},
 	{Name: "/session", Usage: "/session <new|list|id>", Desc: "sessions"},
