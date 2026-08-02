@@ -48,6 +48,9 @@ type Agent struct {
 	callbacks *AgentCallbacks
 	// 工具事件 sink
 	toolEventSink func(logger.ToolEvent)
+	// debug 日志只保留模型引用；当前 API key 仅用于从消息内容中固定掩码。
+	modelRef    string
+	debugSecret string
 }
 
 // Config Agent 配置
@@ -141,6 +144,12 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 // SetCtxManager 设置上下文管理器（用于 session 持久化）
 func (a *Agent) SetCtxManager(manager *agentctx.Manager) {
 	a.ctxManager = manager
+}
+
+// SetDebugModel 更新 debug 请求日志使用的模型引用和敏感值掩码。
+func (a *Agent) SetDebugModel(modelRef string, secret string) {
+	a.modelRef = modelRef
+	a.debugSecret = secret
 }
 
 // SetToolEventSink 设置当前 Agent 的工具事件接收器，并返回旧接收器。
@@ -321,6 +330,7 @@ func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.C
 		}
 		if a.config.Debug {
 			logger.DebugTag("CTX", "Messages=%d", len(messages))
+			a.logLLMRequest(messages, len(opts))
 		}
 
 		// b. 调用 LLM 生成响应（使用 Callback）

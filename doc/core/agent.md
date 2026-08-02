@@ -11,6 +11,7 @@
 | [agent.go](../../internal/agent/agent.go) | `Agent`、`RunStreamWithOptions`、skill 注入、重复工具防护 |
 | [tool_use.go](../../internal/agent/tool_use.go) | 流式 ToolCall 合并、工具执行、结果格式化 |
 | [callbacks.go](../../internal/agent/callbacks.go) | LLM/tool 调试回调 |
+| [debug_request.go](../../internal/agent/debug_request.go) | `--debug` 下记录发给 LLM 的逻辑请求 |
 
 ## 主流程
 
@@ -47,4 +48,5 @@ RunStreamWithOptions
 - `Agent.state.CurrentTurn` 只反映最近一次 ReAct loop 轮次。
 - `Context` 持久化归 `internal/context.Manager`；Agent 不直接操作 session 文件。
 - 工具执行当前是单 worker 顺序执行；stream 读取和工具执行可以重叠。
-- Skill 在 Agent 生命周期内固定，不热加载。
+- `/skill reload` 可刷新 manager 快照，但不会替换当前 context 已注入的 skill message。
+- `--debug` 在模型调用前记录 model、messages 和 tool call 字段；API key 固定掩码，无法展开的 model options 标记为 `unavailable`。

@@ -213,6 +213,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 	ag.SetCtxManager(ctxManager)
+	ag.SetDebugModel(llmConfig.Supplier+"/"+llmConfig.Model, llmConfig.APIKey)
 
 	toolRegistry := tools.NewRegistry()
 	toolRegistry.SetWorkspaceRoot(projectRoot)
@@ -283,6 +284,7 @@ func (r *Runtime) SwitchModel(ctx context.Context, modelRef string) (string, err
 	r.Agent.SetTools(r.ToolRegistry.All())
 	r.Agent.SetSystemPrompt(systemPrompt)
 	r.Agent.SetContextWindow(client.ContextWindow(ctx))
+	r.Agent.SetDebugModel(llmConfig.Supplier+"/"+llmConfig.Model, llmConfig.APIKey)
 	r.ModelName = llmConfig.Model
 	r.plainModel = client.GetModel()
 	return r.ModelName, nil
