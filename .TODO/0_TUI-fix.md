@@ -21,3 +21,4 @@
 - 后台 Agent 的 `ps`/`attach` 入口：`28284def42125b7a79d4c5fb220f697239765c7c`
 - daemon/TUI 进程拆分、NDJSON IPC 与 detach/reattach：`b62e393a445310bdafc3dd0510e8ca138d086981`
 - 默认 `5hagent` 自动启动后台 daemon 后再 attach：`c280439f0667dcd31c084c3abe4310a021cda14e`
+- `Ctrl+D` detach 后打印 `ps` 和 reattach 提示：`713746c1ca1da0b7271eb569e66f8b9cbac98af4`
