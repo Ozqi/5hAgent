@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lzq/5hAgent/internal/systemd"
@@ -36,5 +37,9 @@ func LaunchAttachedTUI(ctx context.Context, client RemoteClient) error {
 	}()
 	_, err := p.Run()
 	_ = client.Close()
+	if err == nil && snapshot.ID != "" {
+		fmt.Printf("Detached from %s; agent is still running.\n", snapshot.ID)
+		fmt.Printf("Check: 5hagent ps\nReattach: 5hagent attach %s\n", snapshot.ID)
+	}
 	return err
 }
