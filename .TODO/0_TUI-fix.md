@@ -22,3 +22,4 @@
 - daemon/TUI 进程拆分、NDJSON IPC 与 detach/reattach：`b62e393a445310bdafc3dd0510e8ca138d086981`
 - 默认 `5hagent` 自动启动后台 daemon 后再 attach：`c280439f0667dcd31c084c3abe4310a021cda14e`
 - `Ctrl+D` detach 后打印 `ps` 和 reattach 提示：`713746c1ca1da0b7271eb569e66f8b9cbac98af4`
+- reattach 后 slash 命令与普通输入继续响应：`7399126b9a2b330e80c9cef115346cc4f7221f44`
