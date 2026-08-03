@@ -94,6 +94,25 @@ ollama pull ornith:9b
 
 Ollama 本地模型不校验 API key，`dummy` 即可。建议先用 `5hagent run` 执行一个只读任务验证 chat、工具调用和报告落盘。
 
+### 使用 Codex/ChatGPT 账户额度
+
+5hAgent 不直接读取 Codex CLI 登录 token。若已有可信的本地 OpenAI-compatible Codex proxy，可以按普通 provider 配置：
+
+```env
+LLM_MODEL=codex/gpt-5.1
+LLM_CODEX_FORMAT=openai
+LLM_CODEX_BASE_URL=http://127.0.0.1:8787/v1
+LLM_CODEX_API_KEY=codex-proxy
+```
+
+用诊断命令确认本机 Codex CLI 登录态和 `LLM_CODEX_*` 配置：
+
+```bash
+5hagent codex
+```
+
+该命令不会读取或打印 Codex/ChatGPT token。没有合法稳定 proxy/API 时，不支持直接接入账户额度。
+
 ## 无头运行
 
 先在项目目录准备任务文件：

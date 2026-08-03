@@ -30,6 +30,26 @@ LLM_OLLAMA_API_KEY=dummy
 
 Ornith 属于较新的 Ollama library 模型；如果拉取时报 `requires a newer version of Ollama`，先升级 Ollama 客户端。
 
+## Codex / ChatGPT 账户额度
+
+5hAgent 不直接读取 `~/.codex/auth.json`，也不复用 Codex CLI 的私有 token。若要使用 Codex/ChatGPT 账户侧额度，推荐在本机启动一个可信的 OpenAI-compatible Codex proxy，然后把它作为普通 provider 接入：
+
+```env
+LLM_MODEL=codex/gpt-5.1
+LLM_CODEX_FORMAT=openai
+LLM_CODEX_BASE_URL=http://127.0.0.1:8787/v1
+LLM_CODEX_API_KEY=codex-proxy
+LLM_CODEX_STREAM=true
+```
+
+诊断当前机器是否具备接入条件：
+
+```bash
+5hagent codex
+```
+
+该命令只检查 Codex CLI 是否存在、`codex login status` 是否成功，以及 `LLM_CODEX_*` 是否配置完整；不会读取或打印任何账户 token。若没有公开、稳定、符合使用条款的 proxy/API 通道，应视为不可直接接入，不要通过抓包、复制私有 token 或模拟官方客户端绕过账户边界。
+
 ## 文件
 
 | 文件 | 作用 |
