@@ -2,7 +2,7 @@
 
 1. [x] 内容块之间保留一行空白。实现：`76deeda7dc7599e22d7696c3e355ae3cd4239a04`。
 2. [x] scroll 百分比放在元数据行最后。实现：`ce3b37848faa490d54ec26951daae76138fa70f1`。
-3. TUI 能否 attach 到某个后台无头运行的 agent，并提供 `/detach` 退出命令。
+3. [x] TUI 可通过 Unix Socket attach daemon Agent；`Ctrl+D` 或 `/detach` 只退出客户端，后台继续运行。实现：`b62e393a445310bdafc3dd0510e8ca138d086981`。
 4. [x] TUI slash 命令支持 Tab 补全。实现：`23e28ccb041e68a770bd91e8efa1462a4c4f8a3f`。
 5. [x] 按上箭头显示上一条提交内容。实现：`dc150761f76dcc1cb3922d7ddead0adea5f763e7`。
 
@@ -19,3 +19,4 @@
 ## 完成记录
 
 - 后台 Agent 的 `ps`/`attach` 入口：`28284def42125b7a79d4c5fb220f697239765c7c`
+- daemon/TUI 进程拆分、NDJSON IPC 与 detach/reattach：`b62e393a445310bdafc3dd0510e8ca138d086981`
