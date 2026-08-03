@@ -23,6 +23,7 @@ import (
 type ProcessState string
 
 const (
+	ProcessIdle    ProcessState = "idle"
 	ProcessRunning ProcessState = "running"
 	ProcessExited  ProcessState = "exited"
 	ProcessFailed  ProcessState = "failed"

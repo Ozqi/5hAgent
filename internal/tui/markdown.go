@@ -1,6 +1,6 @@
 // markdown_stream.go - Markdown 渲染
 // 功能：终端 Markdown 着色展示（代码块/标题/列表/引用）
-package cli
+package tui
 
 import (
 	"regexp"

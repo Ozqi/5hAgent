@@ -1,6 +1,6 @@
 // tui_render.go - TUI 布局和状态栏渲染
 // 功能：渲染主布局、输入栏、运行状态和底部 metadata。
-package cli
+package tui
 
 import (
 	"fmt"

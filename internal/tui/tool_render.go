@@ -1,6 +1,6 @@
 // tui_tool_render.go - TUI 工具事件和工具块渲染
 // 功能：处理 ToolEvent 状态回填，并渲染历史工具调用块。
-package cli
+package tui
 
 import (
 	"encoding/json"

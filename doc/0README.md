@@ -25,7 +25,8 @@ flowchart TB
   rt --> llm[internal/llm]
   rt --> task[internal/task]
   rt --> skill[internal/skill]
-  main --> tui[internal/cli]
+  main --> tui[internal/tui]
+  tui <-->|Unix Socket / NDJSON| systemd[internal/systemd]
   ag --> tooluse[internal/agent/tool_use.go]
   tooluse --> reg
   reg --> base[base.*]

@@ -1,5 +1,5 @@
 // tui_tool_render_test.go - 验证工具调用块首行的动作摘要。
-package cli
+package tui
 
 import (
 	"strings"

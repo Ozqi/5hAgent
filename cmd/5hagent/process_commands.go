@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lzq/5hAgent/internal/systemd"
+	"github.com/lzq/5hAgent/internal/tui"
 	"github.com/lzq/5hAgent/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -70,6 +71,17 @@ func runAttach(cmd *cobra.Command, args []string) error {
 	for _, proc := range processes {
 		if proc.ID != args[0] {
 			continue
+		}
+		if proc.Interactive {
+			configDir, err := utils.GetConfigDir()
+			if err != nil {
+				return err
+			}
+			client, err := systemd.AttachProcess(configDir+"/run", proc.ID)
+			if err != nil {
+				return err
+			}
+			return tui.LaunchAttachedTUI(cmd.Context(), client)
 		}
 		if proc.WorkLogPath == "" {
 			return fmt.Errorf("process %s has not opened its worklog yet", proc.ID)

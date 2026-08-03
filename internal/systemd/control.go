@@ -1,5 +1,5 @@
-// control.go - Agent Systemd 本地只读控制通道。
-// daemon 通过 Unix socket 暴露运行中 AgentProcess；CLI 用同一接口实现 ps、attach 和 Tab 补全。
+// control.go - Agent Systemd 本地 Unix Socket 控制通道。
+// daemon 通过 NDJSON 暴露进程列表和可重连的交互 Agent；CLI 用同一协议实现 ps/attach。
 package systemd
 
 import (
@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,10 +24,47 @@ type ProcessSnapshot struct {
 	StartedAt   time.Time    `json:"started_at"`
 	Workspace   string       `json:"workspace"`
 	WorkLogPath string       `json:"worklog_path,omitempty"`
+	Model       string       `json:"model,omitempty"`
+	SessionID   string       `json:"session_id,omitempty"`
+	Interactive bool         `json:"interactive,omitempty"`
+}
+
+// ProcessEvent 是 daemon 向 attached TUI 推送的结构化事件。
+type ProcessEvent struct {
+	Seq    uint64 `json:"seq"`
+	Type   string `json:"type"`
+	Text   string `json:"text,omitempty"`
+	Kind   string `json:"kind,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Args   string `json:"args,omitempty"`
+	Result string `json:"result,omitempty"`
+	Error  string `json:"error,omitempty"`
+	Busy   bool   `json:"busy,omitempty"`
+}
+
+// InteractiveProcess 是控制通道依赖的最小长驻 Agent 接口。
+type InteractiveProcess interface {
+	Snapshot() ProcessSnapshot
+	Attach() ([]ProcessEvent, <-chan ProcessEvent, func())
+	Submit(string) error
+}
+
+type controlMessage struct {
+	Type      string            `json:"type"`
+	ID        uint64            `json:"id,omitempty"`
+	ProcessID string            `json:"process_id,omitempty"`
+	Text      string            `json:"text,omitempty"`
+	Processes []ProcessSnapshot `json:"processes,omitempty"`
+	Process   *ProcessSnapshot  `json:"process,omitempty"`
+	Event     *ProcessEvent     `json:"event,omitempty"`
+	Error     string            `json:"error,omitempty"`
 }
 
 // Processes 返回当前运行中进程的副本，不外泄进程表中的可变指针。
 func (s *AgentSystemd) Processes(workspace string) []ProcessSnapshot {
+	if s == nil {
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var processes []ProcessSnapshot
@@ -43,17 +81,15 @@ func (s *AgentSystemd) Processes(workspace string) []ProcessSnapshot {
 	return processes
 }
 
-// ControlServer 向同一用户的 CLI 暴露 daemon 进程快照。
+// ControlServer 向同一用户的 CLI 暴露 daemon 进程。
 type ControlServer struct {
 	listener net.Listener
 	path     string
+	once     sync.Once
 }
 
 // StartControlServer 在 controlDir 创建当前 daemon 的 Unix socket。
-func StartControlServer(ctx context.Context, controlDir string, sys *AgentSystemd, workspace string) (*ControlServer, error) {
-	if sys == nil {
-		return nil, fmt.Errorf("agent systemd is required")
-	}
+func StartControlServer(ctx context.Context, controlDir string, sys *AgentSystemd, workspace string, interactive ...InteractiveProcess) (*ControlServer, error) {
 	if err := os.MkdirAll(controlDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create daemon control dir: %w", err)
 	}
@@ -65,22 +101,102 @@ func StartControlServer(ctx context.Context, controlDir string, sys *AgentSystem
 	}
 	_ = os.Chmod(path, 0o600)
 	server := &ControlServer{listener: listener, path: path}
-	go server.serve(ctx, sys, workspace)
+	go server.serve(ctx, sys, workspace, interactive)
 	return server, nil
 }
 
-func (s *ControlServer) serve(ctx context.Context, sys *AgentSystemd, workspace string) {
-	go func() {
-		<-ctx.Done()
-		_ = s.Close()
-	}()
+func (s *ControlServer) serve(ctx context.Context, sys *AgentSystemd, workspace string, interactive []InteractiveProcess) {
+	go func() { <-ctx.Done(); _ = s.Close() }()
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
 			return
 		}
-		_ = json.NewEncoder(conn).Encode(sys.Processes(workspace))
-		_ = conn.Close()
+		go handleControlConn(conn, sys, workspace, interactive)
+	}
+}
+
+func handleControlConn(conn net.Conn, sys *AgentSystemd, workspace string, interactive []InteractiveProcess) {
+	defer conn.Close()
+	dec, enc := json.NewDecoder(conn), json.NewEncoder(conn)
+	var first controlMessage
+	if err := dec.Decode(&first); err != nil {
+		return
+	}
+	if first.Type == "list" {
+		processes := sys.Processes(workspace)
+		for _, proc := range interactive {
+			processes = append(processes, proc.Snapshot())
+		}
+		_ = enc.Encode(controlMessage{Type: "list", Processes: processes})
+		return
+	}
+	if first.Type != "attach" {
+		_ = enc.Encode(controlMessage{Type: "error", Error: "expected list or attach"})
+		return
+	}
+	var target InteractiveProcess
+	for _, proc := range interactive {
+		if proc.Snapshot().ID == first.ProcessID {
+			target = proc
+			break
+		}
+	}
+	if target == nil {
+		_ = enc.Encode(controlMessage{Type: "error", Error: "interactive process not found"})
+		return
+	}
+	history, events, detach := target.Attach()
+	defer detach()
+	snapshot := target.Snapshot()
+	if err := enc.Encode(controlMessage{Type: "attached", Process: &snapshot}); err != nil {
+		return
+	}
+	for i := range history {
+		if err := enc.Encode(controlMessage{Type: "event", Event: &history[i]}); err != nil {
+			return
+		}
+	}
+	if err := enc.Encode(controlMessage{Type: "ready"}); err != nil {
+		return
+	}
+	requests := make(chan controlMessage)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		defer close(requests)
+		for {
+			var request controlMessage
+			if dec.Decode(&request) != nil {
+				return
+			}
+			select {
+			case requests <- request:
+			case <-done:
+				return
+			}
+		}
+	}()
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok || enc.Encode(controlMessage{Type: "event", Event: &event}) != nil {
+				return
+			}
+		case request, ok := <-requests:
+			if !ok || request.Type == "detach" {
+				return
+			}
+			if request.Type == "input" {
+				response := controlMessage{Type: "input_result", ID: request.ID}
+				if err := target.Submit(request.Text); err != nil {
+					response.Error = err.Error()
+				}
+				if enc.Encode(response) != nil {
+					return
+				}
+			}
+		}
 	}
 }
 
@@ -89,13 +205,15 @@ func (s *ControlServer) Close() error {
 	if s == nil {
 		return nil
 	}
-	err := s.listener.Close()
-	_ = os.Remove(s.path)
+	var err error
+	s.once.Do(func() {
+		err = s.listener.Close()
+		_ = os.Remove(s.path)
+	})
 	return err
 }
 
-// ListProcesses 聚合 controlDir 中所有存活 daemon 的运行进程。
-// 返回 target 形如 daemon-<pid>/agent-<n>，避免多个 daemon 的本地进程号冲突。
+// ListProcesses 聚合 controlDir 中所有存活 daemon 的进程。
 func ListProcesses(controlDir string) ([]ProcessSnapshot, error) {
 	sockets, err := filepath.Glob(filepath.Join(controlDir, "daemon-*.sock"))
 	if err != nil {
@@ -105,21 +223,174 @@ func ListProcesses(controlDir string) ([]ProcessSnapshot, error) {
 	for _, socket := range sockets {
 		conn, err := net.DialTimeout("unix", socket, 200*time.Millisecond)
 		if err != nil {
-			_ = os.Remove(socket) // daemon 已退出时清理遗留 socket。
+			_ = os.Remove(socket)
 			continue
 		}
-		var listed []ProcessSnapshot
-		err = json.NewDecoder(conn).Decode(&listed)
+		_ = conn.SetDeadline(time.Now().Add(time.Second))
+		_ = json.NewEncoder(conn).Encode(controlMessage{Type: "list"})
+		var response controlMessage
+		err = json.NewDecoder(conn).Decode(&response)
 		_ = conn.Close()
-		if err != nil {
+		if err != nil || response.Type != "list" {
 			continue
 		}
 		daemon := strings.TrimSuffix(filepath.Base(socket), ".sock")
-		for i := range listed {
-			listed[i].ID = daemon + "/" + listed[i].ID
+		for i := range response.Processes {
+			response.Processes[i].ID = daemon + "/" + response.Processes[i].ID
 		}
-		processes = append(processes, listed...)
+		processes = append(processes, response.Processes...)
 	}
 	sort.Slice(processes, func(i, j int) bool { return processes[i].StartedAt.Before(processes[j].StartedAt) })
 	return processes, nil
+}
+
+// ProcessClient 是 attached TUI 使用的双向 NDJSON 客户端。
+type ProcessClient struct {
+	conn     net.Conn
+	enc      *json.Encoder
+	mu       sync.Mutex
+	once     sync.Once
+	done     chan struct{}
+	nextID   uint64
+	pending  map[uint64]chan error
+	snapshot ProcessSnapshot
+	events   chan ProcessEvent
+}
+
+// AttachProcess 连接 target 对应的 daemon 并订阅交互 Agent 事件。
+func AttachProcess(controlDir string, target string) (*ProcessClient, error) {
+	parts := strings.SplitN(target, "/", 2)
+	if len(parts) != 2 || !strings.HasPrefix(parts[0], "daemon-") {
+		return nil, fmt.Errorf("invalid process target %q", target)
+	}
+	conn, err := net.DialTimeout("unix", filepath.Join(controlDir, parts[0]+".sock"), time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("connect %s: %w", target, err)
+	}
+	client := &ProcessClient{conn: conn, enc: json.NewEncoder(conn), events: make(chan ProcessEvent, 256), pending: make(map[uint64]chan error), done: make(chan struct{})}
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := client.enc.Encode(controlMessage{Type: "attach", ProcessID: parts[1]}); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	dec := json.NewDecoder(conn)
+	var response controlMessage
+	if err := dec.Decode(&response); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if response.Type != "attached" || response.Process == nil {
+		conn.Close()
+		return nil, fmt.Errorf("attach %s: %s", target, response.Error)
+	}
+	client.snapshot = *response.Process
+	client.snapshot.ID = target
+	var replay []ProcessEvent
+	for {
+		if err := dec.Decode(&response); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		if response.Type == "ready" {
+			break
+		}
+		if response.Type == "event" && response.Event != nil {
+			replay = append(replay, *response.Event)
+		}
+	}
+	client.events = make(chan ProcessEvent, len(replay)+256)
+	for _, event := range replay {
+		client.events <- event
+	}
+	_ = conn.SetDeadline(time.Time{})
+	go client.read(dec)
+	return client, nil
+}
+
+func (c *ProcessClient) read(dec *json.Decoder) {
+	defer func() {
+		c.mu.Lock()
+		for id, result := range c.pending {
+			delete(c.pending, id)
+			result <- fmt.Errorf("daemon connection closed")
+			close(result)
+		}
+		c.mu.Unlock()
+		close(c.events)
+	}()
+	for {
+		var message controlMessage
+		if dec.Decode(&message) != nil {
+			return
+		}
+		if message.Type == "event" && message.Event != nil {
+			select {
+			case c.events <- *message.Event:
+			case <-c.done:
+				return
+			}
+		} else if message.Type == "input_result" {
+			c.mu.Lock()
+			result := c.pending[message.ID]
+			delete(c.pending, message.ID)
+			c.mu.Unlock()
+			if result != nil {
+				if message.Error != "" {
+					result <- fmt.Errorf("%s", message.Error)
+				} else {
+					result <- nil
+				}
+				close(result)
+			}
+		} else if message.Type == "error" {
+			select {
+			case c.events <- ProcessEvent{Type: "error", Error: message.Error}:
+			case <-c.done:
+				return
+			}
+		}
+	}
+}
+
+// Snapshot 返回 attach 时的远端状态。
+func (c *ProcessClient) Snapshot() ProcessSnapshot { return c.snapshot }
+
+// Events 返回 replay 与实时事件流。
+func (c *ProcessClient) Events() <-chan ProcessEvent { return c.events }
+
+// Submit 向 daemon Agent 提交一轮用户输入。
+func (c *ProcessClient) Submit(text string) error {
+	c.mu.Lock()
+	c.nextID++
+	id := c.nextID
+	result := make(chan error, 1)
+	c.pending[id] = result
+	_ = c.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	err := c.enc.Encode(controlMessage{Type: "input", ID: id, Text: text})
+	_ = c.conn.SetWriteDeadline(time.Time{})
+	if err != nil {
+		delete(c.pending, id)
+	}
+	c.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(2 * time.Second):
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		return fmt.Errorf("submit input timed out")
+	}
+}
+
+// Close 只断开 attached TUI，不取消 daemon Agent。
+func (c *ProcessClient) Close() error {
+	c.once.Do(func() { close(c.done) })
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_ = c.enc.Encode(controlMessage{Type: "detach"})
+	return c.conn.Close()
 }

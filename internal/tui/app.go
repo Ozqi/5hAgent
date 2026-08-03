@@ -2,7 +2,7 @@
 // 功能：Bubble Tea 构建的交互式对话界面，显示对话/状态面板，支持 /task /skill /compress 命令
 // 主要类型：AppModel, conversationEntry, statusSnapshot
 // 导出函数：NewAppModel, LaunchTUI
-package cli
+package tui
 
 import (
 	"context"
@@ -24,6 +24,7 @@ import (
 	agentctx "github.com/lzq/5hAgent/internal/context"
 	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/skill"
+	"github.com/lzq/5hAgent/internal/systemd"
 	"github.com/lzq/5hAgent/internal/task"
 	"github.com/lzq/5hAgent/internal/tools"
 	"github.com/mattn/go-runewidth"
@@ -98,22 +99,23 @@ type gitMeta struct {
 // 调用层级：LaunchTUI -> NewAppModel -> Bubble Tea Update/View。
 // 设计边界：UI 层只持有 runtime 对象引用和渲染快照，不在 View 中直接拼业务查询逻辑。
 type AppModel struct {
-	program     *tea.Program
-	ag          *agent.Agent
-	modelName   string
-	agentName   string
-	sessionID   string
-	promptDir   string
-	taskList    *task.TaskList
-	skillMgr    *skill.Manager
-	ctxManager  *agentctx.Manager
-	messageCtx  *agentctx.Context
-	runTasks    RunTasksFunc
-	switchModel SwitchModelFunc
-	ctx         context.Context
-	runCancel   context.CancelFunc
-	runEntry    int
-	runLines    []string
+	program      *tea.Program
+	ag           *agent.Agent
+	modelName    string
+	agentName    string
+	sessionID    string
+	promptDir    string
+	taskList     *task.TaskList
+	skillMgr     *skill.Manager
+	ctxManager   *agentctx.Manager
+	messageCtx   *agentctx.Context
+	runTasks     RunTasksFunc
+	switchModel  SwitchModelFunc
+	remoteSubmit func(string) error
+	ctx          context.Context
+	runCancel    context.CancelFunc
+	runEntry     int
+	runLines     []string
 
 	width  int
 	height int
@@ -161,6 +163,10 @@ type assistantErrorMsg struct {
 type toolEventMsg struct {
 	event logger.ToolEvent
 }
+
+type remoteEventMsg struct{ event systemd.ProcessEvent }
+
+type remoteDisconnectedMsg struct{}
 
 type spinnerTickMsg struct{}
 
@@ -408,6 +414,39 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentAssistant = -1
 		m.currentStatus = "error"
 		m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: "agent error: " + msg.err.Error()})
+		m.refreshView()
+		return m, nil
+	case remoteEventMsg:
+		event := msg.event
+		switch event.Type {
+		case "user":
+			m.entries = append(m.entries, conversationEntry{Role: roleUser, Content: event.Text})
+			m.refreshView()
+			return m, nil
+		case "state":
+			m.busy = event.Busy
+			if !event.Busy {
+				m.currentStatus = "idle"
+			}
+			m.refreshView()
+			return m, nil
+		case "assistant":
+			return m.Update(assistantTokenMsg{token: event.Text})
+		case "thinking":
+			return m.Update(assistantThinkingMsg{token: event.Text})
+		case "tool":
+			return m.Update(toolEventMsg{event: logger.ToolEvent{Kind: event.Kind, Name: event.Name, Args: event.Args, Text: event.Text, Result: event.Result, Error: event.Error}})
+		case "done":
+			return m.Update(assistantDoneMsg{})
+		case "error":
+			return m.Update(assistantErrorMsg{err: fmt.Errorf("%s", event.Error)})
+		}
+		return m, nil
+	case remoteDisconnectedMsg:
+		m.busy = false
+		m.currentStatus = "disconnected"
+		m.remoteSubmit = func(string) error { return fmt.Errorf("daemon disconnected") }
+		m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: "daemon disconnected"})
 		m.refreshView()
 		return m, nil
 	case spinnerTickMsg:

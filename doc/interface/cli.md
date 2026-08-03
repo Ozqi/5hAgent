@@ -2,14 +2,16 @@
 
 ## 职责
 
-`internal/cli/tui.go` 是 Bubble Tea 终端界面。它只管输入、渲染和事件转发；Agent 执行仍在 `internal/agent`。
+`internal/tui` 是独立 Bubble Tea 客户端包，只负责输入、渲染和事件转发。它既可连接当前进程的 Runtime，也可通过 Unix Socket attach daemon Agent；daemon 不依赖具体 TUI 实现。
 
 ## 关键文件
 
 | 文件 | 作用 |
 | --- | --- |
-| [tui.go](../../internal/cli/tui.go) | `AppModel`、输入、slash、viewport、工具事件 |
-| [markdown_stream.go](../../internal/cli/markdown_stream.go) | Markdown 终端渲染 |
+| [app.go](../../internal/tui/app.go) | `AppModel`、viewport、事件渲染 |
+| [commands.go](../../internal/tui/commands.go) | 本地与 attached 输入处理 |
+| [remote.go](../../internal/tui/remote.go) | daemon attach 客户端入口 |
+| [markdown.go](../../internal/tui/markdown.go) | Markdown 终端渲染 |
 | [ui.go](../../internal/cli/ui.go) | 非 TUI 错误输出 |
 
 ## 布局
@@ -66,5 +68,5 @@ TUI 视觉改动以真实 tmux 画面为准。不要每个小改动都启动/重
 单测只在阶段收尾、准备提交或风险明显时补充使用：
 
 ```bash
-go test ./internal/cli
+go test ./internal/tui
 ```

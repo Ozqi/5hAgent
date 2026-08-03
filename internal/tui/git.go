@@ -1,6 +1,6 @@
 // tui_git.go - TUI git/worktree 元信息
 // 功能：读取当前工作目录的 git 分支、worktree 和 diff 摘要，用于 footer 展示。
-package cli
+package tui
 
 import (
 	"context"

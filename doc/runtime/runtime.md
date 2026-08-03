@@ -67,6 +67,6 @@ hook 异步执行，默认 5s 超时，失败只写 warning，不阻塞主 Agent
 ## 边界
 
 - runtime 不执行 ReAct 细节；那是 `internal/agent`。
-- runtime 不渲染 TUI；那是 `internal/cli`。
+- runtime 不渲染 TUI；那是独立客户端包 `internal/tui`。
 - runtime 不把 MCP 作为启动阻塞项。
 - `MemoryContext` 用于 systemd/process；默认不绑定 session，但保留 store。

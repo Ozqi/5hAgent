@@ -8,13 +8,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/lzq/5hAgent/internal/cli"
 	"github.com/lzq/5hAgent/internal/logger"
 	agentrt "github.com/lzq/5hAgent/internal/runtime"
 	"github.com/lzq/5hAgent/internal/systemd"
+	"github.com/lzq/5hAgent/internal/tui"
 	"github.com/lzq/5hAgent/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -29,6 +32,7 @@ var runTaskID string
 var runReportDir string
 var runQuiet bool
 var daemonPoll time.Duration
+var daemonInteractive bool
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -64,6 +68,7 @@ func main() {
 		Run:   runDaemon,
 	}
 	daemonCmd.Flags().DurationVar(&daemonPoll, "poll", time.Second, "Polling interval for .5hagent/task.md")
+	daemonCmd.Flags().BoolVar(&daemonInteractive, "interactive", false, "Host one attachable interactive Agent")
 	rootCmd.AddCommand(daemonCmd)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -98,7 +103,7 @@ func runTUI(cmd *cobra.Command, args []string) {
 	onToolEvent := func(event logger.ToolEvent) {
 		rt.RecordToolEvent(event)
 	}
-	if err := cli.LaunchTUI(ctx, rt.Agent, rt.ModelName, rt.PromptDir, rt.TaskList, rt.Agent.GetSkillManager(), rt.CtxManager, rt.MessageCtx, rt.SessionID, runTasks, switchModel, onToolEvent); err != nil {
+	if err := tui.LaunchTUI(ctx, rt.Agent, rt.ModelName, rt.PromptDir, rt.TaskList, rt.Agent.GetSkillManager(), rt.CtxManager, rt.MessageCtx, rt.SessionID, runTasks, switchModel, onToolEvent); err != nil {
 		cli.PrintError(fmt.Errorf("tui error: %w", err))
 		os.Exit(1)
 	}
@@ -128,19 +133,36 @@ func runHeadless(cmd *cobra.Command, args []string) {
 // runDaemon 启动 Agent Systemd 最小调度循环。
 // 交互边界：监听当前项目 .5hagent/task.md，把 in_progress/pending 任务交给 Runtime.RunProcess。
 func runDaemon(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
-	rt, err := agentrt.NewInMemory(ctx, runtimeOptions(true))
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	opts := runtimeOptions(!daemonInteractive)
+	if daemonInteractive {
+		opts.PromptBase = "tui"
+	}
+	rt, err := agentrt.New(ctx, opts)
 	if err != nil {
 		cli.PrintError(err)
 		os.Exit(1)
 	}
 	defer rt.Close()
 
-	sys := systemd.New()
 	configDir, err := utils.GetConfigDir()
 	if err != nil {
 		cli.PrintError(err)
 		os.Exit(1)
+	}
+	sys := systemd.New()
+	if daemonInteractive {
+		session := agentrt.NewDaemonSession(ctx, rt)
+		control, err := systemd.StartControlServer(ctx, filepath.Join(configDir, "run"), sys, rt.ProjectDir, session)
+		if err != nil {
+			cli.PrintError(err)
+			return
+		}
+		defer control.Close()
+		fmt.Printf("interactive agent: daemon-%d/interactive\n", os.Getpid())
+		<-ctx.Done()
+		return
 	}
 	control, err := systemd.StartControlServer(ctx, filepath.Join(configDir, "run"), sys, rt.ProjectDir)
 	if err != nil {

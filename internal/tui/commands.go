@@ -1,6 +1,6 @@
 // tui_commands.go - TUI 输入和 slash 命令处理
 // 功能：处理用户提交、内置 slash 命令、模型切换、任务运行和停止。
-package cli
+package tui
 
 import (
 	"context"
@@ -21,6 +21,32 @@ func (m *AppModel) submit() tea.Cmd {
 		return nil
 	}
 	m.lastInput = text
+	if m.remoteSubmit != nil {
+		m.input.Reset()
+		if text == "/detach" {
+			return tea.Quit
+		}
+		if strings.HasPrefix(text, "/") {
+			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "slash commands are unavailable in attached mode; use /detach or Ctrl+D"})
+			m.refreshView()
+			return nil
+		}
+		if m.busy {
+			m.currentStatus = "busy"
+			m.refreshView()
+			return nil
+		}
+		if err := m.remoteSubmit(text); err != nil {
+			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: err.Error()})
+			m.currentStatus = "error"
+			m.refreshView()
+			return nil
+		}
+		m.busy = true
+		m.currentStatus = "submitted"
+		m.refreshView()
+		return tickSpinner()
+	}
 	fields := strings.Fields(text)
 	cmdName := ""
 	if len(fields) > 0 {
