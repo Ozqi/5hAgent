@@ -436,6 +436,12 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.Update(assistantThinkingMsg{token: event.Text})
 		case "tool":
 			return m.Update(toolEventMsg{event: logger.ToolEvent{Kind: event.Kind, Name: event.Name, Args: event.Args, Text: event.Text, Result: event.Result, Error: event.Error}})
+		case "system":
+			m.busy = false
+			m.currentStatus = "idle"
+			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: event.Text})
+			m.refreshView()
+			return m, nil
 		case "done":
 			return m.Update(assistantDoneMsg{})
 		case "error":

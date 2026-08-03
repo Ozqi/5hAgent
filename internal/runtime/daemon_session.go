@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lzq/5hAgent/internal/commands"
 	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/systemd"
 )
@@ -67,6 +68,11 @@ func (s *DaemonSession) Submit(text string) error {
 	if text == "" {
 		return fmt.Errorf("input is required")
 	}
+	if strings.HasPrefix(text, "/") {
+		s.publish(systemd.ProcessEvent{Type: "user", Text: text})
+		s.publish(systemd.ProcessEvent{Type: "system", Text: s.handleSlash(text)})
+		return nil
+	}
 	s.mu.Lock()
 	if s.busy {
 		s.mu.Unlock()
@@ -78,6 +84,45 @@ func (s *DaemonSession) Submit(text string) error {
 	s.publish(systemd.ProcessEvent{Type: "state", Busy: true})
 	go s.run(text)
 	return nil
+}
+
+func (s *DaemonSession) handleSlash(text string) string {
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return ""
+	}
+	var result string
+	var err error
+	switch fields[0] {
+	case "/skill":
+		result, err = commands.HandleSkill(text, s.runtime.Agent.GetSkillManager())
+	case "/task":
+		result, err = commands.HandleTask(text, s.runtime.TaskList)
+	case "/mcp":
+		result, err = commands.HandleMCP(text)
+	case "/compress":
+		result, err = commands.HandleCompress(s.ctx, text, s.runtime.CtxManager, s.runtime.MessageCtx, s.runtime.Agent.GetModel(), s.runtime.PromptDir, "compact")
+	case "/model":
+		if len(fields) != 2 {
+			return "usage: /model <provider/model>"
+		}
+		result, err = s.runtime.SwitchModel(s.ctx, fields[1])
+		if err == nil {
+			result = "Switched model: " + result
+		}
+	case "/run":
+		return "/run is not available in attached daemon mode yet"
+	case "/stop":
+		return "/stop is not available in attached daemon mode yet"
+	case "/session":
+		return fmt.Sprintf("Current session: %s", s.runtime.SessionID)
+	default:
+		return "unknown slash command"
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return result
 }
 
 func (s *DaemonSession) run(text string) {

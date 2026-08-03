@@ -26,11 +26,6 @@ func (m *AppModel) submit() tea.Cmd {
 		if text == "/detach" {
 			return tea.Quit
 		}
-		if strings.HasPrefix(text, "/") {
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "slash commands are unavailable in attached mode; use /detach or Ctrl+D"})
-			m.refreshView()
-			return nil
-		}
 		if m.busy {
 			m.currentStatus = "busy"
 			m.refreshView()
