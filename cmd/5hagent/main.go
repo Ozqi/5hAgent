@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/lzq/5hAgent/internal/cli"
-	"github.com/lzq/5hAgent/internal/logger"
 	agentrt "github.com/lzq/5hAgent/internal/runtime"
 	"github.com/lzq/5hAgent/internal/systemd"
 	"github.com/lzq/5hAgent/internal/tui"
@@ -77,35 +76,15 @@ func main() {
 	}
 }
 
-// runTUI 启动传统交互界面。
-// 步骤：初始化 Runtime -> 将 Runtime 对象交给 TUI -> 退出时关闭 MCP 和日志。
+// runTUI 启动独立 daemon Agent，并把当前终端作为可分离 TUI 客户端接入。
 func runTUI(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
-	opts := runtimeOptions(false)
-	opts.PromptBase = "tui"
-	rt, err := agentrt.New(ctx, opts)
+	client, err := startInteractiveClient(cmd.Context())
 	if err != nil {
 		cli.PrintError(err)
-		os.Exit(1)
+		return
 	}
-	defer rt.Close()
-
-	runTasks := func(ctx context.Context, sink func(logger.ToolEvent)) (string, error) {
-		result, err := rt.RunTasksUntilDone(ctx, agentrt.RunOptions{WorkLog: false, ToolEventSink: sink})
-		if result == nil {
-			return "", err
-		}
-		return result.Summary(), err
-	}
-	switchModel := func(ctx context.Context, ref string) (string, error) {
-		return rt.SwitchModel(ctx, ref)
-	}
-	onToolEvent := func(event logger.ToolEvent) {
-		rt.RecordToolEvent(event)
-	}
-	if err := tui.LaunchTUI(ctx, rt.Agent, rt.ModelName, rt.PromptDir, rt.TaskList, rt.Agent.GetSkillManager(), rt.CtxManager, rt.MessageCtx, rt.SessionID, runTasks, switchModel, onToolEvent); err != nil {
+	if err := tui.LaunchAttachedTUI(cmd.Context(), client); err != nil {
 		cli.PrintError(fmt.Errorf("tui error: %w", err))
-		os.Exit(1)
 	}
 }
 
