@@ -1,0 +1,48 @@
+{
+  "name": "codex-oauth-provider",
+  "goal": "Select and authenticate the Codex provider from the TUI, then list and use account-eligible models.",
+  "user_flow": [
+    "/provider opens the provider picker",
+    "selecting Codex starts browser OAuth when credentials are absent",
+    "the TUI prints the authorization URL and attempts to open it",
+    "the browser redirects to the daemon callback server",
+    "the daemon exchanges the code, stores credentials, fetches models, and opens the model picker",
+    "/model lists only models exposed by the active provider"
+  ],
+  "components": [
+    {"id": "tui", "path": "internal/tui", "role": "provider/model picker and OAuth status"},
+    {"id": "ipc", "path": "internal/systemd/control.go", "role": "structured picker and auth events"},
+    {"id": "session", "path": "internal/runtime/daemon_session.go", "role": "owns provider selection and login lifecycle"},
+    {"id": "auth", "path": "internal/codex/auth.go", "role": "PKCE login, callback, token refresh and storage"},
+    {"id": "model", "path": "internal/codex/model.go", "role": "Responses SSE adapter and tool calls"},
+    {"id": "catalog", "path": "internal/codex/models.go", "role": "account-eligible model catalog"}
+  ],
+  "edges": [
+    ["tui", "ipc", "select provider/model"],
+    ["ipc", "session", "commands and events"],
+    ["session", "auth", "start OAuth and refresh credentials"],
+    ["session", "catalog", "fetch eligible models"],
+    ["session", "model", "switch runtime model"],
+    ["model", "auth", "resolve access token and account id"]
+  ],
+  "security": {
+    "callback": ["127.0.0.1:1455", "127.0.0.1:1457"],
+    "credential_path": "~/.5hAgent/auth/codex.json",
+    "credential_mode": "0600",
+    "requirements": ["PKCE S256", "random state", "redacted logs", "atomic credential writes"],
+    "forbidden": ["project .5hagent", "session jsonl", "reports", "debug request logs"]
+  },
+  "persistence": {
+    "selection_path": "~/.5hAgent/state.json",
+    "precedence": ["--model", "saved provider/model", "LLM_MODEL"]
+  },
+  "mvp": [
+    "browser OAuth",
+    "credential refresh",
+    "dynamic Codex model list",
+    "streamed text and reasoning",
+    "tool calls and tool results",
+    "TUI provider/model pickers"
+  ],
+  "non_goals": ["logout", "multi-account rotation", "quota dashboard", "external proxy"]
+}
