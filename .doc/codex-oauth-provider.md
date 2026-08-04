@@ -5,7 +5,7 @@
 
 ## 目标
 
-用户不需要顶层 `codex` 子命令或外部 proxy。在 TUI 输入 `/provider`，选择 `Codex` 后完成浏览器登录；随后 `/model` 只展示该 ChatGPT 账号可用的模型。
+用户不需要顶层 `codex` 子命令或外部 proxy。在 TUI 输入 `/provider`，选择 `openai`，并使用 ChatGPT OAuth 认证方式；随后 `/model` 只展示该 ChatGPT 账号可用的模型。这里 Codex 是套餐/后端能力名，不是本机 `codex` 程序依赖。
 
 ```mermaid
 sequenceDiagram

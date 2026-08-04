@@ -5,6 +5,7 @@
 package utils
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -119,7 +120,7 @@ type AppConfig struct {
 // LLMConfig LLM 提供商配置。
 type LLMConfig struct {
 	Supplier             string
-	Provider             string // 接口格式：claude / openai
+	Provider             string // 接口格式：claude / openai / codex
 	APIKey               string
 	BaseURL              string
 	Model                string
@@ -198,6 +199,28 @@ func LoadConfigWithOptions(opts LoadConfigOptions) (*AppConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	state, _ := loadUserState()
+	if strings.TrimSpace(opts.ModelRef) == "" && state.Model != "" {
+		opts.ModelRef = state.Model
+	}
+	if strings.HasPrefix(opts.ModelRef, "openai/") && state.Auth == "chatgpt" {
+		opts.LLMFormat = "codex"
+	}
+	if strings.TrimSpace(opts.LLMFormat) == "" && strings.HasPrefix(opts.ModelRef, "codex/") {
+		opts.LLMFormat = "codex"
+	}
+	if strings.TrimSpace(opts.ModelRef) != "" && strings.TrimSpace(opts.LLMFormat) == "codex" {
+		if supplier, model, err := parseModelRef(opts.ModelRef); err == nil && (supplier == "openai" || supplier == "codex") {
+			config.LLM = providerDefaults("codex", config.LLM)
+			config.LLM.Supplier = supplier
+			config.LLM.Model = model
+			loadAgentConfig(env, &config.Agent)
+			if err := config.Validate(); err != nil {
+				return nil, err
+			}
+			return config, nil
+		}
+	}
 
 	config.LLM, err = loadLLMConfig(env, config.LLM, opts)
 	if err != nil {
@@ -209,6 +232,68 @@ func LoadConfigWithOptions(opts LoadConfigOptions) (*AppConfig, error) {
 		return nil, err
 	}
 	return config, nil
+}
+
+// LoadSavedModelRef 返回 TUI 最近一次成功选择的 provider/model。
+func LoadSavedModelRef() (string, error) {
+	state, err := loadUserState()
+	return state.Model, err
+}
+
+type userState struct {
+	Model string `json:"model"`
+	Auth  string `json:"auth,omitempty"`
+}
+
+func loadUserState() (userState, error) {
+	var state userState
+	dir, err := GetConfigDir()
+	if err != nil {
+		return state, err
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "state.json"))
+	if err != nil {
+		return state, err
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return state, err
+	}
+	state.Model = strings.TrimSpace(state.Model)
+	return state, nil
+}
+
+// SaveModelRef 原子保存最近一次成功选择和非敏感认证方式。
+func SaveModelRef(modelRef string, auth string) error {
+	if _, _, err := parseModelRef(strings.TrimSpace(modelRef)); err != nil {
+		return err
+	}
+	dir, err := GetConfigDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	data, _ := json.MarshalIndent(userState{Model: modelRef, Auth: auth}, "", "  ")
+	path := filepath.Join(dir, "state.json")
+	temporary, err := os.CreateTemp(dir, ".state-*.tmp")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
 }
 
 func readEnvFile(path string) (map[string]string, error) {
@@ -256,6 +341,9 @@ func parseModelRef(ref string) (supplier string, model string, err error) {
 func loadProviderConfig(env map[string]string, supplier string, defaults LLMConfig) (LLMConfig, error) {
 	prefix := supplierEnvPrefix(supplier)
 	format := strings.ToLower(getEnvValue(env, prefix+"_FORMAT", ""))
+	if supplier == "codex" && format == "" {
+		format = "codex"
+	}
 	if format == "" {
 		return LLMConfig{}, fmt.Errorf("%s_FORMAT is required for LLM provider %q", prefix, supplier)
 	}
@@ -297,6 +385,12 @@ func providerDefaults(format string, defaults LLMConfig) LLMConfig {
 	if format == "openai" {
 		cfg.BaseURL = defaultOpenAIBaseURL
 		cfg.Model = ""
+		cfg.ThinkingBudgetTokens = 0
+	}
+	if format == "codex" {
+		cfg.BaseURL = "https://chatgpt.com/backend-api/codex"
+		cfg.Model = ""
+		cfg.APIKey = ""
 		cfg.ThinkingBudgetTokens = 0
 	}
 	return cfg
@@ -407,8 +501,10 @@ func validateLLMConfig(config LLMConfig) error {
 		}
 	case "openai":
 	// OpenAI-compatible 本地服务可使用 dummy key；远端服务按上游要求填写。
+	case "codex":
+		// Codex 使用用户级 OAuth store，不从 .env 读取 API key。
 	default:
-		return fmt.Errorf("unsupported LLM format %q, supported: claude, openai", config.Provider)
+		return fmt.Errorf("unsupported LLM format %q, supported: claude, openai, codex", config.Provider)
 	}
 	if config.BaseURL == "" {
 		return fmt.Errorf("%s is required", llmEnvKey(config, "BASE_URL"))

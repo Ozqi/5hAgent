@@ -96,22 +96,9 @@ Ollama 本地模型不校验 API key，`dummy` 即可。建议先用 `5hagent ru
 
 ### 使用 Codex/ChatGPT 账户额度
 
-5hAgent 不直接读取 Codex CLI 登录 token。若已有可信的本地 OpenAI-compatible Codex proxy，可以按普通 provider 配置：
+在 TUI 输入 `/provider`，选择 `openai`。首次选择会输出 ChatGPT OAuth 登录链接；浏览器登录并回调成功后，TUI 会展示当前账号可用模型。之后可用 `/model` 再次切换模型。
 
-```env
-LLM_MODEL=codex/gpt-5.1
-LLM_CODEX_FORMAT=openai
-LLM_CODEX_BASE_URL=http://127.0.0.1:8787/v1
-LLM_CODEX_API_KEY=codex-proxy
-```
-
-用诊断命令确认本机 Codex CLI 登录态和 `LLM_CODEX_*` 配置：
-
-```bash
-5hagent codex
-```
-
-该命令不会读取或打印 Codex/ChatGPT token。没有合法稳定 proxy/API 时，不支持直接接入账户额度。
+provider/model 选择会保存到用户级 `~/.5hAgent/state.json`，OAuth 凭据保存在 `~/.5hAgent/auth/codex.json`，不会进入项目、session 或 report。
 
 ## 无头运行
 

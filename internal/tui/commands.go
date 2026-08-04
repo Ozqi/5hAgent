@@ -37,7 +37,9 @@ func (m *AppModel) submit() tea.Cmd {
 			m.refreshView()
 			return nil
 		}
-		m.busy = true
+		if !strings.HasPrefix(text, "/") {
+			m.busy = true
+		}
 		m.currentStatus = "submitted"
 		m.refreshView()
 		return tickSpinner()

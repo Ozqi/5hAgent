@@ -31,15 +31,16 @@ type ProcessSnapshot struct {
 
 // ProcessEvent 是 daemon 向 attached TUI 推送的结构化事件。
 type ProcessEvent struct {
-	Seq    uint64 `json:"seq"`
-	Type   string `json:"type"`
-	Text   string `json:"text,omitempty"`
-	Kind   string `json:"kind,omitempty"`
-	Name   string `json:"name,omitempty"`
-	Args   string `json:"args,omitempty"`
-	Result string `json:"result,omitempty"`
-	Error  string `json:"error,omitempty"`
-	Busy   bool   `json:"busy,omitempty"`
+	Seq     uint64   `json:"seq"`
+	Type    string   `json:"type"`
+	Text    string   `json:"text,omitempty"`
+	Kind    string   `json:"kind,omitempty"`
+	Name    string   `json:"name,omitempty"`
+	Args    string   `json:"args,omitempty"`
+	Result  string   `json:"result,omitempty"`
+	Error   string   `json:"error,omitempty"`
+	Busy    bool     `json:"busy,omitempty"`
+	Options []string `json:"options,omitempty"`
 }
 
 // InteractiveProcess 是控制通道依赖的最小长驻 Agent 接口。

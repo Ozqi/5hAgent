@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/components/model"
@@ -55,11 +56,13 @@ type Runtime struct {
 	PromptDir  string
 	PromptBase string
 	ModelName  string
+	ModelRef   string
 	ProjectDir string
 
 	ToolRegistry *tools.Registry            // 当前 Runtime 独立工具注册表
 	plainModel   model.ToolCallingChatModel // 未绑定工具的模型，用于 no-tool AgentProcess
 	hooks        *HookManager               // 项目级 runtime hooks
+	modelMu      sync.Mutex                 // 串行化 attached 客户端的模型切换
 }
 
 // RunOptions 描述一次文件任务执行。
@@ -239,6 +242,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		PromptDir:    promptDir,
 		PromptBase:   promptBase(opts.PromptBase),
 		ModelName:    llmConfig.Model,
+		ModelRef:     llmConfig.Supplier + "/" + llmConfig.Model,
 		ProjectDir:   projectRoot,
 		ToolRegistry: toolRegistry,
 		plainModel:   client.GetModel(),
@@ -250,7 +254,9 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 // 参数：modelRef 使用 provider/model 格式，例如 mira/gpt-5.4。
 // 边界：不改写 .env，不重写当前会话已有 system prompt；新会话会使用新模型 prefix。
 func (r *Runtime) SwitchModel(ctx context.Context, modelRef string) (string, error) {
-	appConfig, err := utils.LoadConfigWithOptions(utils.LoadConfigOptions{ModelRef: modelRef})
+	r.modelMu.Lock()
+	defer r.modelMu.Unlock()
+	appConfig, err := utils.LoadConfigWithOptions(modelLoadOptions(modelRef))
 	if err != nil {
 		return "", fmt.Errorf("load model config: %w", err)
 	}
@@ -280,14 +286,23 @@ func (r *Runtime) SwitchModel(ctx context.Context, modelRef string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("bind tools: %w", err)
 	}
+	modelRef = llmConfig.Supplier + "/" + llmConfig.Model
+	auth := ""
+	if appConfig.LLM.Provider == "codex" {
+		auth = "chatgpt"
+	}
+	if err := utils.SaveModelRef(modelRef, auth); err != nil {
+		return "", fmt.Errorf("persist model selection: %w", err)
+	}
 	r.Agent.SetModel(modelWithTools)
 	r.Agent.SetTools(r.ToolRegistry.All())
 	r.Agent.SetSystemPrompt(systemPrompt)
 	r.Agent.SetContextWindow(client.ContextWindow(ctx))
 	r.Agent.SetDebugModel(llmConfig.Supplier+"/"+llmConfig.Model, llmConfig.APIKey)
 	r.ModelName = llmConfig.Model
+	r.ModelRef = modelRef
 	r.plainModel = client.GetModel()
-	return r.ModelName, nil
+	return r.ModelRef, nil
 }
 
 func (r *Runtime) handleToolEvent(event logger.ToolEvent, taskID string, processID string) {

@@ -58,7 +58,7 @@ func main() {
 	runCmd.Flags().StringVar(&runReportDir, "report-dir", "", "Directory for Markdown task reports; defaults to .5hagent/reports")
 	runCmd.Flags().BoolVar(&runQuiet, "quiet", false, "Suppress headless work log output; only print report path and errors")
 	rootCmd.AddCommand(runCmd)
-	rootCmd.AddCommand(newPSCommand(), newAttachCommand(), newCodexCommand())
+	rootCmd.AddCommand(newPSCommand(), newAttachCommand())
 
 	daemonCmd := &cobra.Command{
 		Use:   "daemon",

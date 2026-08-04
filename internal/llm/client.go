@@ -16,11 +16,13 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/claude"
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
+	"github.com/lzq/5hAgent/internal/codex"
 )
 
 const (
 	ProviderClaude = "claude"
 	ProviderOpenAI = "openai"
+	ProviderCodex  = "codex"
 )
 
 // Config 描述一次 LLM provider 初始化所需配置。
@@ -114,8 +116,10 @@ func buildModel(ctx context.Context, config *Config) (model.ToolCallingChatModel
 		return newClaudeModel(ctx, config)
 	case ProviderOpenAI:
 		return newOpenAIModel(ctx, config)
+	case ProviderCodex:
+		return codex.NewModel(config.Model)
 	default:
-		return nil, fmt.Errorf("unsupported LLM provider %q, supported: claude, openai", config.Provider)
+		return nil, fmt.Errorf("unsupported LLM provider %q, supported: claude, openai, codex", config.Provider)
 	}
 }
 

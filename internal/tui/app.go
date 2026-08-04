@@ -138,6 +138,14 @@ type AppModel struct {
 	lastQuitAt       time.Time
 	autoScroll       bool
 	metaCache        cachedMeta
+	picker           *pickerState
+}
+
+type pickerState struct {
+	Kind     string
+	Provider string
+	Options  []string
+	Cursor   int
 }
 
 type cachedMeta struct {
@@ -236,6 +244,7 @@ var slashCommandHints = []slashCommandHint{
 	{Name: "/run", Usage: "/run", Desc: "run task.md until no pending tasks"},
 	{Name: "/stop", Usage: "/stop", Desc: "stop current run"},
 	{Name: "/model", Usage: "/model <provider/model>", Desc: "ollama/gemma4, mira/gpt-5.5"},
+	{Name: "/provider", Usage: "/provider [name]", Desc: "select and authenticate provider"},
 }
 
 var modelHints = []string{
@@ -442,6 +451,18 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: event.Text})
 			m.refreshView()
 			return m, nil
+		case "picker":
+			m.busy = false
+			m.currentStatus = "select " + event.Kind
+			m.picker = &pickerState{Kind: event.Kind, Provider: event.Name, Options: append([]string(nil), event.Options...)}
+			m.refreshView()
+			return m, nil
+		case "model":
+			m.busy = false
+			m.modelName = event.Text
+			m.currentStatus = "idle"
+			m.refreshView()
+			return m, nil
 		case "done":
 			return m.Update(assistantDoneMsg{})
 		case "error":
@@ -514,6 +535,48 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// tmux mouse 转义序列偶尔会以普通按键漏进来；这里直接吞掉，
 		// 避免 `[<65;...M` 之类的滚轮事件污染输入框。
 		if isMouseEscapeKey(msg.String()) {
+			return m, nil
+		}
+		if m.picker != nil {
+			switch msg.String() {
+			case "up", "ctrl+p":
+				if m.picker.Cursor > 0 {
+					m.picker.Cursor--
+				}
+				m.refreshView()
+				return m, nil
+			case "down", "ctrl+n":
+				if m.picker.Cursor+1 < len(m.picker.Options) {
+					m.picker.Cursor++
+				}
+				m.refreshView()
+				return m, nil
+			case "esc":
+				m.picker = nil
+				m.currentStatus = "idle"
+				m.refreshView()
+				return m, nil
+			case "enter":
+				if len(m.picker.Options) == 0 || m.remoteSubmit == nil {
+					return m, nil
+				}
+				value := m.picker.Options[m.picker.Cursor]
+				command := "/" + m.picker.Kind + " " + value
+				if m.picker.Kind == "model" {
+					command = "/model " + m.picker.Provider + "/" + value
+				}
+				m.picker = nil
+				if err := m.remoteSubmit(command); err != nil {
+					m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: err.Error()})
+					m.currentStatus = "error"
+					m.refreshView()
+					return m, nil
+				}
+				m.busy = true
+				m.currentStatus = "submitted"
+				m.refreshView()
+				return m, tickSpinner()
+			}
 			return m, nil
 		}
 		switch msg.String() {
@@ -787,6 +850,20 @@ func skillSummary(skills []string) string {
 }
 
 func (m *AppModel) renderSlashHint(width int) string {
+	if m.picker != nil {
+		if len(m.picker.Options) == 0 {
+			return slashHintStyle.Width(width).Render("No options available")
+		}
+		lines := []string{"Select " + m.picker.Kind}
+		for index, option := range m.picker.Options {
+			prefix := "  "
+			if index == m.picker.Cursor {
+				prefix = "> "
+			}
+			lines = append(lines, prefix+option)
+		}
+		return slashHintStyle.Width(width).Render(strings.Join(lines, "\n"))
+	}
 	text := strings.TrimSpace(m.input.Value())
 	if !strings.HasPrefix(text, "/") {
 		return ""
