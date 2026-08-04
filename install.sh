@@ -37,7 +37,12 @@ append_if_missing() {
 }
 
 daemon_pids() {
-    pgrep -f "${INSTALL_DIR}/${BINARY_NAME} daemon --interactive" 2>/dev/null || true
+    {
+        pgrep -f "(^|[ /])${BINARY_NAME} daemon --interactive" 2>/dev/null || true
+        if command -v lsof >/dev/null 2>&1 && [ -e "${INSTALL_DIR}/${BINARY_NAME}" ]; then
+            lsof -t "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null || true
+        fi
+    } | sort -u
 }
 
 stop_daemon_for_install() {
@@ -146,8 +151,10 @@ ok "编译完成"
 # ── 5. 安装二进制 ──
 mkdir -p "$INSTALL_DIR"
 stop_daemon_for_install
-cp "$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
-chmod +x "$INSTALL_DIR/$BINARY_NAME"
+INSTALL_TMP="$INSTALL_DIR/.${BINARY_NAME}.$$"
+rm -f "$INSTALL_TMP"
+install -m 0755 "$BINARY_NAME" "$INSTALL_TMP"
+mv -f "$INSTALL_TMP" "$INSTALL_DIR/$BINARY_NAME"
 ok "已安装到 $INSTALL_DIR/$BINARY_NAME"
 
 # ── 5.5. 安装 zsh 补全 ──
