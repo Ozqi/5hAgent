@@ -37,9 +37,9 @@ runtime.New
 
 | 入口 | 行为 |
 | --- | --- |
-| `5hagent` | `runtime.New(PromptBase=tui)` -> `cli.LaunchTUI` |
+| `5hagent` | client 连接 `supervisor.sock`，attach `interactive`，必要时启动过渡 supervisor |
 | `5hagent run` | `runtime.New(main)` -> `RunTaskOnce` |
-| `5hagent daemon` | `NewInMemory` -> `AgentSystemd` -> `RunProcess` |
+| `5hagent daemon` | 过渡 supervisor：绑定 `supervisor.sock`；下一版由 `5hagentd` 替代 |
 | `/run` | TUI 内调用 `RunTasksUntilDone` |
 | `/model` | 调 `SwitchModel`，不写 `.env` |
 

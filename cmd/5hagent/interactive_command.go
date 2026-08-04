@@ -28,6 +28,9 @@ func startInteractiveClient(ctx context.Context) (*systemd.ProcessClient, error)
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create daemon run dir: %w", err)
 	}
+	if client, err := systemd.AttachProcess(runDir, "interactive"); err == nil {
+		return client, nil
+	}
 	logFile, err := os.OpenFile(filepath.Join(runDir, "interactive.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open daemon log: %w", err)
@@ -40,10 +43,9 @@ func startInteractiveClient(ctx context.Context) (*systemd.ProcessClient, error)
 		logFile.Close()
 		return nil, fmt.Errorf("start interactive daemon: %w", err)
 	}
-	pid := process.Process.Pid
 	_ = process.Process.Release()
 	_ = logFile.Close()
-	target := fmt.Sprintf("daemon-%d/interactive", pid)
+	target := "interactive"
 	deadline := time.NewTimer(30 * time.Second)
 	defer deadline.Stop()
 	for {

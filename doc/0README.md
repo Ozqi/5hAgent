@@ -44,7 +44,7 @@ flowchart TB
 | Task | [core/task.md](core/task.md) | `.5hagent/task.md`、状态流转、task tool |
 | Skill | [core/skill.md](core/skill.md) | 全局/项目 skill 加载和注入 |
 | Runtime | [runtime/runtime.md](runtime/runtime.md) | 初始化、TUI/headless/daemon 共用链路 |
-| Agent Systemd | [runtime/agent-systemd.md](runtime/agent-systemd.md) | 串行 AgentProcess daemon 边界 |
+| Agent Systemd | [runtime/agent-systemd.md](runtime/agent-systemd.md) | `5hagentd` 唯一 supervisor + `5hagent` client 重做设计 |
 | Systemd 验证 | [runtime/agent-systemd-test.md](runtime/agent-systemd-test.md) | daemon/headless 验证入口 |
 | TUI | [interface/cli.md](interface/cli.md) | Bubble Tea 状态、输入栏、`/stop`、工具提示 |
 | Slash Commands | [interface/commands.md](interface/commands.md) | `/task`、`/skill`、`/compress`、`/mcp` |
@@ -62,7 +62,7 @@ flowchart TB
 - `runtime.New` 启动阶段只注册本地工具和 `context.context`，不启动 MCP stdio server。
 - TUI 使用 `prompt/tui.md`；headless/daemon 使用 `prompt/main.md`。
 - Session 默认写 `~/.5hAgent/sessions/*.jsonl`；项目执行产物写当前目录 `.5hagent/`。
-- 当前 daemon 是串行 AgentProcess，不是并发多 Agent。
+- 当前 daemon/process 边界已判定需要重做；目标设计见 [runtime/agent-systemd.md](runtime/agent-systemd.md)。
 
 ## 文档约束
 

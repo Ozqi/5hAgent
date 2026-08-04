@@ -139,7 +139,7 @@ func runDaemon(cmd *cobra.Command, args []string) {
 			return
 		}
 		defer control.Close()
-		fmt.Printf("interactive agent: daemon-%d/interactive\n", os.Getpid())
+		fmt.Println("interactive agent: interactive")
 		<-ctx.Done()
 		return
 	}

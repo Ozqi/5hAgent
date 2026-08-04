@@ -10,10 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 )
+
+const supervisorSocket = "supervisor.sock"
 
 // ProcessSnapshot 是跨进程查询使用的只读 AgentProcess 快照。
 type ProcessSnapshot struct {
@@ -89,12 +90,16 @@ type ControlServer struct {
 	once     sync.Once
 }
 
-// StartControlServer 在 controlDir 创建当前 daemon 的 Unix socket。
+// StartControlServer 在 controlDir 创建用户级唯一 supervisor socket。
 func StartControlServer(ctx context.Context, controlDir string, sys *AgentSystemd, workspace string, interactive ...InteractiveProcess) (*ControlServer, error) {
 	if err := os.MkdirAll(controlDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create daemon control dir: %w", err)
 	}
-	path := filepath.Join(controlDir, fmt.Sprintf("daemon-%d.sock", os.Getpid()))
+	oldSockets, _ := filepath.Glob(filepath.Join(controlDir, "daemon-*.sock"))
+	for _, old := range oldSockets {
+		_ = os.Remove(old)
+	}
+	path := filepath.Join(controlDir, supervisorSocket)
 	_ = os.Remove(path)
 	listener, err := net.Listen("unix", path)
 	if err != nil {
@@ -214,33 +219,27 @@ func (s *ControlServer) Close() error {
 	return err
 }
 
-// ListProcesses 聚合 controlDir 中所有存活 daemon 的进程。
+// ListProcesses 查询用户级唯一 supervisor 中的进程。
 func ListProcesses(controlDir string) ([]ProcessSnapshot, error) {
-	sockets, err := filepath.Glob(filepath.Join(controlDir, "daemon-*.sock"))
+	path := filepath.Join(controlDir, supervisorSocket)
+	conn, err := net.DialTimeout("unix", path, 200*time.Millisecond)
 	if err != nil {
-		return nil, fmt.Errorf("list daemon sockets: %w", err)
+		_ = os.Remove(path)
+		return nil, nil
 	}
-	var processes []ProcessSnapshot
-	for _, socket := range sockets {
-		conn, err := net.DialTimeout("unix", socket, 200*time.Millisecond)
-		if err != nil {
-			_ = os.Remove(socket)
-			continue
-		}
-		_ = conn.SetDeadline(time.Now().Add(time.Second))
-		_ = json.NewEncoder(conn).Encode(controlMessage{Type: "list"})
-		var response controlMessage
-		err = json.NewDecoder(conn).Decode(&response)
-		_ = conn.Close()
-		if err != nil || response.Type != "list" {
-			continue
-		}
-		daemon := strings.TrimSuffix(filepath.Base(socket), ".sock")
-		for i := range response.Processes {
-			response.Processes[i].ID = daemon + "/" + response.Processes[i].ID
-		}
-		processes = append(processes, response.Processes...)
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(time.Second))
+	if err := json.NewEncoder(conn).Encode(controlMessage{Type: "list"}); err != nil {
+		return nil, err
 	}
+	var response controlMessage
+	if err := json.NewDecoder(conn).Decode(&response); err != nil {
+		return nil, err
+	}
+	if response.Type != "list" {
+		return nil, fmt.Errorf("unexpected supervisor response %q", response.Type)
+	}
+	processes := response.Processes
 	sort.Slice(processes, func(i, j int) bool { return processes[i].StartedAt.Before(processes[j].StartedAt) })
 	return processes, nil
 }
@@ -260,17 +259,13 @@ type ProcessClient struct {
 
 // AttachProcess 连接 target 对应的 daemon 并订阅交互 Agent 事件。
 func AttachProcess(controlDir string, target string) (*ProcessClient, error) {
-	parts := strings.SplitN(target, "/", 2)
-	if len(parts) != 2 || !strings.HasPrefix(parts[0], "daemon-") {
-		return nil, fmt.Errorf("invalid process target %q", target)
-	}
-	conn, err := net.DialTimeout("unix", filepath.Join(controlDir, parts[0]+".sock"), time.Second)
+	conn, err := net.DialTimeout("unix", filepath.Join(controlDir, supervisorSocket), time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", target, err)
 	}
 	client := &ProcessClient{conn: conn, enc: json.NewEncoder(conn), events: make(chan ProcessEvent, 256), pending: make(map[uint64]chan error), done: make(chan struct{})}
 	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
-	if err := client.enc.Encode(controlMessage{Type: "attach", ProcessID: parts[1]}); err != nil {
+	if err := client.enc.Encode(controlMessage{Type: "attach", ProcessID: target}); err != nil {
 		conn.Close()
 		return nil, err
 	}
