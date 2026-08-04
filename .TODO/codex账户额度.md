@@ -26,4 +26,4 @@
 ## 完成记录
 
 - Codex OAuth provider 设计文档：`32c806f`
-- 内置 OpenAI ChatGPT OAuth provider 与 Codex Responses 最小闭环：`待回填`
+- 内置 OpenAI ChatGPT OAuth provider 与 Codex Responses 最小闭环：`d075e33`
