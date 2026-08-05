@@ -41,13 +41,15 @@ runtime.New
 | `5hagent run` | `runtime.New(main)` -> `RunTaskOnce` |
 | `5hagent daemon` | 过渡 supervisor：绑定 `supervisor.sock`；下一版由 `5hagentd` 替代 |
 | `/run` | TUI 内调用 `RunTasksUntilDone` |
-| `/model` | 调 `SwitchModel`，不写 `.env` |
+| `/model` | 调 `SwitchModel`，只更新当前 runtime state，不写全局默认配置 |
 
 ## 输出位置
 
 | 数据 | 路径 |
 | --- | --- |
 | session | `~/.5hAgent/sessions/*.jsonl` |
+| 用户默认设置 | `~/.5hAgent/settings.json` |
+| runtime state | `~/.5hAgent/runtimes/<runtime-id>/state.json` 和 `.tmp/` |
 | task | `<project>/.5hagent/task.md` |
 | headless report | `<project>/.5hagent/reports/<task-id>.md` |
 | process report | `<project>/.5hagent/reports/<task-id>.<process-id>.<timestamp>.md` |

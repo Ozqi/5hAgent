@@ -34,7 +34,7 @@ Ornith 属于较新的 Ollama library 模型；如果拉取时报 `requires a ne
 
 Codex 是 OpenAI provider 的 ChatGPT OAuth 认证方式，不需要 `LLM_CODEX_API_KEY` 或 proxy 配置。在 TUI 输入 `/provider` 并选择 `openai`，完成浏览器登录后再从 `/model` 选择账号可用模型。
 
-OAuth 凭据位于 `~/.5hAgent/auth/codex.json`（`0600`），最近选择位于 `~/.5hAgent/state.json`。CLI `--model` 优先于保存选择，保存选择优先于 `.env` 中的 `LLM_MODEL`。
+OAuth 凭据位于 `~/.5hAgent/auth/codex.json`（`0600`）。用户级默认模型位于 `~/.5hAgent/settings.json` 的 `default_model`；运行中的 runtime 模型选择位于 `~/.5hAgent/runtimes/<runtime-id>/state.json`。CLI `--model` 优先于 runtime 当前状态和用户默认值。
 
 ## 文件
 

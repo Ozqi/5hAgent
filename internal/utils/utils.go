@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -21,7 +22,7 @@ import (
 // Prompt 加载
 // =============================================================================
 
-// Load reads prompt file <dir>/<name>.md and returns its trimmed content.
+// Load 读取 <dir>/<name>.md prompt 文件并返回去除首尾空白后的内容。
 func Load(dir, name string) (string, error) {
 	data, err := os.ReadFile(filepath.Join(dir, name+".md"))
 	if err != nil {
@@ -30,7 +31,7 @@ func Load(dir, name string) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-// LoadOptional reads an optional prompt file <dir>/<name>.md.
+// LoadOptional 读取可选的 <dir>/<name>.md prompt 文件。
 // 返回 ok=false 表示文件不存在；其他读取错误会返回给调用方处理。
 func LoadOptional(dir, name string) (content string, ok bool, err error) {
 	data, err := os.ReadFile(filepath.Join(dir, name+".md"))
@@ -146,6 +147,11 @@ type LoadConfigOptions struct {
 	ModelRef  string
 }
 
+// ConfiguredProvider 是 ~/.5hAgent/.env 中声明过的 provider 摘要。
+type ConfiguredProvider struct {
+	Name string
+}
+
 // 默认值常量。
 const (
 	DefaultProvider            = "claude"
@@ -158,7 +164,10 @@ const (
 	DefaultContextAutoCompress = true
 )
 
-const defaultOpenAIBaseURL = "https://api.openai.com/v1"
+const (
+	defaultOpenAIBaseURL   = "https://api.openai.com/v1"
+	defaultDeepSeekBaseURL = "https://api.deepseek.com"
+)
 
 // GetConfigDir 返回 ~/.5hAgent 目录路径。
 func GetConfigDir() (string, error) {
@@ -189,6 +198,7 @@ func LoadConfig() (*AppConfig, error) {
 // Provider 配置使用 LLM_<PROVIDER>_*；FORMAT 是 claude/openai 接口协议。
 func LoadConfigWithOptions(opts LoadConfigOptions) (*AppConfig, error) {
 	config := defaultConfig()
+	explicitModelRef := strings.TrimSpace(opts.ModelRef) != ""
 
 	configDir, err := GetConfigDir()
 	if err != nil {
@@ -199,15 +209,25 @@ func LoadConfigWithOptions(opts LoadConfigOptions) (*AppConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	state, _ := loadUserState()
-	if strings.TrimSpace(opts.ModelRef) == "" && state.Model != "" {
-		opts.ModelRef = state.Model
+	settings, settingsErr := loadSettings()
+	if strings.TrimSpace(opts.ModelRef) == "" && settings.DefaultModel != "" {
+		opts.ModelRef = settings.DefaultModel
 	}
-	if strings.HasPrefix(opts.ModelRef, "openai/") && state.Auth == "chatgpt" {
+	if strings.TrimSpace(opts.ModelRef) == "" {
+		state, _ := loadUserState()
+		if state.Model != "" {
+			opts.ModelRef = state.Model
+			settings.DefaultAuth = state.Auth
+		}
+	}
+	if strings.HasPrefix(opts.ModelRef, "openai/") && settings.DefaultAuth == "chatgpt" {
 		opts.LLMFormat = "codex"
 	}
 	if strings.TrimSpace(opts.LLMFormat) == "" && strings.HasPrefix(opts.ModelRef, "codex/") {
 		opts.LLMFormat = "codex"
+	}
+	if !explicitModelRef && errors.Is(settingsErr, os.ErrNotExist) && strings.TrimSpace(opts.ModelRef) != "" {
+		_ = saveSettings(settingsFile{DefaultModel: opts.ModelRef, DefaultAuth: settings.DefaultAuth})
 	}
 	if strings.TrimSpace(opts.ModelRef) != "" && strings.TrimSpace(opts.LLMFormat) == "codex" {
 		if supplier, model, err := parseModelRef(opts.ModelRef); err == nil && (supplier == "openai" || supplier == "codex") {
@@ -234,15 +254,57 @@ func LoadConfigWithOptions(opts LoadConfigOptions) (*AppConfig, error) {
 	return config, nil
 }
 
-// LoadSavedModelRef 返回 TUI 最近一次成功选择的 provider/model。
-func LoadSavedModelRef() (string, error) {
-	state, err := loadUserState()
-	return state.Model, err
+// ConfiguredProviders 返回 LLM_<PROVIDER>_FORMAT 配置块声明的 provider。
+func ConfiguredProviders() ([]ConfiguredProvider, error) {
+	configDir, err := GetConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	env, err := readEnvFile(filepath.Join(configDir, ".env"))
+	if err != nil {
+		return nil, err
+	}
+	providers := map[string]bool{}
+	if supplier, _, err := parseModelRef(getEnvValue(env, "LLM_MODEL", "")); err == nil && supplier != "" {
+		providers[supplier] = true
+	}
+	keys := make([]string, 0, len(env)+len(os.Environ()))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	for _, item := range os.Environ() {
+		key, _, ok := strings.Cut(item, "=")
+		if ok {
+			keys = append(keys, key)
+		}
+	}
+	for _, key := range keys {
+		if !strings.HasPrefix(key, "LLM_") || !strings.HasSuffix(key, "_FORMAT") {
+			continue
+		}
+		provider := strings.TrimSuffix(strings.TrimPrefix(key, "LLM_"), "_FORMAT")
+		provider = strings.ToLower(strings.ReplaceAll(strings.Trim(provider, "_"), "_", "-"))
+		if provider == "" {
+			continue
+		}
+		providers[provider] = true
+	}
+	list := make([]ConfiguredProvider, 0, len(providers))
+	for name := range providers {
+		list = append(list, ConfiguredProvider{Name: name})
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+	return list, nil
 }
 
 type userState struct {
 	Model string `json:"model"`
 	Auth  string `json:"auth,omitempty"`
+}
+
+type settingsFile struct {
+	DefaultModel string `json:"default_model"`
+	DefaultAuth  string `json:"default_auth,omitempty"`
 }
 
 func loadUserState() (userState, error) {
@@ -262,11 +324,25 @@ func loadUserState() (userState, error) {
 	return state, nil
 }
 
-// SaveModelRef 原子保存最近一次成功选择和非敏感认证方式。
-func SaveModelRef(modelRef string, auth string) error {
-	if _, _, err := parseModelRef(strings.TrimSpace(modelRef)); err != nil {
-		return err
+func loadSettings() (settingsFile, error) {
+	var settings settingsFile
+	dir, err := GetConfigDir()
+	if err != nil {
+		return settings, err
 	}
+	data, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		return settings, err
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return settings, err
+	}
+	settings.DefaultModel = strings.TrimSpace(settings.DefaultModel)
+	settings.DefaultAuth = strings.TrimSpace(settings.DefaultAuth)
+	return settings, nil
+}
+
+func saveSettings(settings settingsFile) error {
 	dir, err := GetConfigDir()
 	if err != nil {
 		return err
@@ -274,9 +350,9 @@ func SaveModelRef(modelRef string, auth string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	data, _ := json.MarshalIndent(userState{Model: modelRef, Auth: auth}, "", "  ")
-	path := filepath.Join(dir, "state.json")
-	temporary, err := os.CreateTemp(dir, ".state-*.tmp")
+	data, _ := json.MarshalIndent(settings, "", "  ")
+	path := filepath.Join(dir, "settings.json")
+	temporary, err := os.CreateTemp(dir, ".settings-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -344,12 +420,19 @@ func loadProviderConfig(env map[string]string, supplier string, defaults LLMConf
 	if supplier == "codex" && format == "" {
 		format = "codex"
 	}
+	if supplier == "deepseek" && format == "" {
+		format = "openai"
+	}
 	if format == "" {
 		return LLMConfig{}, fmt.Errorf("%s_FORMAT is required for LLM provider %q", prefix, supplier)
 	}
 	cfg := providerDefaults(format, defaults)
 	cfg.Supplier = supplier
 	cfg.Provider = format
+	if supplier == "deepseek" && format == "openai" {
+		cfg.BaseURL = defaultDeepSeekBaseURL
+		cfg.APIKey = getEnvValue(env, "DEEPSEEK_API_KEY", cfg.APIKey)
+	}
 	cfg.APIKey = getEnvValue(env, prefix+"_API_KEY", cfg.APIKey)
 	cfg.BaseURL = getEnvValue(env, prefix+"_BASE_URL", cfg.BaseURL)
 	if maxTokens := getEnvValue(env, prefix+"_MAX_TOKENS", ""); maxTokens != "" {

@@ -48,16 +48,20 @@ type Options struct {
 // Runtime 持有一次 5hAgent 进程运行所需的核心对象。
 // CLI/TUI 只是 Runtime 的外壳；无头运行也复用同一套 Agent、Tool、TaskList。
 type Runtime struct {
-	Agent      *agent.Agent
-	TaskList   *task.TaskList
-	CtxManager *agentctx.Manager
-	MessageCtx *agentctx.Context
-	SessionID  string
-	PromptDir  string
-	PromptBase string
-	ModelName  string
-	ModelRef   string
-	ProjectDir string
+	Agent       *agent.Agent
+	TaskList    *task.TaskList
+	CtxManager  *agentctx.Manager
+	MessageCtx  *agentctx.Context
+	SessionID   string
+	PromptDir   string
+	PromptBase  string
+	ModelName   string
+	ModelRef    string
+	ProjectDir  string
+	RuntimeID   string
+	RuntimeDir  string
+	RuntimeKind string
+	CreatedAt   time.Time
 
 	ToolRegistry *tools.Registry            // 当前 Runtime 独立工具注册表
 	plainModel   model.ToolCallingChatModel // 未绑定工具的模型，用于 no-tool AgentProcess
@@ -233,7 +237,16 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	ag.SetTools(toolRegistry.All())
 	ag.SetContextWindow(client.ContextWindow(ctx))
 
-	return &Runtime{
+	runtimeID := fmt.Sprintf("rt_%d_%d", time.Now().UnixNano(), os.Getpid())
+	runtimeDir := filepath.Join(configDir, "runtimes", runtimeID)
+	if err := os.MkdirAll(filepath.Join(runtimeDir, ".tmp"), 0o700); err != nil {
+		return nil, fmt.Errorf("create runtime state: %w", err)
+	}
+	runtimeKind := "interactive"
+	if opts.MemoryContext {
+		runtimeKind = "memory"
+	}
+	rt := &Runtime{
 		Agent:        ag,
 		TaskList:     list,
 		CtxManager:   ctxManager,
@@ -244,10 +257,18 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		ModelName:    llmConfig.Model,
 		ModelRef:     llmConfig.Supplier + "/" + llmConfig.Model,
 		ProjectDir:   projectRoot,
+		RuntimeID:    runtimeID,
+		RuntimeDir:   runtimeDir,
+		RuntimeKind:  runtimeKind,
+		CreatedAt:    time.Now().UTC(),
 		ToolRegistry: toolRegistry,
 		plainModel:   client.GetModel(),
 		hooks:        loadHookManager(projectRoot, sessionID),
-	}, nil
+	}
+	if err := rt.writeRuntimeState("idle"); err != nil {
+		return nil, fmt.Errorf("write runtime state: %w", err)
+	}
+	return rt, nil
 }
 
 // SwitchModel 在当前 Runtime 内切换 provider/model，并重新绑定当前工具集合。
@@ -287,13 +308,6 @@ func (r *Runtime) SwitchModel(ctx context.Context, modelRef string) (string, err
 		return "", fmt.Errorf("bind tools: %w", err)
 	}
 	modelRef = llmConfig.Supplier + "/" + llmConfig.Model
-	auth := ""
-	if appConfig.LLM.Provider == "codex" {
-		auth = "chatgpt"
-	}
-	if err := utils.SaveModelRef(modelRef, auth); err != nil {
-		return "", fmt.Errorf("persist model selection: %w", err)
-	}
 	r.Agent.SetModel(modelWithTools)
 	r.Agent.SetTools(r.ToolRegistry.All())
 	r.Agent.SetSystemPrompt(systemPrompt)
@@ -302,6 +316,9 @@ func (r *Runtime) SwitchModel(ctx context.Context, modelRef string) (string, err
 	r.ModelName = llmConfig.Model
 	r.ModelRef = modelRef
 	r.plainModel = client.GetModel()
+	if err := r.writeRuntimeState("idle"); err != nil {
+		return "", fmt.Errorf("persist runtime model selection: %w", err)
+	}
 	return r.ModelRef, nil
 }
 
@@ -413,6 +430,7 @@ Exit Condition:
 
 // Close 释放 Runtime 启动的外部资源。
 func (r *Runtime) Close() error {
+	_ = r.writeRuntimeState("exited")
 	logger.CloseLog()
 	return nil
 }
