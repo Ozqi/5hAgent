@@ -1,32 +1,46 @@
 # 5hAgent
 
-5hAgent 是一个学习型 Go + Eino Agent runtime：通过自己做一个tiny版Claude，可以让自己对Agent的工作原理更加深刻。
+5hAgent 是一个用 Go 和 Eino 实现的轻量 Agent runtime。核心 runtime 排除 TUI、测试、注释和空行后不到一万行 Go 代码，适合直接阅读、调试和改造。
 
-用尽量少的代码保留 ReAct 循环、工具调用、任务文件、报告文件、MCP/Skill 扩展这些关键骨架。
+这套小体量实现完整串起了 ReAct 循环、流式工具调用、上下文与会话、文件任务、Skill 和 MCP 扩展边界，并同时支持交互式 TUI、无头任务和 daemon。Go 带来了单二进制部署、较少的运行依赖，以及适合流式处理和并发控制的运行时基础。
 
+## 功能
 
-## 已完成
+- ReAct 多轮执行：模型生成、工具调用、结果回灌
+- 内置文件、搜索、Shell、任务和上下文工具
+- TUI 会话与可分离的后台 Agent
+- 基于 `.5hagent/task.md` 的无头任务和 Markdown 报告
+- 用户级与项目级 Skill
+- MCP 配置管理
+- OpenAI-compatible、Claude 和本地 Ollama 接口
 
-- **ReAct 循环** — LLM 多轮生成、工具调用、观察结果回灌。
-- **Tool use** — 基础文件工具、流式工具调用收集、工具执行与 LLM stream 重叠。
-- **文件任务** — `.5hagent/task.md` 是任务真源，支持 pending/in_progress/completed/failed 等状态。
-- **无头运行** — `5hagent run` 从任务文件取一个任务执行，并写 Markdown 报告。
-- **MCP / Skill** — 可接外部 MCP 工具，也可通过 Skill 注入可复用工作流。
+## 安装
 
-## 快速开始
+需要 Go 1.24.2 或更高版本。Node.js 只在使用部分 MCP server 时需要。
 
-1. 需要：Go 1.24.2 或更高版本，Node.js 18.x 或更高版本
-2. 执行安装脚本：
+在仓库内安装当前代码：
 
 ```bash
-# 在仓库内开发时，安装当前工作区代码
 bash install.sh
+```
 
-# 远程安装 master 版本
+安装 `master` 版本：
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/Ozqi/5hAgent/master/install.sh | bash
 ```
 
-3. 配置 LLM：`~/.5hAgent/.env`，当前模型使用 `provider/model` 格式；第一段选择 provider 配置块，后面的部分原样作为模型名传给上游 API。Provider 详情按 `LLM_<PROVIDER>_*` 保存：
+脚本会将二进制安装到 `~/.local/bin/5hagent`，并在首次安装时创建 `~/.5hAgent/.env`。如果命令不可用，请将安装目录加入 `PATH`：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+## 配置
+
+模型使用 `provider/model` 格式。`provider` 对应一组 `LLM_<PROVIDER>_*` 配置，`model` 原样传给上游接口。
+
+编辑 `~/.5hAgent/.env`：
 
 ```env
 LLM_MODEL=mira/claude-opus-4-6
@@ -35,40 +49,31 @@ LLM_MIRA_FORMAT=claude
 LLM_MIRA_API_KEY=local
 LLM_MIRA_BASE_URL=http://127.0.0.1:8787
 LLM_MIRA_MAX_TOKENS=4096
-LLM_MIRA_THINKING_BUDGET_TOKENS=0
 LLM_MIRA_STREAM=true
 
 AGENT_NAME=5hAgent
 AGENT_CONTEXT_AUTO_COMPRESS=true
 ```
 
-这里的 `FORMAT=openai|claude` 表示接口协议，不是 provider 名。临时切换时可以不改 `.env`：
+`FORMAT` 表示接口协议，目前支持 `openai` 和 `claude`。完整配置项见 [.env.example](.env.example) 和 [LLM 配置](doc/config/llm.md)。
 
-安装脚本遇到旧版 `LLM_PROVIDER` / `LLM_SUPPLIER` 配置时会先备份原文件；如果能找到对应 `LLM_<PROVIDER>_MODEL`，会补充 `LLM_MODEL=provider/model`，但不会删除旧变量。
+也可以只为本次运行切换模型：
 
 ```bash
+5hagent --model openrouter/openrouter/owl-alpha
 5hagent --model openrouter/openrouter/owl-alpha run
-5hagent --llm-model claude-opus-4-6 run
 ```
 
-TUI 内可用 `/model provider/model` 临时切换当前 runtime 模型，不改写 `~/.5hAgent/.env`：
+### 本地 Ollama
 
-```text
-/model
-/model mira/gpt-5.5
-```
-
-### 使用本地 Ollama
-
-如果想先用本地模型跑通 baseline，可安装 Ollama 并拉取一个模型：
+先拉取并启动模型：
 
 ```bash
 ollama pull qwen3:14b
-# macOS 桌面版通常会自动启动服务；纯 CLI 环境可手动执行：
 ollama serve
 ```
 
-5hAgent 只区分两种接口格式：`claude` 和 `openai`。Ollama 通过 OpenAI-compatible `/v1` 接口接入，可以保存成 `ollama` 供应商配置：
+然后在 `~/.5hAgent/.env` 中配置：
 
 ```env
 LLM_MODEL=ollama/qwen3:14b
@@ -77,121 +82,112 @@ LLM_OLLAMA_BASE_URL=http://localhost:11434/v1
 LLM_OLLAMA_API_KEY=dummy
 ```
 
-Ollama 当前使用哪个模型由 `LLM_MODEL` 的后半段决定。例如使用 HuggingFace GGUF：
+Ollama 通过 OpenAI-compatible `/v1` 接口接入。本地服务不校验 API key 时可使用 `dummy`。
 
-```env
-LLM_MODEL=ollama/hf.co/bartowski/Qwen_Qwen3.6-27B-GGUF:Q3_K_M
-```
+### ChatGPT OAuth
 
-Ornith-1.0 是面向 agentic coding 的开源模型，Ollama library 已提供 `ornith:9b` 和 `ornith:35b`。如果只想快速验证本地 Agent 链路，优先从 `ornith:9b` 开始；如果机器内存足够，可以再切到 `ornith:35b`：
+在 TUI 中输入 `/provider openai`，按提示完成浏览器登录，再用 `/model` 选择当前账号可用的模型。OAuth 凭据保存在 `~/.5hAgent/auth/codex.json`，不会写入项目目录、session 或 report。
 
-```bash
-ollama pull ornith:9b
-5hagent --model ollama/ornith:9b run
-```
+## 使用
 
-如果 `ollama pull ornith:9b` 返回 `requires a newer version of Ollama`，先升级 Ollama 客户端再重试。
+### 交互模式
 
-Ollama 本地模型不校验 API key，`dummy` 即可。建议先用 `5hagent run` 执行一个只读任务验证 chat、工具调用和报告落盘。
-
-### 使用 Codex/ChatGPT 账户额度
-
-在 TUI 输入 `/provider`，选择 `openai`。首次选择会输出 ChatGPT OAuth 登录链接；浏览器登录并回调成功后，TUI 会展示当前账号可用模型。之后可用 `/model` 再次切换模型。
-
-provider/model 选择会保存到用户级 `~/.5hAgent/state.json`，OAuth 凭据保存在 `~/.5hAgent/auth/codex.json`，不会进入项目、session 或 report。
-
-## 无头运行
-
-先在项目目录准备任务文件：
+在项目目录执行：
 
 ```bash
-mkdir -p .5hagent
-cat > .5hagent/task.md <<'EOF'
-# Shared Task List
-
-<!-- 5hagent:tasks:start -->
-## Shared Tasks
-
-### baseline-demo | 整理 baseline
-- status: pending
-- description: 阅读项目并输出一份极简 baseline 整理建议。
-- created_at: 2026-06-16T00:00:00Z
-- updated_at: 2026-06-16T00:00:00Z
-
-<!-- 5hagent:tasks:end -->
-EOF
+5hagent
 ```
 
-执行一个任务并写报告：
+默认入口会连接当前 workspace 的交互 Agent；不存在时自动在后台启动。退出 TUI 后，Agent 可以继续运行。
+
+```bash
+5hagent ps
+5hagent attach interactive
+```
+
+`ps` 列出当前可连接的 Agent，`attach` 重新进入指定实例。`attach` 的进程 ID 支持 zsh Tab 补全。
+
+### 文件任务
+
+任务保存在项目目录的 `.5hagent/task.md`。可以在 TUI 中创建任务：
+
+```text
+/task create baseline-demo 整理项目 阅读项目并输出一份整理建议
+```
+
+无头模式每次执行一个 `in_progress` 或 `pending` 任务：
 
 ```bash
 5hagent run
-# 或指定任务
 5hagent run --task baseline-demo
-# 脚本场景只保留 report 路径和错误
 5hagent run --quiet
 ```
 
-在 TUI 里可以显式输入 `/run`，让当前 runtime 连续执行 `.5hagent/task.md` 中的 `in_progress` / `pending` 任务，直到没有可运行任务为止。每个任务仍会写入 `.5hagent/reports/` 和 `.5hagent/agents/<agent>/logs/`。
+报告和工作日志分别写入：
 
-实验性的 Agent Systemd 入口可以持续监听 `.5hagent/task.md`，把当前或变更后的 `pending/in_progress` 任务作为 AgentProcess 执行：
+```text
+.5hagent/reports/<task-id>.md
+.5hagent/agents/<agent-name>/logs/<timestamp>-<task-id>.md
+```
+
+TUI 中的 `/run` 会连续执行任务，直到没有可运行任务。
+
+### Daemon
+
+daemon 持续监听 `.5hagent/task.md`，并将新增或变更的任务作为 Agent process 执行：
 
 ```bash
 5hagent daemon
-# 调整 task.md 轮询间隔
 5hagent daemon --poll 2s
 ```
 
-daemon 会输出 process start/completed/failed、task id 和 report path。AgentProcess 成功退出后，源任务会自动标记为 `completed`；失败时标记为 `failed`。进程报告使用 task/process/timestamp 命名，避免覆盖旧报告：
+任务结束后会更新源任务状态。daemon 生成的报告带有 task、process 和时间戳，避免覆盖历史结果：
 
 ```text
 .5hagent/reports/<task-id>.<process-id>.<timestamp>.md
 ```
 
-无头模式默认会在终端输出正常工作日志，包括 assistant 流式文本、工具调用和工具结果摘要。每次运行还会按 Agent 名称写一份 Markdown 工作日志，便于多个 Agent 并行或轮流运行时分开追踪：
+## TUI 命令
+
+| 命令 | 作用 |
+| --- | --- |
+| `/provider [name]` | 选择 provider 或进行认证 |
+| `/model <provider/model>` | 查看或切换当前模型 |
+| `/session <new\|list\|id>` | 管理会话 |
+| `/task <list\|create\|update\|...>` | 管理项目任务 |
+| `/run` / `/stop` | 执行或停止文件任务 |
+| `/skill <list\|get\|reload>` | 查看或重新加载 Skill |
+| `/mcp <list\|add\|remove\|...>` | 管理 MCP 配置 |
+| `/compress` | 手动压缩当前上下文 |
+| `/detach` | 退出 TUI，保留后台 Agent |
+
+输入 `/` 可以查看命令提示；输入命令前缀后按 Tab 可补全。
+
+## 项目结构
 
 ```text
-.5hagent/agents/<agent-name>/logs/<timestamp>-<task-id>.md
-```
-
-`--quiet` 只压制终端工作日志，项目目录下的 Agent 工作日志仍会写入。`--debug` 仍用于写入更完整的 DEBUG 文件日志。
-
-输出报告默认位于：
-
-```text
-.5hagent/reports/<task-id>.md
-```
-
-## 内置命令
-
-| 命令        | 说明                 |
-| ----------- | -------------------- |
-| `/task`     | 创建、更新、归档任务 |
-| `/skill`    | 查看已加载技能       |
-| `/compress` | 压缩上下文           |
-
-## 目录结构
-
-```
+cmd/5hagent/       CLI 入口
 internal/
-├── runtime/        # 无头/TUI 共享运行时：初始化配置、Agent、工具、任务、报告
-├── agent/          # Agent 核心：ReAct 循环、工具调度
-├── llm/            # LLM 客户端
-├── tools/          # 文件读写、搜索、执行、task/skill/context/sys/mcp 工具
-├── task/           # 文件任务模型、Markdown 持久化、状态流转
-├── skill/          # 技能快照加载
-├── context/        # 上下文和 session 管理
-└── cli/            # TUI/CLI 展示层
-cmd/5hagent/       # 入口
-doc/               # 详细文档
+├── runtime/       TUI、headless 和 daemon 的共享装配层
+├── agent/         ReAct 循环与工具调度
+├── llm/           LLM 客户端
+├── tools/         内置工具与注册表
+├── task/          文件任务与状态流转
+├── context/       上下文和 session
+├── skill/         Skill 加载
+├── systemd/       Agent process 调度与控制面
+└── tui/           Bubble Tea 客户端
+doc/               模块文档
 ```
 
 ## 文档
 
-- [Runtime 运行时](doc/runtime/runtime.md)
-- [Agent 架构](doc/core/agent.md)
-- [工具系统](doc/integrations/tools.md)
-- [上下文管理](doc/core/context.md)
-- [Skill 使用](doc/core/skill.md)
-- [LLM 客户端](doc/config/llm.md)
-- [LLM 调用流程](doc/config/llm-call-flow.md)
+- [文档索引](doc/0README.md)
+- [Runtime](doc/runtime/runtime.md)
+- [Agent 主循环](doc/core/agent.md)
+- [Context 与 Session](doc/core/context.md)
+- [Task](doc/core/task.md)
+- [Skill](doc/core/skill.md)
+- [Tools](doc/integrations/tools.md)
+- [TUI](doc/interface/cli.md)
+- [LLM 配置](doc/config/llm.md)
