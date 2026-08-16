@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/schema"
@@ -16,30 +17,36 @@ import (
 
 // Session 代表一次完整的对话会话
 type Session struct {
-	ID        string             // 唯一标识符
-	Title     string             // 会话标题（从第一条用户消息生成）
-	CreatedAt time.Time          // 创建时间
-	UpdatedAt time.Time          // 最后更新时间
-	messages  []*schema.Message  // 消息历史（内存缓存）
-	filePath  string             // JSONL 文件路径
-	dirty     bool               // 是否有未保存的修改
+	ID        string            // 唯一标识符
+	Title     string            // 会话标题（从第一条用户消息生成）
+	CreatedAt time.Time         // 创建时间
+	UpdatedAt time.Time         // 最后更新时间
+	messages  []*schema.Message // 消息历史（内存缓存）
+	filePath  string            // JSONL 文件路径
+	dirty     bool              // 是否有未保存的修改
 }
 
 // Store 管理多个 Session 的持久化存储
 type Store struct {
 	dir   string              // 存储目录
 	cache map[string]*Session // 内存缓存
+	mu    sync.Mutex          // 保护 cache 和 Session 文件写入
 }
 
 // sessionFileEntry JSONL 文件中的单条记录
 type sessionFileEntry struct {
-	Type      string `json:"type,omitempty"`      // "session" 表示会话头
-	ID        string `json:"id,omitempty"`         // 会话 ID
-	Title     string `json:"title,omitempty"`      // 会话标题
-	CreatedAt string `json:"created_at,omitempty"` // 创建时间
-	UpdatedAt string `json:"updated_at,omitempty"` // 更新时间
-	Role      string `json:"role,omitempty"`      // 消息角色
-	Content   string `json:"content,omitempty"`    // 消息内容
+	Type       string            `json:"type,omitempty"`              // "session" 表示会话头
+	ID         string            `json:"id,omitempty"`                // 会话 ID
+	Title      string            `json:"title,omitempty"`             // 会话标题
+	CreatedAt  string            `json:"created_at,omitempty"`        // 创建时间
+	UpdatedAt  string            `json:"updated_at,omitempty"`        // 更新时间
+	Role       string            `json:"role,omitempty"`              // 消息角色
+	Content    string            `json:"content,omitempty"`           // 消息内容
+	Reasoning  string            `json:"reasoning_content,omitempty"` // assistant thinking/reasoning 内容
+	ToolCalls  []schema.ToolCall `json:"tool_calls,omitempty"`        // assistant 发起的工具调用
+	ToolCallID string            `json:"tool_call_id,omitempty"`      // tool result 对应的调用 ID
+	ToolName   string            `json:"tool_name,omitempty"`         // tool result 对应的工具名
+	Extra      map[string]any    `json:"extra,omitempty"`             // 消息附加元数据
 }
 
 // NewStore 创建或打开会话存储
@@ -63,6 +70,8 @@ func NewStore(dir string) (*Store, error) {
 //
 // 返回: Session 实例和可能的错误
 func (s *Store) GetOrCreate(id string) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if id == "" {
 		id = generateSessionID()
 	}
@@ -79,7 +88,7 @@ func (s *Store) GetOrCreate(id string) (*Session, error) {
 			s.cache[id] = session
 			return session, nil
 		}
-		// 加载失败，继续创建新的
+		return nil, fmt.Errorf("load session %s: %w", filePath, err)
 	}
 
 	// 创建新会话
@@ -129,32 +138,6 @@ func (s *Store) List() ([]*Session, error) {
 	return sessions, nil
 }
 
-// Delete 删除会话
-// 参数:
-//   - id: 会话 ID
-//
-// 返回: 可能的错误
-func (s *Store) Delete(id string) error {
-	filePath := s.sessionFilePath(id)
-
-	// 从缓存移除
-	if _, ok := s.cache[id]; ok {
-		delete(s.cache, id)
-	}
-
-	// 删除文件
-	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("delete session file: %w", err)
-	}
-
-	return nil
-}
-
-// GetSessionDir 返回会话存储目录
-func (s *Store) GetSessionDir() string {
-	return s.dir
-}
-
 // GetLatestID 返回最新会话的 ID（按更新时间倒序）
 // 返回: 最新会话 ID，如果不存在则返回空字符串
 func (s *Store) GetLatestID() (string, error) {
@@ -175,6 +158,9 @@ func (s *Store) GetLatestID() (string, error) {
 //
 // 返回: 可能的错误
 func (s *Store) Append(session *Session, msg *schema.Message) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ensureMessageCreatedAt(msg, time.Now().UTC())
 	session.messages = append(session.messages, msg)
 	session.UpdatedAt = time.Now().UTC()
 	session.dirty = true
@@ -187,13 +173,14 @@ func (s *Store) Append(session *Session, msg *schema.Message) error {
 	return s.saveToFile(session)
 }
 
-// GetMessages 返回会话的所有消息
-// 参数:
-//   - session: Session 实例
-//
-// 返回: 消息列表
-func (s *Store) GetMessages(session *Session) []*schema.Message {
-	return session.messages
+// ReplaceMessages replaces all session messages and persists the session.
+func (s *Store) ReplaceMessages(session *Session, messages []*schema.Message) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session.messages = messages
+	session.UpdatedAt = time.Now().UTC()
+	session.dirty = true
+	return s.saveToFile(session)
 }
 
 // LoadMessages 加载会话的所有消息（从文件）
@@ -202,8 +189,10 @@ func (s *Store) GetMessages(session *Session) []*schema.Message {
 //
 // 返回: 消息列表和可能的错误
 func (s *Store) LoadMessages(session *Session) ([]*schema.Message, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if len(session.messages) > 0 {
-		return session.messages, nil
+		return cloneMessages(session.messages), nil
 	}
 
 	data, err := os.ReadFile(session.filePath)
@@ -211,7 +200,12 @@ func (s *Store) LoadMessages(session *Session) ([]*schema.Message, error) {
 		return nil, fmt.Errorf("read session file: %w", err)
 	}
 
-	return s.parseMessages(data)
+	messages, err := s.parseMessages(data)
+	if err != nil {
+		return nil, err
+	}
+	session.messages = cloneMessages(messages)
+	return messages, nil
 }
 
 func (s *Store) sessionFilePath(id string) string {
@@ -236,28 +230,43 @@ func (s *Store) saveToFile(session *Session) error {
 
 	// 添加消息
 	for _, msg := range session.messages {
+		ensureMessageCreatedAt(msg, session.UpdatedAt)
 		entry := sessionFileEntry{
-			Role:    string(msg.Role),
-			Content: msg.Content,
+			Role:       string(msg.Role),
+			Content:    msg.Content,
+			Reasoning:  msg.ReasoningContent,
+			ToolCalls:  msg.ToolCalls,
+			ToolCallID: msg.ToolCallID,
+			ToolName:   msg.ToolName,
+			CreatedAt:  messageCreatedAt(msg),
+			Extra:      msg.Extra,
 		}
 		entries = append(entries, entry)
 	}
 
-	// 写入文件
-	file, err := os.OpenFile(session.filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	tmpFile, err := os.CreateTemp(s.dir, filepath.Base(session.filePath)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("open session file: %w", err)
+		return fmt.Errorf("create session temp file: %w", err)
 	}
-	defer file.Close()
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
 
 	for _, entry := range entries {
 		line, err := json.Marshal(entry)
 		if err != nil {
+			tmpFile.Close()
 			return fmt.Errorf("marshal entry: %w", err)
 		}
-		if _, err := file.Write(append(line, '\n')); err != nil {
+		if _, err := tmpFile.Write(append(line, '\n')); err != nil {
+			tmpFile.Close()
 			return fmt.Errorf("write entry: %w", err)
 		}
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close session temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, session.filePath); err != nil {
+		return fmt.Errorf("replace session file: %w", err)
 	}
 
 	session.dirty = false
@@ -269,7 +278,7 @@ func (s *Store) loadFromFile(filePath string, data []byte) (*Session, error) {
 	for _, line := range splitJSONLines(data) {
 		var entry sessionFileEntry
 		if err := json.Unmarshal(line, &entry); err != nil {
-			continue
+			return nil, fmt.Errorf("parse session jsonl: %w", err)
 		}
 		if entry.Type == "session" {
 			session.ID, session.Title = entry.ID, entry.Title
@@ -280,8 +289,11 @@ func (s *Store) loadFromFile(filePath string, data []byte) (*Session, error) {
 				session.UpdatedAt = t
 			}
 		} else if entry.Role != "" {
-			session.messages = append(session.messages, &schema.Message{Role: parseRole(entry.Role), Content: entry.Content})
+			session.messages = append(session.messages, messageFromEntry(entry))
 		}
+	}
+	if session.ID == "" {
+		return nil, fmt.Errorf("missing session header")
 	}
 	return session, nil
 }
@@ -290,12 +302,60 @@ func (s *Store) parseMessages(data []byte) ([]*schema.Message, error) {
 	var messages []*schema.Message
 	for _, line := range splitJSONLines(data) {
 		var entry sessionFileEntry
-		if err := json.Unmarshal(line, &entry); err != nil || entry.Role == "" || entry.Type == "session" {
+		if err := json.Unmarshal(line, &entry); err != nil {
+			return nil, fmt.Errorf("parse session message: %w", err)
+		}
+		if entry.Role == "" || entry.Type == "session" {
 			continue
 		}
-		messages = append(messages, &schema.Message{Role: parseRole(entry.Role), Content: entry.Content})
+		messages = append(messages, messageFromEntry(entry))
 	}
 	return messages, nil
+}
+
+func messageFromEntry(entry sessionFileEntry) *schema.Message {
+	extra := entry.Extra
+	if extra == nil {
+		extra = make(map[string]any)
+	}
+	if entry.CreatedAt != "" {
+		extra["created_at"] = entry.CreatedAt
+	}
+	return &schema.Message{
+		Role:             parseRole(entry.Role),
+		Content:          entry.Content,
+		ReasoningContent: entry.Reasoning,
+		ToolCalls:        entry.ToolCalls,
+		ToolCallID:       entry.ToolCallID,
+		ToolName:         entry.ToolName,
+		Extra:            extra,
+	}
+}
+
+func ensureMessageCreatedAt(msg *schema.Message, fallback time.Time) {
+	if msg == nil {
+		return
+	}
+	if msg.Extra == nil {
+		msg.Extra = make(map[string]any)
+	}
+	if _, ok := msg.Extra["created_at"]; ok {
+		return
+	}
+	if fallback.IsZero() {
+		fallback = time.Now().UTC()
+	}
+	msg.Extra["created_at"] = fallback.UTC().Format(time.RFC3339)
+}
+
+func messageCreatedAt(msg *schema.Message) string {
+	if msg == nil || msg.Extra == nil {
+		return ""
+	}
+	if v, ok := msg.Extra["created_at"].(string); ok {
+		return v
+	}
+	return ""
 }
 
 // parseRole 将字符串 role 映射为 schema.RoleType
@@ -336,8 +396,9 @@ func generateSessionID() string {
 }
 
 func generateTitle(content string) string {
-	if len(content) <= 30 {
+	runes := []rune(content)
+	if len(runes) <= 30 {
 		return content
 	}
-	return content[:27] + "..."
+	return string(runes[:27]) + "..."
 }

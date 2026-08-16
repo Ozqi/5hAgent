@@ -1,24 +1,22 @@
 // main.go - 5hAgent 程序入口
-// 功能：初始化 Agent、TUI、工具注册，启动交互式对话界面
-// 导出函数：main, runInteractive
+// 功能：提供 TUI 交互入口和无头 runtime 入口，两者共享 internal/runtime 初始化链路。
+// 调用方：用户通过 5hagent、5hagent run 启动；测试可直接复用 internal/runtime。
+// 全局状态：debugMode/sessionID/continueLast/llmSupplier 等保存 CLI flag 解析结果。
 package main
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"time"
 
-	"github.com/cloudwego/eino/schema"
-	"github.com/lzq/5hAgent/internal/agent"
 	"github.com/lzq/5hAgent/internal/cli"
-	"github.com/lzq/5hAgent/internal/commands"
-	agentctx "github.com/lzq/5hAgent/internal/context"
-	"github.com/lzq/5hAgent/internal/llm"
-	"github.com/lzq/5hAgent/internal/logger"
-	"github.com/lzq/5hAgent/internal/mcp"
-	"github.com/lzq/5hAgent/internal/task"
-	"github.com/lzq/5hAgent/internal/tools"
+	agentrt "github.com/lzq/5hAgent/internal/runtime"
+	"github.com/lzq/5hAgent/internal/systemd"
+	"github.com/lzq/5hAgent/internal/tui"
 	"github.com/lzq/5hAgent/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -26,221 +24,149 @@ import (
 var debugMode bool
 var sessionID string
 var continueLast bool
+var llmFormat string
+var llmModel string
+var modelRef string
+var runTaskID string
+var runReportDir string
+var runQuiet bool
+var daemonPoll time.Duration
+var daemonInteractive bool
 
 func main() {
 	rootCmd := &cobra.Command{
 		Use:   "5hagent",
-		Short: "5hAgent - A lightweight AI agent framework",
-		Long:  `5hAgent is a Go-based AI agent framework powered by Eino, supporting interactive conversations and tool execution.`,
-		Run:   runInteractive,
+		Short: "5hAgent - A lightweight AI agent runtime",
+		Long:  `5hAgent is a Go-based AI agent runtime powered by Eino. It can run with a TUI or process file-backed tasks headlessly.`,
+		Run:   runTUI,
 	}
-	rootCmd.Flags().BoolVar(&debugMode, "debug", false, "Enable debug mode with verbose logging")
-	rootCmd.Flags().StringVar(&sessionID, "session", "", "Resume from existing session ID")
-	rootCmd.Flags().BoolVarP(&continueLast, "continue", "c", false, "Resume from the last session")
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
+	rootCmd.PersistentFlags().BoolVar(&debugMode, "debug", false, "Enable debug mode with verbose logging")
+	rootCmd.PersistentFlags().StringVar(&sessionID, "session", "", "Resume from existing session ID")
+	rootCmd.PersistentFlags().BoolVarP(&continueLast, "continue", "c", false, "Resume from the last session")
+	rootCmd.PersistentFlags().StringVar(&llmFormat, "llm-format", "", "Temporarily select LLM API format: claude or openai")
+	rootCmd.PersistentFlags().StringVar(&llmModel, "llm-model", "", "Temporarily override the selected LLM model")
+	rootCmd.PersistentFlags().StringVarP(&modelRef, "model", "m", "", "Model ref in provider/model format, for example openrouter/openrouter/owl-alpha")
+
+	runCmd := &cobra.Command{
+		Use:   "run",
+		Short: "Run one file-backed task without launching the TUI",
+		Long:  "Run one pending or in-progress task from .5hagent/task.md and write a Markdown report to .5hagent/reports/.",
+		Run:   runHeadless,
+	}
+	runCmd.Flags().StringVar(&runTaskID, "task", "", "Task ID to run; defaults to first in_progress or pending task")
+	runCmd.Flags().StringVar(&runReportDir, "report-dir", "", "Directory for Markdown task reports; defaults to .5hagent/reports")
+	runCmd.Flags().BoolVar(&runQuiet, "quiet", false, "Suppress headless work log output; only print report path and errors")
+	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(newPSCommand(), newAttachCommand())
+
+	daemonCmd := &cobra.Command{
+		Use:   "daemon",
+		Short: "Run the Agent Systemd task supervisor",
+		Long:  "Run the Agent Systemd loop for .5hagent/task.md. Existing and changed pending/in_progress tasks are started as Agent processes.",
+		Run:   runDaemon,
+	}
+	daemonCmd.Flags().DurationVar(&daemonPoll, "poll", time.Second, "Polling interval for .5hagent/task.md")
+	daemonCmd.Flags().BoolVar(&daemonInteractive, "interactive", false, "Host one attachable interactive Agent")
+	rootCmd.AddCommand(daemonCmd)
+
 	if err := rootCmd.Execute(); err != nil {
 		cli.PrintError(err)
 		os.Exit(1)
 	}
 }
 
-func runInteractive(cmd *cobra.Command, args []string) {
-	// 加载集中配置
-	appConfig, err := utils.LoadConfig()
+// runTUI 启动独立 daemon Agent，并把当前终端作为可分离 TUI 客户端接入。
+func runTUI(cmd *cobra.Command, args []string) {
+	client, err := startInteractiveClient(cmd.Context())
 	if err != nil {
-		cli.PrintError(fmt.Errorf("failed to load configuration: %w", err))
-		os.Exit(1)
+		cli.PrintError(err)
+		return
 	}
+	if err := tui.LaunchAttachedTUI(cmd.Context(), client); err != nil {
+		cli.PrintError(fmt.Errorf("tui error: %w", err))
+	}
+}
 
-	// CLI 标志覆盖配置
-	if debugMode {
-		appConfig.Agent.Debug = true
-		logger.SetLevel(logger.DEBUG)
-	}
-	logFile, err := logger.InitLog()
-	if err != nil {
-		cli.PrintError(fmt.Errorf("failed to init log: %w", err))
-		os.Exit(1)
-	}
-	defer logger.CloseDebugLog()
-	logger.InfoTag("SYS", "Log initialized: %s", logFile)
-	if appConfig.Agent.Debug {
-		logger.InfoTag("SYS", "Debug mode enabled")
-	}
-
+// runHeadless 执行一个文件任务并写报告。
+// 交互边界：输入来自 .5hagent/task.md，输出写入 .5hagent/reports/<task-id>.md。
+func runHeadless(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
-
-	// *Task 持久化到项目启动目录
-	projectDataDir, err := utils.GetProjectDataDir()
+	rt, err := agentrt.New(ctx, runtimeOptions(false))
 	if err != nil {
-		cli.PrintError(fmt.Errorf("failed to get project data directory: %w", err))
+		cli.PrintError(err)
 		os.Exit(1)
 	}
-	taskListPath := filepath.Join(projectDataDir, "task.md")
+	defer rt.Close()
 
-	taskList, err := task.NewTaskList(taskListPath)
+	report, err := rt.RunTaskOnce(ctx, agentrt.RunOptions{TaskID: runTaskID, ReportDir: runReportDir, WorkLog: !runQuiet})
+	if report != nil && report.ReportPath != "" {
+		fmt.Printf("report: %s\n", report.ReportPath)
+	}
 	if err != nil {
-		cli.PrintError(fmt.Errorf("failed to initialize task list: %w", err))
+		cli.PrintError(err)
 		os.Exit(1)
 	}
-	logger.DebugTag("SYS", "Task list initialized at %s", taskListPath)
+}
 
-	// *Session 持久化到 ~/.5hAgent（全局无关）
+// runDaemon 启动 Agent Systemd 最小调度循环。
+// 交互边界：监听当前项目 .5hagent/task.md，把 in_progress/pending 任务交给 Runtime.RunProcess。
+func runDaemon(cmd *cobra.Command, args []string) {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	opts := runtimeOptions(!daemonInteractive)
+	if daemonInteractive {
+		opts.PromptBase = "tui"
+	}
+	rt, err := agentrt.New(ctx, opts)
+	if err != nil {
+		cli.PrintError(err)
+		os.Exit(1)
+	}
+	defer rt.Close()
+
 	configDir, err := utils.GetConfigDir()
 	if err != nil {
-		cli.PrintError(fmt.Errorf("failed to get config directory: %w", err))
+		cli.PrintError(err)
 		os.Exit(1)
 	}
-	sessionDir := filepath.Join(configDir, "sessions")
-	ctxManager := agentctx.NewManager(sessionDir)
-
-	// 处理 --session / -c 参数
-	var messageCtx *agentctx.Context
-	if sessionID != "" {
-		// 指定了 session ID
-		messageCtx, err = ctxManager.CreateContext(sessionID)
+	sys := systemd.New()
+	if daemonInteractive {
+		session := agentrt.NewDaemonSession(ctx, rt)
+		control, err := systemd.StartControlServer(ctx, filepath.Join(configDir, "run"), sys, rt.ProjectDir, session)
 		if err != nil {
-			cli.PrintError(fmt.Errorf("failed to load session %s: %w", sessionID, err))
-			os.Exit(1)
+			cli.PrintError(err)
+			return
 		}
-		logger.InfoTag("SESSION", "Resumed session: %s", sessionID)
-	} else if continueLast {
-		// -c: 自动获取最新会话
-		sessionID, err = ctxManager.GetLatestSessionID()
-		if err != nil || sessionID == "" {
-			logger.InfoTag("SESSION", "No previous session found, creating new one")
-			sessionID = ""
-		} else {
-			messageCtx, err = ctxManager.CreateContext(sessionID)
-			if err != nil {
-				cli.PrintError(fmt.Errorf("failed to load session %s: %w", sessionID, err))
-				os.Exit(1)
-			}
-			logger.InfoTag("SESSION", "Resumed last session: %s", sessionID)
-		}
+		defer control.Close()
+		fmt.Println("interactive agent: interactive")
+		<-ctx.Done()
+		return
 	}
-
-	// 创建新会话（如果没有指定 session 或获取失败）
-	if messageCtx == nil {
-		messageCtx, err = ctxManager.CreateContext("")
-		if err != nil {
-			cli.PrintError(fmt.Errorf("failed to create context: %w", err))
-			os.Exit(1)
-		}
-		sessionID = ctxManager.GetSessionID(messageCtx)
-		logger.InfoTag("SESSION", "Created new session: %s", sessionID)
-	}
-
-	// *从配置创建 LLM 客户端
-	llmConfig := &llm.Config{
-		APIKey:               appConfig.LLM.APIKey,
-		BaseURL:              appConfig.LLM.BaseURL,
-		Model:                appConfig.LLM.Model,
-		MaxTokens:            appConfig.LLM.MaxTokens,
-		ThinkingBudgetTokens: appConfig.LLM.ThinkingBudgetTokens,
-	}
-	client, err := llm.NewClient(ctx, llmConfig)
+	control, err := systemd.StartControlServer(ctx, filepath.Join(configDir, "run"), sys, rt.ProjectDir)
 	if err != nil {
-		cli.PrintError(fmt.Errorf("failed to create LLM client: %w", err))
+		cli.PrintError(err)
 		os.Exit(1)
 	}
-
-	logger.DebugTag("SYS", "Model=%s, BaseURL=%s", llmConfig.Model, llmConfig.BaseURL)
-
-	promptDir := filepath.Join(configDir, "prompt")
-	systemPrompt, err := utils.Load(promptDir, "main")
-	if err != nil {
-		cli.PrintError(fmt.Errorf("failed to get system prompt: %w", err))
+	defer control.Close()
+	sys.StartSource(ctx, agentrt.NewTaskFileEventSource(rt.TaskList, daemonPoll, rt.TaskProcessSpec))
+	if err := rt.EmitCurrentTask(sys); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: %v\n", err)
+	}
+	if err := sys.Run(ctx, rt); err != nil && err != context.Canceled {
+		cli.PrintError(err)
 		os.Exit(1)
 	}
-	logger.DebugTag("SYS", "System prompt loaded: %d chars", len(systemPrompt))
+}
 
-	// *从配置创建 Agent
-	agentConfig := &agent.Config{
-		Name:            appConfig.Agent.Name,
-		MaxTotalTokens:  appConfig.Agent.MaxTotalTokens,
-		RepeatToolLimit: appConfig.Agent.RepeatToolLimit,
-		Debug:           appConfig.Agent.Debug,
-		SystemPrompt:    systemPrompt,
-	}
-	ag, err := agent.NewAgent(nil, nil, agentConfig)
-	if err != nil {
-		cli.PrintError(fmt.Errorf("failed to create agent: %w", err))
-		os.Exit(1)
-	}
-	// 设置带 session 持久化的 ctxManager
-	ag.SetCtxManager(ctxManager)
-
-	if err := tools.InitRegistry(taskList, ag.GetSkillManager()); err != nil {
-		cli.PrintError(fmt.Errorf("failed to init tools: %w", err))
-		os.Exit(1)
-	}
-
-	// *初始化 MCP 服务器（从 ~/.5hAgent/mcp.json 加载）
-	mcpServers, err := commands.LoadMCPServers()
-	if err != nil {
-		logger.WarnTag("MCP", "Failed to load MCP config: %v", err)
-	}
-	mcpClients := make([]*mcp.StdioClient, 0, len(mcpServers))
-	for _, serverConfig := range mcpServers {
-		logger.InfoTag("MCP", "Starting MCP server: %s", serverConfig.Name)
-
-		mcpClient, err := mcp.NewStdioClient(ctx, mcp.StdioClientConfig{
-			Name:           serverConfig.Name,
-			Command:        serverConfig.Command,
-			Args:           serverConfig.Args,
-			Env:            serverConfig.Env,
-			StartupTimeout: serverConfig.StartupTimeout,
-		})
-		if err != nil {
-			logger.ErrorTag("MCP", "Failed to start MCP server %s: %v", serverConfig.Name, err)
-			continue
-		}
-
-		mcpClients = append(mcpClients, mcpClient)
-
-		// *注册 MCP 工具
-		toolSpecs := mcpClient.ListTools()
-		if err := tools.RegisterMCPTools(serverConfig.Name, mcpClient, toolSpecs); err != nil {
-			logger.ErrorTag("MCP", "Failed to register tools for %s: %v", serverConfig.Name, err)
-			mcpClient.Close()
-			continue
-		}
-
-		logger.InfoTag("MCP", "Registered %d tools from %s", len(toolSpecs), serverConfig.Name)
-	}
-
-	// 设置清理函数
-	defer func() {
-		for _, client := range mcpClients {
-			logger.DebugTag("MCP", "Closing MCP server: %s", client.ServerName())
-			if err := client.Close(); err != nil {
-				logger.ErrorTag("MCP", "Error closing %s: %v", client.ServerName(), err)
-			}
-		}
-	}()
-
-	allTools := tools.GetAllTools()
-	toolInfos := make([]*schema.ToolInfo, 0, len(allTools))
-	for _, t := range allTools {
-		info, err := t.Info(ctx)
-		if err != nil {
-			cli.PrintError(fmt.Errorf("failed to get tool info: %w", err))
-			continue
-		}
-		toolInfos = append(toolInfos, info)
-	}
-
-	modelWithTools, err := client.GetModel().WithTools(toolInfos)
-	if err != nil {
-		cli.PrintError(fmt.Errorf("failed to bind tools: %w", err))
-		os.Exit(1)
-	}
-
-	ag.SetModel(modelWithTools)
-	ag.SetTools(allTools)
-
-	if err := cli.LaunchTUI(ctx, ag, llmConfig.Model, promptDir, taskList, ag.GetSkillManager(), ctxManager, messageCtx, sessionID); err != nil {
-		cli.PrintError(fmt.Errorf("tui error: %w", err))
-		os.Exit(1)
+func runtimeOptions(memory bool) agentrt.Options {
+	return agentrt.Options{
+		Debug:         debugMode,
+		SessionID:     sessionID,
+		ContinueLast:  continueLast,
+		MemoryContext: memory,
+		LLMFormat:     llmFormat,
+		LLMModel:      llmModel,
+		ModelRef:      modelRef,
 	}
 }

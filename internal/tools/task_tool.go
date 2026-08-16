@@ -36,7 +36,7 @@
 //
 //   - reopen   → 重开任务（需要 id）
 //
-//     status 可选值：pending / in_progress / blocked / completed / archived
+//     status 可选值：pending / in_progress / blocked / completed / archived / failed
 //
 // Error Scenarios (LLM Hints):
 //   - MISSING 'action'            → 必须提供 action
@@ -66,6 +66,7 @@ import (
 const (
 	taskToolName = "task.task"
 	taskToolDesc = `Manage the local task list. Always send JSON object arguments.
+Tool name is always task.task. Never call task.create, task.update, task.delete, task.list, or task.get.
 Allowed action values only: create, update, get, list, delete, archive, reopen.
 Do NOT invent action names such as finish, done, complete, start, or show.
 
@@ -79,6 +80,7 @@ Required fields by action:
 Examples:
 - Create: {"action":"create","id":"fix-tui-wrap","title":"Fix TUI wrapping","description":"Prevent content from overlapping the right panel"}
 - Mark completed: {"action":"update","id":"fix-tui-wrap","status":"completed"}
+- Delete: {"action":"delete","id":"fix-tui-wrap"}
 - List active: {"action":"list","status":"in_progress"}`
 	taskToolErrors = `MISSING 'action': 必须提供 action
 MISSING 'id': update/get/delete/archive/reopen 操作需要指定任务 id
@@ -100,7 +102,7 @@ func (t *TaskTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 			"id":          {Type: schema.String, Desc: "Task ID. Required for create/update/get/delete/archive/reopen. Example: fix-tui-wrap"},
 			"title":       {Type: schema.String, Desc: "Task title. Required for create."},
 			"description": {Type: schema.String, Desc: "Task description. Required for create."},
-			"status":      {Type: schema.String, Desc: "Task status. Required for update. One of: pending, in_progress, blocked, completed, archived.", Enum: []string{"pending", "in_progress", "blocked", "completed", "archived"}},
+			"status":      {Type: schema.String, Desc: "Task status. Required for update. One of: pending, in_progress, blocked, completed, archived, failed.", Enum: []string{"pending", "in_progress", "blocked", "completed", "archived", "failed"}},
 		}),
 	}, nil
 }

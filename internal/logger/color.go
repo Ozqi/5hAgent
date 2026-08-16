@@ -1,6 +1,6 @@
 // color.go - ANSI 颜色输出
 // 功能：Red/Green/Yellow/Blue/Cyan/Magenta/Gray/Bold 颜色函数
-// 导出函数：DisableColor, Red, Green, Yellow, Blue, Cyan, Magenta, Gray, Bold
+// 导出函数：Red, Green, Yellow, Blue, Cyan, Magenta, Gray, Bold
 package logger
 
 import (
@@ -34,11 +34,6 @@ func init() {
 	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
 		colorEnabled = false
 	}
-}
-
-// DisableColor 禁用颜色输出
-func DisableColor() {
-	colorEnabled = false
 }
 
 // colorize 给文本添加颜色

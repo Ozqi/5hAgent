@@ -71,6 +71,34 @@ func TestExeToolCallDebugCallbackDoesNotPanic(t *testing.T) {
 	}
 }
 
+func TestExecuteToolWithRepeatGuardStopsBeforeInvoke(t *testing.T) {
+	a, err := NewAgent(nil, nil, &Config{RepeatToolLimit: 1})
+	if err != nil {
+		t.Fatalf("NewAgent() error = %v", err)
+	}
+	a.SetTools([]tool.BaseTool{callbackPanicTool{}})
+	guard := newToolRepeatGuard(1)
+	call := schema.ToolCall{
+		ID: "call_1",
+		Function: schema.FunctionCall{
+			Name:      "callback_panic_tool",
+			Arguments: `{}`,
+		},
+	}
+
+	first := a.executeToolWithRepeatGuard(context.Background(), guard, toolRequest{idx: 0, tc: call})
+	if first.err != nil {
+		t.Fatalf("first call err = %v", first.err)
+	}
+	second := a.executeToolWithRepeatGuard(context.Background(), guard, toolRequest{idx: 1, tc: call})
+	if second.err == nil || !strings.Contains(second.err.Error(), "repeated tool call") {
+		t.Fatalf("second call err = %v, want repeat guard error", second.err)
+	}
+	if second.result != "" {
+		t.Fatalf("second call result = %q, want empty result without invoke", second.result)
+	}
+}
+
 func TestToolCollectorWaitsForArgumentsDuringStreaming(t *testing.T) {
 	idx := 0
 	collector := newToolCollector()

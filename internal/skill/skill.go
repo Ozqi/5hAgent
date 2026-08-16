@@ -1,7 +1,7 @@
 // skill.go - 技能加载与管理
-// 功能：从 ~/.5hAgent/skills/*/SKILL.md 加载技能，支持启用/禁用
+// 功能：启动时从全局和项目 skills 目录加载技能，形成 Agent 生命周期内固定的技能集合
 // 主要类型：Skill, Manager
-// 导出函数：NewManager, LoadSkills, GetSkill, ListSkills, EnableSkill, DisableSkill
+// 导出函数：NewManager, NewManagerFromDirs, LoadSkills, GetSkill, ListSkills
 package skill
 
 import (
@@ -13,15 +13,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// skill.go - Skill 核心逻辑
-// 职责：
-//   1. 定义 Skill 数据结构
-//   2. 从文件系统加载 SKILL.md 文件
-//   3. 管理 skill 的启用/禁用状态
-//   4. 提供 skill 查询接口
-//
-// 注意：Skill 的使用（注入、命令处理）在 internal/agent/skill_handler.go 中
-
 // Skill 定义一个可注入的技能
 type Skill struct {
 	Name        string `yaml:"name"`
@@ -29,57 +20,101 @@ type Skill struct {
 	Version     string `yaml:"version,omitempty"`
 	Tools       string `yaml:"tools,omitempty"`
 	Content     string `yaml:"-"` // Markdown 内容（不在 frontmatter 中）
-	Enabled     bool   `yaml:"-"` // 运行时状态
+	Enabled     bool   `yaml:"-"` // 启动加载状态；当前 Agent 生命周期内不变
+	Scope       string `yaml:"-"` // global 或 project，表示来源层级
+	Path        string `yaml:"-"` // SKILL.md 绝对或启动目录相对路径
 }
 
-// Manager 管理技能的加载和注入
+// Manager 管理启动时加载出的技能快照
 type Manager struct {
 	skills    map[string]*Skill
-	skillsDir string
+	skillsDir string   // 兼容旧调用；等价于 skillDirs[0]
+	skillDirs []Source // 按顺序加载，后面的同名 skill 覆盖前面的
+}
+
+// Source 描述一个 skill 来源目录
+type Source struct {
+	Scope string // global 或 project
+	Dir   string // skills 根目录
 }
 
 // NewManager 创建技能管理器
 func NewManager(skillsDir string) *Manager {
+	return NewManagerFromDirs(Source{Scope: "global", Dir: skillsDir})
+}
+
+// NewManagerFromDirs 创建支持多来源目录的技能管理器
+func NewManagerFromDirs(sources ...Source) *Manager {
+	firstDir := ""
+	if len(sources) > 0 {
+		firstDir = sources[0].Dir
+	}
 	return &Manager{
 		skills:    make(map[string]*Skill),
-		skillsDir: skillsDir,
+		skillsDir: firstDir,
+		skillDirs: sources,
 	}
 }
 
-// LoadSkills 从目录加载所有技能（SKILL.md 格式）
+// LoadSkills 从配置的目录加载所有技能；后加载的项目 skill 可覆盖同名全局 skill
 func (m *Manager) LoadSkills() error {
-	if m.skillsDir == "" {
+	sources := m.skillDirs
+	if len(sources) == 0 && m.skillsDir != "" {
+		sources = []Source{{Scope: "global", Dir: m.skillsDir}}
+	}
+	for _, source := range sources {
+		if err := m.loadDir(source, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ReloadSkills 先完整构建新快照，扫描成功后才替换当前 skills。
+func (m *Manager) ReloadSkills() error {
+	next := NewManagerFromDirs(m.skillDirs...)
+	if len(m.skillDirs) == 0 {
+		next = NewManager(m.skillsDir)
+	}
+	for _, source := range next.skillDirs {
+		if err := next.loadDir(source, true); err != nil {
+			return err
+		}
+	}
+	m.skills = next.skills
+	return nil
+}
+
+func (m *Manager) loadDir(source Source, strict bool) error {
+	if source.Dir == "" {
 		return nil
 	}
-
-	if _, err := os.Stat(m.skillsDir); os.IsNotExist(err) {
+	if _, err := os.Stat(source.Dir); os.IsNotExist(err) {
 		return nil
 	}
-
-	// 遍历 skills 目录下的所有子目录
-	entries, err := os.ReadDir(m.skillsDir)
+	entries, err := os.ReadDir(source.Dir)
 	if err != nil {
-		return fmt.Errorf("failed to read skills dir: %w", err)
+		return fmt.Errorf("failed to read skills dir %s: %w", source.Dir, err)
 	}
-
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-
-		skillPath := filepath.Join(m.skillsDir, entry.Name(), "SKILL.md")
+		skillPath := filepath.Join(source.Dir, entry.Name(), "SKILL.md")
 		if _, err := os.Stat(skillPath); os.IsNotExist(err) {
 			continue
 		}
-
 		skill, err := m.loadSkillFile(skillPath)
 		if err != nil {
+			if strict {
+				return fmt.Errorf("load skill %s: %w", skillPath, err)
+			}
 			continue
 		}
-
+		skill.Scope = source.Scope
+		skill.Path = skillPath
 		m.skills[skill.Name] = skill
 	}
-
 	return nil
 }
 
@@ -108,7 +143,7 @@ func (m *Manager) loadSkillFile(path string) (*Skill, error) {
 	}
 
 	skill.Content = strings.TrimSpace(parts[1])
-	skill.Enabled = true // 默认启用所有 skills
+	skill.Enabled = true
 
 	return &skill, nil
 }
@@ -127,24 +162,4 @@ func (m *Manager) ListSkills() []*Skill {
 		skills = append(skills, skill)
 	}
 	return skills
-}
-
-// EnableSkill 启用技能
-func (m *Manager) EnableSkill(name string) error {
-	skill, ok := m.skills[name]
-	if !ok {
-		return fmt.Errorf("skill not found: %s", name)
-	}
-	skill.Enabled = true
-	return nil
-}
-
-// DisableSkill 禁用技能
-func (m *Manager) DisableSkill(name string) error {
-	skill, ok := m.skills[name]
-	if !ok {
-		return fmt.Errorf("skill not found: %s", name)
-	}
-	skill.Enabled = false
-	return nil
 }

@@ -49,12 +49,6 @@ const (
 - path: optional directory or file. Default current workspace.
 - type: optional ripgrep file type such as go, py, js, md.
 Examples: {"pattern":"func NewAgent","path":"internal","type":"go"}; {"pattern":"claude-context","path":"doc"}`
-	grepToolErrors = `pattern invalid: 正则表达式语法错误；简化模式或转义特殊字符
-path not found: 搜索路径不存在；确认目录/文件名
-no matches: 无匹配结果（正常情况，非错误）；尝试更宽松的模式
-rg not found (fallback): 系统未安装 ripgrep，自动使用 grep（功能受限）`
-	grepToolTips = `正则特殊字符需要转义：. * + ? [ ] ( ) { } | \\
-按类型过滤：type: go 只搜索 .go 文件`
 )
 
 // GrepInput defines the input parameters for grep tool
@@ -79,13 +73,17 @@ type GrepOutput struct {
 }
 
 // NewGrepTool creates a new grep tool for code searching
-func NewGrepTool() (tool.EnhancedInvokableTool, error) {
+func NewGrepTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
+	root := ""
+	if len(workspaceRoot) > 0 {
+		root = workspaceRoot[0]
+	}
 	return utils.InferEnhancedTool(
 		grepToolName,
 		grepToolDesc,
 		func(ctx context.Context, input GrepInput) (*schema.ToolResult, error) {
 			if _, err := exec.LookPath("rg"); err != nil {
-				return grepFallback(ctx, input)
+				return grepFallback(ctx, input, root)
 			}
 
 			args := []string{
@@ -103,11 +101,7 @@ func NewGrepTool() (tool.EnhancedInvokableTool, error) {
 
 			args = append(args, input.Pattern)
 
-			if input.Path != "" {
-				args = append(args, input.Path)
-			} else {
-				args = append(args, ".")
-			}
+			args = append(args, resolvePath(root, input.Path))
 
 			cmd := exec.CommandContext(ctx, "rg", args...)
 			output, err := cmd.CombinedOutput()
@@ -175,11 +169,8 @@ func parseRipgrepJSON(output string) []GrepMatch {
 }
 
 // grepFallback uses standard grep when ripgrep is not available
-func grepFallback(ctx context.Context, input GrepInput) (*schema.ToolResult, error) {
-	path := input.Path
-	if path == "" {
-		path = "."
-	}
+func grepFallback(ctx context.Context, input GrepInput, root string) (*schema.ToolResult, error) {
+	path := resolvePath(root, input.Path)
 
 	args := []string{
 		"-r",

@@ -1,5 +1,15 @@
 # Environment
 .env
+.env.*
+!.env.example
+*.local
+*.local.*
+*.secret
+*.secret.*
+
+# Hidden workspace directories
+/.*/
+!/.git/
 
 # Python (legacy)
 __pycache__/
@@ -19,12 +29,22 @@ __pycache__/
 # Claude Code
 .claude/
 
-# Workspace (SWE-bench test data)
+# Workspace / local experiments
 workspace/
 .worktrees/
+.traces/
 compact/
+testspace/*
+!testspace/.gitignore
+!testspace/md_mcp/
+!testspace/md_mcp/**
+!testspace/md_mcp_data/
+!testspace/md_mcp_data/**
 testspace/swebench_pro/repos/
 testspace/*.txt
 
 # 5hAgent runtime data
 .5hagent/
+
+# Local handoff notes
+TODO.message.md

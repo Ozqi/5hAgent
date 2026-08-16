@@ -82,7 +82,8 @@ func parseInputSchema(raw json.RawMessage) map[string]*schema.ParameterInfo {
 	return result
 }
 
-// convertProperty 将单个 JSON Schema property 转换为 ParameterInfo
+// convertProperty 将 MCP/OpenAPI 的 JSON Schema 子集转换为 ParameterInfo。
+// 当前只处理 type/enum/const/items/properties/required；oneOf/allOf/anyOf 等组合 schema 先保持忽略。
 func convertProperty(raw json.RawMessage, required bool) *schema.ParameterInfo {
 	var prop struct {
 		Type        json.RawMessage `json:"type"`

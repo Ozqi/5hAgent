@@ -1,7 +1,7 @@
 // agent.go - Agent 核心实现
 // 功能：ReAct 循环、LLM 调用、工具执行协调、上下文管理
 // 主要类型：Agent, Config, State, tokenBudget, toolRepeatGuard
-// 导出函数：NewAgent, RunStream, GetSkillManager, SetModel, SetTools, Name, TokenUsage
+// 导出函数：NewAgent, RunStream, GetSkillManager, SetModel, SetTools, SetToolEventSink, Name, TokenUsage
 package agent
 
 import (
@@ -21,6 +21,10 @@ import (
 	"github.com/lzq/5hAgent/internal/skill"
 	"github.com/lzq/5hAgent/internal/utils"
 )
+
+// =============================================================================
+// Agent 配置和核心状态
+// =============================================================================
 
 // Agent AI Agent 核心结构体
 // 负责协调 LLM、工具、上下文管理器
@@ -42,15 +46,24 @@ type Agent struct {
 	tokenBudget *utils.TokenBudget
 	// 回调处理器
 	callbacks *AgentCallbacks
+	// 工具事件 sink
+	toolEventSink func(logger.ToolEvent)
+	// debug 日志只保留模型引用；当前 API key 仅用于从消息内容中固定掩码。
+	modelRef    string
+	debugSecret string
 }
 
 // Config Agent 配置
 type Config struct {
-	Name            string // Agent 名称
-	MaxTotalTokens  int    // 整场会话累计 token 上限
-	RepeatToolLimit int    // 相同工具调用重复上限
-	Debug           bool   // 是否启用调试
-	SystemPrompt    string // 系统提示词
+	Name                string // Agent 名称
+	MaxTotalTokens      int    // 整场会话累计 token 上限
+	RepeatToolLimit     int    // 相同工具调用重复上限
+	Debug               bool   // 是否启用调试
+	ContextAutoCompress bool   // 是否自动触发上下文压缩
+	DisableStream       bool   // 是否禁用流式模型调用；部分兼容供应商需要关闭
+	SystemPrompt        string // 系统提示词
+	PromptDir           string // prompt 文件目录，用于上下文压缩等内部 prompt
+	ProjectDataDir      string // 项目 .5hagent 数据目录；为空时使用当前工作目录
 }
 
 // State Agent 运行状态
@@ -78,14 +91,22 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 		config.RepeatToolLimit = 5
 	}
 
-	// 初始化技能管理器，使用配置目录
 	configDir, err := utils.GetConfigDir()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get config directory: %w", err)
 	}
-	skillsDir := filepath.Join(configDir, "skills")
-
-	skillMgr := skill.NewManager(skillsDir)
+	projectDataDir := config.ProjectDataDir
+	if projectDataDir == "" {
+		var err error
+		projectDataDir, err = utils.GetProjectDataDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get project data directory: %w", err)
+		}
+	}
+	skillMgr := skill.NewManagerFromDirs(
+		skill.Source{Scope: "global", Dir: filepath.Join(configDir, "skills")},
+		skill.Source{Scope: "project", Dir: filepath.Join(projectDataDir, "skills")},
+	)
 	if err := skillMgr.LoadSkills(); err != nil {
 		logger.DebugTag("SKILL", "Failed to load skills: %v", err)
 	}
@@ -99,6 +120,7 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 		toolMap[info.Name] = t
 	}
 
+	tokenBudget := utils.NewTokenBudget(config.MaxTotalTokens)
 	return &Agent{
 		model:        model,
 		tools:        tools,
@@ -106,27 +128,46 @@ func NewAgent(model model.ToolCallingChatModel, tools []tool.BaseTool, config *C
 		config:       config,
 		ctxManager:   agentctx.NewManager(),
 		skillManager: skillMgr,
-		tokenBudget:  utils.NewTokenBudget(config.MaxTotalTokens),
+		tokenBudget:  tokenBudget,
 		state: &State{
 			CurrentTurn: 0,
 			IsRunning:   false,
 		},
-		callbacks: NewAgentCallbacks(config.Debug),
+		callbacks: NewAgentCallbacks(config.Debug, tokenBudget),
 	}, nil
 }
+
+// =============================================================================
+// Runtime 注入点：context manager、模型、工具和事件 sink
+// =============================================================================
 
 // SetCtxManager 设置上下文管理器（用于 session 持久化）
 func (a *Agent) SetCtxManager(manager *agentctx.Manager) {
 	a.ctxManager = manager
 }
 
-// GetCtxManager 获取上下文管理器
-func (a *Agent) GetCtxManager() *agentctx.Manager {
-	return a.ctxManager
+// SetDebugModel 更新 debug 请求日志使用的模型引用和敏感值掩码。
+func (a *Agent) SetDebugModel(modelRef string, secret string) {
+	a.modelRef = modelRef
+	a.debugSecret = secret
+}
+
+// SetToolEventSink 设置当前 Agent 的工具事件接收器，并返回旧接收器。
+// 参数：sink 接收 tool call/result/error/status 事件；nil 表示回退到 logger 默认输出。
+// 调用层级：TUI/headless/runtime -> SetToolEventSink -> exeToolCall/addToolResult。
+// 步骤：只替换当前 Agent 实例字段，不改包级 logger sink。
+func (a *Agent) SetToolEventSink(sink func(logger.ToolEvent)) func(logger.ToolEvent) {
+	prev := a.toolEventSink
+	a.toolEventSink = sink
+	return prev
 }
 
 // TokenCallback 流式输出的回调函数类型
 type TokenCallback func(token string)
+
+// =============================================================================
+// ReAct 辅助状态：重复工具防护和响应元数据合并
+// =============================================================================
 
 // toolRepeatGuard 工具重复调用防护结构
 // 限制同一工具（含相同参数）被重复调用的次数，防止死循环
@@ -229,6 +270,18 @@ func mergeMeta(current *schema.ResponseMeta, incoming *schema.ResponseMeta) *sch
 //
 // 返回: 完整响应内容和可能的错误
 func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, input string, onToken TokenCallback, onReasoning ...TokenCallback) (string, error) {
+	return a.RunStreamWithOptions(ctx, messageCtx, input, onToken, nil, onReasoning...)
+}
+
+// =============================================================================
+// ReAct 主循环：注入上下文 -> 调模型 -> 执行工具 -> 回写消息
+// =============================================================================
+
+// RunStreamWithOptions 运行 Agent，并为本次模型调用追加临时 model options。
+// 参数：opts 只影响当前 RunStream 调用，不改变 Agent 持有的模型和工具列表。
+// 调用层级：runtime.RunProcess/RunTaskOnce -> RunStreamWithOptions -> model.Stream。
+// 步骤：沿用 ReAct 循环；每轮 Stream 传入 opts；工具执行路径保持不变。
+func (a *Agent) RunStreamWithOptions(ctx context.Context, messageCtx *agentctx.Context, input string, onToken TokenCallback, opts []model.Option, onReasoning ...TokenCallback) (string, error) {
 	var reasoningCallback TokenCallback
 	if len(onReasoning) > 0 {
 		reasoningCallback = onReasoning[0]
@@ -240,6 +293,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 	}
 
 	// 2. 添加用户消息
+	ctx = agentctx.WithToolRuntime(ctx, a.ctxManager, messageCtx)
 	userMsg := &schema.Message{
 		Role:    schema.User,
 		Content: input,
@@ -249,8 +303,8 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 	}
 
 	// 2.5 检查是否需要压缩上下文
-	if a.ctxManager.ShouldCompress(messageCtx) {
-		before, after, err := a.ctxManager.LMCompress(ctx, messageCtx, a.model, "prompt")
+	if a.config.ContextAutoCompress && a.ctxManager.ShouldCompress(messageCtx) {
+		before, after, err := a.ctxManager.LMCompress(ctx, messageCtx, a.model, a.config.PromptDir)
 		if err != nil {
 			return "", fmt.Errorf("failed to compress context: %w", err)
 		}
@@ -261,6 +315,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 	a.state.IsRunning = true
 	defer func() { a.state.IsRunning = false }()
 	repeatGuard := newToolRepeatGuard(a.config.RepeatToolLimit)
+	emptyResponseRetries := 0
 
 	for turn := 0; ; turn++ {
 		a.state.CurrentTurn = turn + 1
@@ -275,14 +330,96 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		}
 		if a.config.Debug {
 			logger.DebugTag("CTX", "Messages=%d", len(messages))
+			a.logLLMRequest(messages, len(opts))
 		}
 
-		// b. 调用 LLM 流式生成响应（使用 Callback）
+		// b. 调用 LLM 生成响应（使用 Callback）
 		cb := a.callbacks
 		cb.OnModelStart(ctx, nil, &model.CallbackInput{Messages: messages})
 
+		// 非流式路径：兼容不稳定的 OpenAI-compatible 供应商，语义仍和流式路径一致。
+		if a.config.DisableStream {
+			msg, err := a.model.Generate(ctx, messages, opts...)
+			if err != nil {
+				cb.OnModelError(ctx, nil, err)
+				return "", fmt.Errorf("LLM generate failed: %w", err)
+			}
+			if msg == nil {
+				err := fmt.Errorf("LLM generate returned nil message")
+				cb.OnModelError(ctx, nil, err)
+				return "", err
+			}
+
+			var tokenUsage *model.TokenUsage
+			if msg.ResponseMeta != nil && msg.ResponseMeta.Usage != nil {
+				tokenUsage = &model.TokenUsage{
+					PromptTokens:     msg.ResponseMeta.Usage.PromptTokens,
+					CompletionTokens: msg.ResponseMeta.Usage.CompletionTokens,
+					TotalTokens:      msg.ResponseMeta.Usage.TotalTokens,
+				}
+			}
+			cb.OnModelEnd(ctx, nil, &model.CallbackOutput{Message: msg, TokenUsage: tokenUsage})
+
+			if msg.ReasoningContent != "" && reasoningCallback != nil {
+				reasoningCallback(msg.ReasoningContent)
+			}
+			if msg.Content != "" && onToken != nil {
+				onToken(msg.Content)
+			}
+
+			toolCalls := make([]schema.ToolCall, 0, len(msg.ToolCalls))
+			for _, tc := range msg.ToolCalls {
+				if tc.Function.Name == "" {
+					logger.WarnTag("TOOL", "Skipping incomplete tool call: id=%s name=%s", tc.ID, tc.Function.Name)
+					continue
+				}
+				toolCalls = append(toolCalls, tc)
+			}
+
+			finalMessage := &schema.Message{
+				Role:             schema.Assistant,
+				Content:          msg.Content,
+				ReasoningContent: msg.ReasoningContent,
+				ToolCalls:        toolCalls,
+				ResponseMeta:     msg.ResponseMeta,
+				Extra:            msg.Extra,
+			}
+
+			if len(finalMessage.ToolCalls) > 0 {
+				cb.LogToolCalls(finalMessage.ToolCalls)
+				if err := a.ctxManager.AddMessage(messageCtx, finalMessage); err != nil {
+					return "", fmt.Errorf("failed to add assistant message: %w", err)
+				}
+				for idx, tc := range finalMessage.ToolCalls {
+					res := a.executeToolWithRepeatGuard(ctx, repeatGuard, toolRequest{idx: idx, tc: tc})
+					if err := a.addToolResult(messageCtx, tc, res.result, res.err); err != nil {
+						return "", fmt.Errorf("tool execution failed: %w", err)
+					}
+				}
+				continue
+			}
+
+			if msg.Content != "" {
+				if err := a.ctxManager.AddMessage(messageCtx, finalMessage); err != nil {
+					return "", fmt.Errorf("failed to add assistant message: %w", err)
+				}
+			} else {
+				logger.DebugTag("REACT", "Skipping empty assistant message")
+				if emptyResponseRetries >= 2 {
+					return "", fmt.Errorf("LLM returned empty response without tool calls")
+				}
+				emptyResponseRetries++
+				if err := a.addEmptyResponseReminder(messageCtx); err != nil {
+					return "", err
+				}
+				continue
+			}
+			return msg.Content, nil
+		}
+
+		// 流式路径：边读 chunk 边收集可执行 ToolCall，工具执行和模型读取可重叠。
 		streamCtx, streamCancel := context.WithCancel(ctx)
-		reader, err := a.model.Stream(streamCtx, messages)
+		reader, err := a.model.Stream(streamCtx, messages, opts...)
 		if err != nil {
 			streamCancel()
 			cb.OnModelError(ctx, nil, err)
@@ -299,20 +436,13 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		toolQueue := make(chan toolRequest, 8)
 		toolResultCh := make(chan execResult, 8)
 		queuedCalls := make([]schema.ToolCall, 0)
-
-		go func() {
-			for req := range toolQueue {
-				result, execErr := a.exeToolCall(ctx, req.tc, req.idx, req.idx+1, false)
-				// 只对成功的调用计数重复，失败的不计入
-				if execErr == nil {
-					if err := repeatGuard.Check([]schema.ToolCall{req.tc}); err != nil {
-						logger.WarnTag("TOOL", "%v", err)
-					}
-				}
-				toolResultCh <- execResult{idx: req.idx, tc: req.tc, result: result, err: execErr}
-			}
-			close(toolResultCh)
-		}()
+		toolCtx, toolCancel := context.WithCancel(ctx)
+		toolWorkerDone := a.runToolWorker(toolCtx, repeatGuard, toolQueue, toolResultCh)
+		closeToolQueue := func() {
+			close(toolQueue)
+			toolWorkerDone.Wait()
+			toolCancel()
+		}
 
 		// 读取流式响应
 		for {
@@ -334,6 +464,8 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			case <-time.After(90 * time.Second):
 				streamCancel()
 				reader.Close()
+				toolCancel()
+				closeToolQueue()
 				cb.OnModelError(ctx, nil, context.DeadlineExceeded)
 				return "", fmt.Errorf("LLM stream idle timeout: no text or tool call chunk received for 90s")
 			}
@@ -343,6 +475,8 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			if err != nil {
 				reader.Close()
 				streamCancel()
+				toolCancel()
+				closeToolQueue()
 				cb.OnModelError(ctx, nil, err)
 				return "", fmt.Errorf("stream read failed: %w", err)
 			}
@@ -386,6 +520,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 			toolQueue <- toolRequest{idx: idx, tc: tc}
 		}
 		close(toolQueue)
+		toolWorkerDone.Wait()
 
 		content := fullContent.String()
 		reasoningContent := fullReasoning.String()
@@ -407,10 +542,10 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 		toolCalls := make([]schema.ToolCall, len(queuedCalls))
 		copy(toolCalls, queuedCalls)
 
-		// 过滤掉空 ID 的调用（流式输出中不完整的调用），避免发给 LLM 造成格式错误
+		// 过滤掉没有工具名的调用（流式输出中不完整的调用），避免发给 LLM 造成格式错误
 		var validCalls []schema.ToolCall
 		for _, tc := range toolCalls {
-			if tc.ID == "" || tc.Function.Name == "" {
+			if tc.Function.Name == "" {
 				logger.WarnTag("TOOL", "Skipping incomplete tool call: id=%s name=%s", tc.ID, tc.Function.Name)
 				continue
 			}
@@ -435,6 +570,7 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 
 		// c. 检查是否有工具调用
 		if len(finalMessage.ToolCalls) > 0 {
+			emptyResponseRetries = 0
 			cb.LogToolCalls(finalMessage.ToolCalls)
 
 			// 添加 assistant 消息（即使 content 为空，只要有效工具调用就要加入上下文）
@@ -462,12 +598,35 @@ func (a *Agent) RunStream(ctx context.Context, messageCtx *agentctx.Context, inp
 				return "", fmt.Errorf("failed to add assistant message: %w", err)
 			}
 		} else {
-			logger.Debug("Skipping empty assistant message")
+			logger.DebugTag("REACT", "Skipping empty assistant message")
+			if emptyResponseRetries >= 2 {
+				return "", fmt.Errorf("LLM returned empty response without tool calls")
+			}
+			emptyResponseRetries++
+			if err := a.addEmptyResponseReminder(messageCtx); err != nil {
+				return "", err
+			}
+			continue
 		}
 
 		return content, nil
 	}
 }
+
+func (a *Agent) addEmptyResponseReminder(messageCtx *agentctx.Context) error {
+	msg := &schema.Message{
+		Role:    schema.User,
+		Content: "上一轮没有输出也没有工具调用。任务尚未完成，下一轮必须立即调用一个必要工具继续推进；如果已经具备足够信息且任务要求写文件，必须先调用写文件工具，再读取目标文件验证。不要只思考、不要只总结、不要请求确认；只有确实无法继续时才输出明确阻塞原因。",
+	}
+	if err := a.ctxManager.AddMessage(messageCtx, msg); err != nil {
+		return fmt.Errorf("failed to add empty response reminder: %w", err)
+	}
+	return nil
+}
+
+// =============================================================================
+// 只读访问器和运行时替换点
+// =============================================================================
 
 // GetSkillManager 获取技能管理器
 func (a *Agent) GetSkillManager() *skill.Manager {
@@ -477,6 +636,15 @@ func (a *Agent) GetSkillManager() *skill.Manager {
 // SetModel 设置模型
 func (a *Agent) SetModel(model model.ToolCallingChatModel) {
 	a.model = model
+}
+
+// SetSystemPrompt 更新后续新会话注入的 system prompt。
+// 已存在消息的当前会话不会被重写，避免破坏历史上下文。
+func (a *Agent) SetSystemPrompt(prompt string) {
+	if a == nil || a.config == nil {
+		return
+	}
+	a.config.SystemPrompt = prompt
 }
 
 // GetModel 返回当前绑定的 LLM 模型
@@ -510,13 +678,29 @@ func (a *Agent) Name() string {
 	return a.config.Name
 }
 
-// TokenUsage 获取当前 token 使用情况
-// 返回: (已用 token 数, token 上限)
-func (a *Agent) TokenUsage() (used int, limit int) {
+// TokenUsage 返回最近一次请求的输入 token、会话累计 token 和模型上下文窗口。
+func (a *Agent) TokenUsage() (prompt int, total int, window int) {
 	if a == nil || a.tokenBudget == nil {
-		return 0, 0
+		return 0, 0, 0
 	}
 	return a.tokenBudget.Usage()
+}
+
+// SetContextWindow 设置当前模型实际使用的上下文窗口。
+func (a *Agent) SetContextWindow(window int) {
+	if a == nil || a.tokenBudget == nil {
+		return
+	}
+	a.tokenBudget.SetContextWindow(window)
+}
+
+// CurrentTurn 返回当前 ReAct 轮次。
+// 空闲时表示最近一次运行停留的轮次；TUI 只把它作为运行时元信息展示。
+func (a *Agent) CurrentTurn() int {
+	if a == nil || a.state == nil {
+		return 0
+	}
+	return a.state.CurrentTurn
 }
 
 // 初始化，注入系统提示词，注入skill提示词。

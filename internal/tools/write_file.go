@@ -29,7 +29,11 @@ type WriteFileOutput struct {
 }
 
 // NewWriteFileTool creates a new write_file tool using Eino's InferEnhancedTool
-func NewWriteFileTool() (tool.EnhancedInvokableTool, error) {
+func NewWriteFileTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
+	root := ""
+	if len(workspaceRoot) > 0 {
+		root = workspaceRoot[0]
+	}
 	return utils.InferEnhancedTool(
 		"base.write_file",
 		"Write non-empty content to a file. Always send JSON object arguments. Required: path (absolute file path), content (full file content). Creates parent directories if needed and overwrites existing file. Example: {\"path\":\"/home/user/project/file.txt\",\"content\":\"hello\\n\"}",
@@ -38,6 +42,7 @@ func NewWriteFileTool() (tool.EnhancedInvokableTool, error) {
 			if input.Path == "" {
 				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'path' is required. You must provide the file path to write")
 			}
+			input.Path = resolvePath(root, input.Path)
 			if input.Content == "" {
 				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'content' is required. You must provide the content to write")
 			}

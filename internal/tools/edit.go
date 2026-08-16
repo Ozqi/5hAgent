@@ -78,7 +78,11 @@ type EditOutput struct {
 }
 
 // NewEditTool creates a new edit tool for precise file editing
-func NewEditTool() (tool.EnhancedInvokableTool, error) {
+func NewEditTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
+	root := ""
+	if len(workspaceRoot) > 0 {
+		root = workspaceRoot[0]
+	}
 	return utils.InferEnhancedTool(
 		editToolName,
 		editToolDesc,
@@ -86,6 +90,7 @@ func NewEditTool() (tool.EnhancedInvokableTool, error) {
 			if input.Path == "" {
 				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'path' is required. You must provide the absolute file path (e.g., '/home/user/project/file.py')")
 			}
+			input.Path = resolvePath(root, input.Path)
 			if input.OldString == "" {
 				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'old_string' is required. You must provide the exact string to replace. Use read_file first to confirm the exact text.")
 			}

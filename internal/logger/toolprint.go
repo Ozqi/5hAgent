@@ -1,7 +1,7 @@
 // toolprint.go - 工具调用格式化输出
 // 功能：ToolCall/ToolResult/ToolError 的终端展示（带颜色和缩进）
 // 主要类型：ToolPrinter, ToolEvent, toolCallSummary, toolResultSummary
-// 导出函数：PrintToolCall, PrintToolResult, PrintToolError, PrintToolStatus, PrintSummary, SetToolEventSink
+// 导出函数：PrintToolCall, PrintToolResult, PrintToolError, SetToolEventSink
 package logger
 
 import (
@@ -49,14 +49,25 @@ func SetToolEventSink(sink func(ToolEvent)) {
 	toolEventSink = sink
 }
 
+func PushToolEventSink(sink func(ToolEvent)) func() {
+	toolEventSinkMu.Lock()
+	prev := toolEventSink
+	toolEventSink = sink
+	toolEventSinkMu.Unlock()
+	return func() {
+		toolEventSinkMu.Lock()
+		toolEventSink = prev
+		toolEventSinkMu.Unlock()
+	}
+}
+
 func currentToolEventSink() func(ToolEvent) {
 	toolEventSinkMu.RLock()
 	defer toolEventSinkMu.RUnlock()
 	return toolEventSink
 }
 
-// NewToolPrinter 创建新的工具打印器
-func NewToolPrinter() *ToolPrinter {
+func newToolPrinter() *ToolPrinter {
 	return &ToolPrinter{
 		indent: "  ",
 	}
@@ -150,32 +161,36 @@ func formatToolResultText(indent string, name string, args string, result string
 // PrintToolError 打印工具执行错误
 // 格式: ⎿ ✗ error
 func (p *ToolPrinter) PrintToolError(name string, args string, err error) {
+	text, errText := formatToolErrorText(p.indent, name, args, err)
+	if sink := currentToolEventSink(); sink != nil {
+		sink(ToolEvent{Kind: "error", Name: name, Text: text, Args: args, Error: errText})
+		return
+	}
+	fmt.Print(text)
+}
+
+func formatToolErrorText(indent string, name string, args string, err error) (string, string) {
 	summary := summarizeToolCall(name, args)
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("%s⎿ %s %s\n", p.indent, Red("✗"), Red(summarizeToolError(name, err))))
+	b.WriteString(fmt.Sprintf("%s⎿ %s %s\n", indent, Red("✗"), Red(summarizeToolError(name, err))))
 	if len(summary.Fields) > 0 {
 		for _, field := range summary.Fields {
-			b.WriteString(p.indent)
+			b.WriteString(indent)
 			b.WriteString("  ")
 			b.WriteString(Gray(field))
 			b.WriteString("\n")
 		}
 	} else if strings.TrimSpace(args) != "" {
-		b.WriteString(p.indent)
+		b.WriteString(indent)
 		b.WriteString("  ")
 		b.WriteString(Gray("args: " + TruncateString(args, 180)))
 		b.WriteString("\n")
 	}
-	text := b.String()
-	if sink := currentToolEventSink(); sink != nil {
-		errText := ""
-		if err != nil {
-			errText = err.Error()
-		}
-		sink(ToolEvent{Kind: "error", Name: name, Text: text, Args: args, Error: errText})
-		return
+	errText := ""
+	if err != nil {
+		errText = err.Error()
 	}
-	fmt.Print(text)
+	return b.String(), errText
 }
 
 func summarizeToolError(name string, err error) string {
@@ -214,34 +229,16 @@ func summarizeToolError(name string, err error) string {
 	return fmt.Sprintf("%s failed: %s", displayName, TruncateString(strings.TrimSpace(message), 180))
 }
 
-// PrintToolStatus 打印工具状态信息
-// 格式: ⎿ status message
-func (p *ToolPrinter) PrintToolStatus(message string) {
-	text := fmt.Sprintf("%s⎿ %s\n", p.indent, Gray(message))
-	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "status", Text: text})
-		return
-	}
-	fmt.Print(text)
-}
-
-// PrintSummary 打印工具执行汇总
-// 格式: Searched for N patterns, read M files (ctrl+o to expand)
-func (p *ToolPrinter) PrintSummary(message string) {
-	text := fmt.Sprintf("\n%s%s\n", p.indent, Gray(message))
-	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "summary", Text: text})
-		return
-	}
-	fmt.Print(text)
-}
-
 // Global instance
-var defaultToolPrinter = NewToolPrinter()
+var defaultToolPrinter = newToolPrinter()
 
 // PrintToolCall 全局函数：打印工具调用
 func PrintToolCall(name string, args string, concurrent bool) {
 	defaultToolPrinter.PrintToolCall(name, args, concurrent)
+}
+
+func FormatToolCall(name string, args string, concurrent bool) string {
+	return formatToolCall(defaultToolPrinter.indent, name, args, concurrent)
 }
 
 // PrintToolResult 全局函数：打印工具结果
@@ -249,19 +246,17 @@ func PrintToolResult(name string, args string, result string) {
 	defaultToolPrinter.PrintToolResult(name, args, result)
 }
 
+func FormatToolResult(name string, args string, result string) string {
+	return formatToolResultText(defaultToolPrinter.indent, name, args, result)
+}
+
 // PrintToolError 全局函数：打印工具错误
 func PrintToolError(name string, args string, err error) {
 	defaultToolPrinter.PrintToolError(name, args, err)
 }
 
-// PrintToolStatus 全局函数：打印工具状态
-func PrintToolStatus(message string) {
-	defaultToolPrinter.PrintToolStatus(message)
-}
-
-// PrintToolSummary 全局函数：打印工具汇总
-func PrintToolSummary(message string) {
-	defaultToolPrinter.PrintSummary(message)
+func FormatToolError(name string, args string, err error) (string, string) {
+	return formatToolErrorText(defaultToolPrinter.indent, name, args, err)
 }
 
 func summarizeToolCall(name string, args string) toolCallSummary {

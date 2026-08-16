@@ -25,6 +25,7 @@ type TaskProgress struct {
 	Blocked    int `json:"blocked"`
 	Completed  int `json:"completed"`
 	Archived   int `json:"archived"`
+	Failed     int `json:"failed"`
 }
 
 type TaskActionResult struct {
@@ -58,6 +59,7 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 			return nil, err
 		}
 		result.Task = task
+		fillProgress(list, result)
 		result.Message = fmt.Sprintf("task %q created", task.ID)
 		return result, nil
 	case "update":
@@ -76,6 +78,7 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 			return nil, err
 		}
 		result.Task = task
+		fillProgress(list, result)
 		result.Message = fmt.Sprintf("task %q updated", task.ID)
 		return result, nil
 	case "get":
@@ -87,6 +90,7 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 			return nil, err
 		}
 		result.Task = task
+		fillProgress(list, result)
 		return result, nil
 	case "list":
 		if req.Status != "" {
@@ -98,8 +102,7 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 		} else {
 			result.Tasks = list.ListTasks()
 		}
-		total, pending, inProgress, blocked, completed, archived := list.GetProgress()
-		result.Progress = TaskProgress{Total: total, Pending: pending, InProgress: inProgress, Blocked: blocked, Completed: completed, Archived: archived}
+		fillProgress(list, result)
 		if len(result.Tasks) > 0 {
 			result.Task = result.Tasks[0]
 		}
@@ -111,6 +114,7 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 		if err := list.DeleteTask(req.ID); err != nil {
 			return nil, err
 		}
+		fillProgress(list, result)
 		result.Message = fmt.Sprintf("task %q deleted", req.ID)
 		return result, nil
 	case "archive":
@@ -122,6 +126,7 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 			return nil, err
 		}
 		result.Task = task
+		fillProgress(list, result)
 		result.Message = fmt.Sprintf("task %q archived", task.ID)
 		return result, nil
 	case "reopen":
@@ -144,6 +149,7 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 			return nil, err
 		}
 		result.Task = task
+		fillProgress(list, result)
 		result.Message = fmt.Sprintf("task %q reopened", task.ID)
 		return result, nil
 	default:
@@ -152,4 +158,9 @@ func ExecuteTaskAction(list *TaskList, req TaskActionRequest) (*TaskActionResult
 		}
 		return nil, fmt.Errorf("unknown action %q: expected one of create/update/get/list/delete/archive/reopen", req.Action)
 	}
+}
+
+func fillProgress(list *TaskList, result *TaskActionResult) {
+	total, pending, inProgress, blocked, completed, archived, failed := list.GetProgress()
+	result.Progress = TaskProgress{Total: total, Pending: pending, InProgress: inProgress, Blocked: blocked, Completed: completed, Archived: archived, Failed: failed}
 }

@@ -1,6 +1,6 @@
 // skill.go - /skill 命令处理
-// 功能：解析 /skill 命令（list/enable/disable），调用 skill.Manager
-// 导出函数：HandleSkill, listSkills, enableSkill, disableSkill
+// 功能：解析 /skill 命令（list/get/reload），查看或刷新技能快照
+// 导出函数：HandleSkill, listSkills, getSkill
 package commands
 
 import (
@@ -14,23 +14,23 @@ import (
 func HandleSkill(cmd string, mgr *skill.Manager) (string, error) {
 	parts := strings.Fields(cmd)
 	if len(parts) < 2 {
-		return "", fmt.Errorf("usage: /skill <list|enable|disable> [name]")
+		return "", fmt.Errorf("usage: /skill <list|get|reload> [name]")
 	}
 
 	action := parts[1]
 	switch action {
 	case "list":
 		return listSkills(mgr), nil
-	case "enable":
+	case "get":
 		if len(parts) < 3 {
-			return "", fmt.Errorf("usage: /skill enable <name>")
+			return "", fmt.Errorf("usage: /skill get <name>")
 		}
-		return enableSkill(mgr, parts[2])
-	case "disable":
-		if len(parts) < 3 {
-			return "", fmt.Errorf("usage: /skill disable <name>")
+		return getSkill(mgr, parts[2])
+	case "reload":
+		if err := mgr.ReloadSkills(); err != nil {
+			return "", err
 		}
-		return disableSkill(mgr, parts[2])
+		return fmt.Sprintf("Reloaded %d skills; current context keeps already injected skill messages", len(mgr.ListSkills())), nil
 	default:
 		return "", fmt.Errorf("unknown action: %s", action)
 	}
@@ -45,25 +45,15 @@ func listSkills(mgr *skill.Manager) string {
 	var sb strings.Builder
 	sb.WriteString("Available Skills:\n")
 	for _, s := range skills {
-		status := "disabled"
-		if s.Enabled {
-			status = "enabled"
-		}
-		sb.WriteString(fmt.Sprintf("  - %s [%s]: %s\n", s.Name, status, s.Description))
+		sb.WriteString(fmt.Sprintf("  - %s [%s]\n    path: %s\n    %s\n", s.Name, s.Scope, s.Path, s.Description))
 	}
 	return sb.String()
 }
 
-func enableSkill(mgr *skill.Manager, name string) (string, error) {
-	if err := mgr.EnableSkill(name); err != nil {
-		return "", err
+func getSkill(mgr *skill.Manager, name string) (string, error) {
+	s, ok := mgr.GetSkill(name)
+	if !ok {
+		return "", fmt.Errorf("skill not found: %s", name)
 	}
-	return fmt.Sprintf("Skill '%s' enabled", name), nil
-}
-
-func disableSkill(mgr *skill.Manager, name string) (string, error) {
-	if err := mgr.DisableSkill(name); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("Skill '%s' disabled", name), nil
+	return fmt.Sprintf("# Skill: %s\n\nscope: %s\npath: %s\n\n%s", s.Name, s.Scope, s.Path, s.Content), nil
 }

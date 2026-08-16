@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/tool"
@@ -85,6 +86,14 @@ func (c *toolCollector) merge(tc schema.ToolCall) {
 	if tc.ID != "" {
 		c.byID[tc.ID] = idx
 	}
+	state.tc = ensureToolCallID(state.tc, idx)
+}
+
+func ensureToolCallID(tc schema.ToolCall, idx int) schema.ToolCall {
+	if tc.ID == "" && tc.Function.Name != "" {
+		tc.ID = fmt.Sprintf("call_local_%d", idx)
+	}
+	return tc
 }
 
 // extractReady 提取已完成的调用
@@ -105,18 +114,16 @@ func (c *toolCollector) runnableCalls(includeDispatched bool, allowEmptyArgument
 			tc.Function.Arguments = "{}"
 			state.tc.Function.Arguments = tc.Function.Arguments
 		}
-		if tc.ID == "" || tc.Function.Name == "" || tc.Function.Arguments == "" || !isValidJSON(tc.Function.Arguments) {
+		if tc.Function.Name == "" {
+			continue
+		}
+		if tc.Function.Arguments == "" || !isValidJSON(tc.Function.Arguments) {
 			continue
 		}
 		state.dispatched = true
 		ready = append(ready, tc)
 	}
 	return ready
-}
-
-// RunnableCalls 返回所有有效调用
-func (c *toolCollector) RunnableCalls() []schema.ToolCall {
-	return c.runnableCalls(true, true)
 }
 
 // execResult 工具执行结果
@@ -131,6 +138,34 @@ type execResult struct {
 type toolRequest struct {
 	idx int
 	tc  schema.ToolCall
+}
+
+func (a *Agent) executeToolWithRepeatGuard(ctx context.Context, repeatGuard *toolRepeatGuard, req toolRequest) execResult {
+	if repeatGuard != nil {
+		if err := repeatGuard.Check([]schema.ToolCall{req.tc}); err != nil {
+			return execResult{idx: req.idx, tc: req.tc, err: err}
+		}
+	}
+	result, execErr := a.exeToolCall(ctx, req.tc, req.idx, req.idx+1, false)
+	return execResult{idx: req.idx, tc: req.tc, result: result, err: execErr}
+}
+
+func (a *Agent) runToolWorker(ctx context.Context, repeatGuard *toolRepeatGuard, toolQueue <-chan toolRequest, toolResultCh chan<- execResult) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(toolResultCh)
+		for req := range toolQueue {
+			result := a.executeToolWithRepeatGuard(ctx, repeatGuard, req)
+			select {
+			case toolResultCh <- result:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return &wg
 }
 
 // exeToolCall 执行单个工具调用
@@ -148,7 +183,7 @@ func (a *Agent) exeToolCall(ctx context.Context, tc schema.ToolCall, idx, total 
 		})
 	}
 
-	logger.PrintToolCall(tc.Function.Name, tc.Function.Arguments, concurrent)
+	a.printToolCall(tc.Function.Name, tc.Function.Arguments, concurrent)
 
 	t := a.toolMap[tc.Function.Name]
 	if t == nil {
@@ -192,16 +227,43 @@ func (a *Agent) invokeTool(ctx context.Context, t tool.BaseTool, tc schema.ToolC
 func (a *Agent) addToolResult(messageCtx *agentctx.Context, tc schema.ToolCall, result string, execErr error) error {
 	if execErr != nil {
 		logger.ErrorTag("TOOL", "Failed: %s, err=%v", tc.Function.Name, execErr)
-		logger.PrintToolError(tc.Function.Name, tc.Function.Arguments, execErr)
+		a.printToolError(tc.Function.Name, tc.Function.Arguments, execErr)
 		errMsg := schema.ToolMessage(formatToolErr(tc, execErr), tc.ID)
 		return a.ctxManager.AddMessage(messageCtx, errMsg)
 	}
 
 	logger.DebugTag("TOOL", "Success: %s", tc.Function.Name)
 	logger.DebugTag("TOOL", "  result: %s", logger.TruncateString(result, 200))
-	logger.PrintToolResult(tc.Function.Name, tc.Function.Arguments, result)
+	a.printToolResult(tc.Function.Name, tc.Function.Arguments, result)
 
 	return a.ctxManager.AddMessage(messageCtx, schema.ToolMessage(result, tc.ID))
+}
+
+func (a *Agent) printToolCall(name string, args string, concurrent bool) {
+	if a != nil && a.toolEventSink != nil {
+		text := logger.FormatToolCall(name, args, concurrent)
+		a.toolEventSink(logger.ToolEvent{Kind: "call", Name: name, Text: text, Args: args, Concurrent: concurrent})
+		return
+	}
+	logger.PrintToolCall(name, args, concurrent)
+}
+
+func (a *Agent) printToolResult(name string, args string, result string) {
+	if a != nil && a.toolEventSink != nil {
+		text := logger.FormatToolResult(name, args, result)
+		a.toolEventSink(logger.ToolEvent{Kind: "result", Name: name, Text: text, Args: args, Result: result})
+		return
+	}
+	logger.PrintToolResult(name, args, result)
+}
+
+func (a *Agent) printToolError(name string, args string, err error) {
+	if a != nil && a.toolEventSink != nil {
+		text, errText := logger.FormatToolError(name, args, err)
+		a.toolEventSink(logger.ToolEvent{Kind: "error", Name: name, Text: text, Args: args, Error: errText})
+		return
+	}
+	logger.PrintToolError(name, args, err)
 }
 
 // formatToolErr 格式化工具执行错误
@@ -238,13 +300,17 @@ func toolHint(tc schema.ToolCall) string {
 		return "check the tool arguments and retry with an absolute path under the workspace"
 	case "exec_shell":
 		return "check the shell command, quote paths with spaces, prefer commands inside workspace"
+	case "delete", "create", "update", "get", "list", "archive", "reopen":
+		if strings.HasPrefix(name, "task.") {
+			return fmt.Sprintf("there is no %s tool. Use tool name task.task with arguments {\"action\":\"%s\",\"id\":\"...\"}", name, display)
+		}
 	case "task":
 		return "use exact task action values only: create/update/get/list/delete/archive/reopen. To finish a task use {\"action\":\"update\",\"id\":\"...\",\"status\":\"completed\"}; create requires id/title/description"
 	case "skill":
-		return "use an existing skill name and set action to enable or disable"
+		return "use action=list or action=get with an existing skill name"
 	}
 
-	if meta, ok := tools.Lookup(name); ok && meta.Category == tools.CategoryMCP {
+	if strings.HasPrefix(name, "mcp.") {
 		// MCP 错误已在 mcp_tool.go 返回具体信息，不添加通用提示干扰
 		return ""
 	}

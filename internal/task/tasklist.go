@@ -209,6 +209,9 @@ func (l *TaskList) ReopenTask(id string, status TaskStatus) (*Task, error) {
 	if snapshot.Description != "" {
 		task.Description = snapshot.Description
 	}
+	if !snapshot.CreatedAt.IsZero() {
+		task.CreatedAt = snapshot.CreatedAt
+	}
 	task.Status = status
 	task.RestoredFrom = historyPath
 	task.HistoryPath = ""
@@ -220,7 +223,7 @@ func (l *TaskList) ReopenTask(id string, status TaskStatus) (*Task, error) {
 	return cloneTask(task), nil
 }
 
-func (l *TaskList) GetProgress() (total, pending, inProgress, blocked, completed, archived int) {
+func (l *TaskList) GetProgress() (total, pending, inProgress, blocked, completed, archived, failed int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	_ = l.loadLocked()
@@ -237,9 +240,11 @@ func (l *TaskList) GetProgress() (total, pending, inProgress, blocked, completed
 			completed++
 		case StatusArchived:
 			archived++
+		case StatusFailed:
+			failed++
 		}
 	}
-	return total, pending, inProgress, blocked, completed, archived
+	return total, pending, inProgress, blocked, completed, archived, failed
 }
 
 func (l *TaskList) load() error {
@@ -306,7 +311,7 @@ func (l *TaskList) saveLocked() error {
 func ParseTaskStatus(raw string) (TaskStatus, error) {
 	status := TaskStatus(strings.TrimSpace(raw))
 	switch status {
-	case StatusPending, StatusInProgress, StatusBlocked, StatusCompleted, StatusArchived:
+	case StatusPending, StatusInProgress, StatusBlocked, StatusCompleted, StatusArchived, StatusFailed:
 		return status, nil
 	default:
 		return "", fmt.Errorf("invalid task status: %s", raw)
@@ -425,6 +430,7 @@ func parseTasksMarkdown(content string) map[string]*Task {
 type historyTaskSnapshot struct {
 	Title       string
 	Description string
+	CreatedAt   time.Time
 }
 
 func renderHistoryTaskMarkdown(task *Task, archivedAt time.Time, summary, source string) string {
@@ -433,6 +439,7 @@ func renderHistoryTaskMarkdown(task *Task, archivedAt time.Time, summary, source
 	b.WriteString(fmt.Sprintf("- id: %s\n", task.ID))
 	b.WriteString(fmt.Sprintf("- title: %s\n", task.Title))
 	b.WriteString("- status: archived\n")
+	b.WriteString(fmt.Sprintf("- created_at: %s\n", task.CreatedAt.Format(time.RFC3339)))
 	b.WriteString(fmt.Sprintf("- archived_at: %s\n", archivedAt.Format(time.RFC3339)))
 	b.WriteString(fmt.Sprintf("- original_status: %s\n\n", task.Status))
 	b.WriteString("## Original Goal\n\n")
@@ -457,6 +464,11 @@ func parseHistoryTaskMarkdown(content string) historyTaskSnapshot {
 		switch {
 		case strings.HasPrefix(line, "- title:"):
 			snapshot.Title = strings.TrimSpace(strings.TrimPrefix(line, "- title:"))
+		case strings.HasPrefix(line, "- created_at:"):
+			value := strings.TrimSpace(strings.TrimPrefix(line, "- created_at:"))
+			if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+				snapshot.CreatedAt = parsed
+			}
 		case strings.HasPrefix(line, "## "):
 			section = strings.TrimSpace(strings.TrimPrefix(line, "## "))
 		case section == "Original Goal":
