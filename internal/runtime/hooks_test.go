@@ -2,13 +2,12 @@ package runtime
 
 import (
 	"encoding/json"
+	"github.com/lzq/5hAgent/internal/toolevent"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/lzq/5hAgent/internal/logger"
 )
 
 func TestHookManagerRunsMatchingToolHook(t *testing.T) {
@@ -36,8 +35,8 @@ func TestHookManagerRunsMatchingToolHook(t *testing.T) {
 	}
 
 	manager := loadHookManager(projectDir, "session-a")
-	manager.Run(logger.ToolEvent{Kind: "result", Name: "base.read_file"})
-	manager.Run(logger.ToolEvent{Kind: "error", Name: "base.read_file", Args: `{"path":"x"}`, Error: "missing"})
+	manager.Run(toolevent.ToolEvent{Kind: "result", Name: "base.read_file"})
+	manager.Run(toolevent.ToolEvent{Kind: "error", Name: "base.read_file", Args: `{"path":"x"}`, Error: "missing"})
 
 	var data []byte
 	for i := 0; i < 50; i++ {

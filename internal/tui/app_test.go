@@ -2,12 +2,12 @@ package tui
 
 import (
 	"context"
+	"github.com/lzq/5hAgent/internal/toolevent"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/lzq/5hAgent/internal/logger"
 )
 
 func TestRunCommandStartsTaskRunner(t *testing.T) {
@@ -22,7 +22,7 @@ func TestRunCommandStartsTaskRunner(t *testing.T) {
 		nil,
 		nil,
 		"test-session",
-		func(ctx context.Context, sink func(event logger.ToolEvent)) (string, error) {
+		func(ctx context.Context, sink func(event toolevent.ToolEvent)) (string, error) {
 			called = true
 			return "Run completed: 1 task(s)", nil
 		},

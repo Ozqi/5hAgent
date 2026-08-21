@@ -5,6 +5,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/lzq/5hAgent/internal/toolevent"
 	"regexp"
 	"sort"
 	"strings"
@@ -14,7 +15,7 @@ import (
 	"github.com/lzq/5hAgent/internal/tools"
 )
 
-func (m *AppModel) applyToolEvent(event logger.ToolEvent) {
+func (m *AppModel) applyToolEvent(event toolevent.ToolEvent) {
 	displayName := fallback(tools.DisplayName(event.Name), event.Name)
 	key := toolEventKey(event.Name, event.Args)
 	summary := formatToolArgsSummary(event.Args)
@@ -47,7 +48,7 @@ func (m *AppModel) applyToolEvent(event logger.ToolEvent) {
 	}
 }
 
-func (m *AppModel) applyRunToolEvent(event logger.ToolEvent) {
+func (m *AppModel) applyRunToolEvent(event toolevent.ToolEvent) {
 	displayName := fallback(tools.DisplayName(event.Name), event.Name)
 	switch event.Kind {
 	case "call":
@@ -254,7 +255,7 @@ func toolArgValue(v interface{}) string {
 	}
 }
 
-func summarizeToolEventOutput(event logger.ToolEvent) string {
+func summarizeToolEventOutput(event toolevent.ToolEvent) string {
 	clean := strings.TrimSpace(stripANSI(event.Text))
 	// 兼容 logger 旧文本块格式（●/⎿/✗），也兼容当前 ToolEvent.Text 的短摘要。
 	entry := parseToolBlock(clean)

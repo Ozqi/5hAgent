@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/lzq/5hAgent/internal/toolevent"
 	"io"
 	"path/filepath"
 	"strings"
@@ -47,7 +48,7 @@ type Agent struct {
 	// 回调处理器
 	callbacks *AgentCallbacks
 	// 工具事件 sink
-	toolEventSink func(logger.ToolEvent)
+	toolEventSink func(toolevent.ToolEvent)
 	// debug 日志只保留模型引用；当前 API key 仅用于从消息内容中固定掩码。
 	modelRef    string
 	debugSecret string
@@ -156,7 +157,7 @@ func (a *Agent) SetDebugModel(modelRef string, secret string) {
 // 参数：sink 接收 tool call/result/error/status 事件；nil 表示回退到 logger 默认输出。
 // 调用层级：TUI/headless/runtime -> SetToolEventSink -> exeToolCall/addToolResult。
 // 步骤：只替换当前 Agent 实例字段，不改包级 logger sink。
-func (a *Agent) SetToolEventSink(sink func(logger.ToolEvent)) func(logger.ToolEvent) {
+func (a *Agent) SetToolEventSink(sink func(toolevent.ToolEvent)) func(toolevent.ToolEvent) {
 	prev := a.toolEventSink
 	a.toolEventSink = sink
 	return prev

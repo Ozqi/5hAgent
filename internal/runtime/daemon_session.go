@@ -5,12 +5,12 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"github.com/lzq/5hAgent/internal/toolevent"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/lzq/5hAgent/internal/commands"
-	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/systemd"
 )
 
@@ -226,7 +226,7 @@ func (s *DaemonSession) handleSlash(text string) string {
 }
 
 func (s *DaemonSession) run(text string) {
-	prev := s.runtime.Agent.SetToolEventSink(func(event logger.ToolEvent) {
+	prev := s.runtime.Agent.SetToolEventSink(func(event toolevent.ToolEvent) {
 		s.runtime.RecordToolEvent(event)
 		s.publish(systemd.ProcessEvent{
 			Type: "tool", Kind: event.Kind, Name: event.Name, Args: event.Args,

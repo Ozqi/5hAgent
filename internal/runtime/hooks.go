@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/lzq/5hAgent/internal/toolevent"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,7 +64,7 @@ func loadHookManager(projectDir string, sessionID string) *HookManager {
 	return manager
 }
 
-func (m *HookManager) Run(event logger.ToolEvent) {
+func (m *HookManager) Run(event toolevent.ToolEvent) {
 	if m == nil || len(m.hooks) == 0 {
 		return
 	}

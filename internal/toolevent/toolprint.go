@@ -1,8 +1,7 @@
-// toolprint.go - 工具调用格式化输出
-// 功能：ToolCall/ToolResult/ToolError 的终端展示（带颜色和缩进）
-// 主要类型：ToolPrinter, ToolEvent, toolCallSummary, toolResultSummary
-// 导出函数：PrintToolCall, PrintToolResult, PrintToolError, SetToolEventSink
-package logger
+// 功能：格式化工具调用、结果和错误，并将其输出到终端或转发给 ToolEvent sink。
+// 调用方：Agent 工具执行路径调用 PrintTool*；TUI、daemon 和 worklog 通过 sink 接管展示或记录。
+// 共享状态：defaultToolPrinter 是只读默认格式器；toolEventSink 是进程级单槽 sink，由 toolEventSinkMu 保护替换和读取。
+package toolevent
 
 import (
 	"encoding/json"
@@ -11,9 +10,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/lzq/5hAgent/internal/logger"
 )
 
-// ToolPrinter 工具调用的格式化输出
+// ToolPrinter 使用固定缩进格式化工具调用事件。
 type ToolPrinter struct {
 	indent string
 }
@@ -28,6 +29,9 @@ type toolResultSummary struct {
 	Lines  []string
 }
 
+// ToolEvent 是工具调用、结果或错误的结构化展示事件。
+// Text 是可截断的展示摘要；Result 是完整工具结果；Error 是未格式化的原始错误文本。
+// 格式化函数只生成 Text，不改写 Result 或 Error。
 type ToolEvent struct {
 	Kind       string
 	Name       string
@@ -43,12 +47,16 @@ var (
 	toolEventSinkMu sync.RWMutex
 )
 
+// SetToolEventSink 原子替换进程级工具事件 sink；传入 nil 恢复直接终端输出。
+// 副作用：影响之后所有使用包级 ToolPrinter 的工具事件。
 func SetToolEventSink(sink func(ToolEvent)) {
 	toolEventSinkMu.Lock()
 	defer toolEventSinkMu.Unlock()
 	toolEventSink = sink
 }
 
+// PushToolEventSink 暂存当前 sink 后安装新 sink，并返回恢复函数。
+// 调用方必须在作用域结束时调用恢复函数；替换和恢复由锁保护，但 sink 回调在锁外执行。
 func PushToolEventSink(sink func(ToolEvent)) func() {
 	toolEventSinkMu.Lock()
 	prev := toolEventSink
@@ -67,14 +75,8 @@ func currentToolEventSink() func(ToolEvent) {
 	return toolEventSink
 }
 
-func newToolPrinter() *ToolPrinter {
-	return &ToolPrinter{
-		indent: "  ",
-	}
-}
-
-// PrintToolCall 打印工具调用
-// 格式: ● ToolName(args...)
+// PrintToolCall 将工具调用转发给当前 sink；无 sink 时直接打印到 stdout。
+// 展示格式为“● ToolName(args...)”。
 func (p *ToolPrinter) PrintToolCall(name string, args string, concurrent bool) {
 	text := formatToolCall(p.indent, name, args, concurrent)
 	if sink := currentToolEventSink(); sink != nil {
@@ -93,19 +95,18 @@ func formatToolCall(indent string, name string, args string, concurrent bool) st
 	summary := summarizeToolCall(name, args)
 	var b strings.Builder
 	b.WriteString("\n● ")
-	b.WriteString(Cyan(summary.Title))
-	b.WriteString(Gray(mode))
+	b.WriteString(logger.Cyan(summary.Title))
+	b.WriteString(logger.Gray(mode))
 	b.WriteString("\n")
 	for _, field := range summary.Fields {
 		b.WriteString(indent)
-		b.WriteString(Gray(field))
+		b.WriteString(logger.Gray(field))
 		b.WriteString("\n")
 	}
 	return b.String()
 }
 
-// PrintToolResult 打印工具执行结果
-// 格式: ⎿ summary/content
+// PrintToolResult 将工具结果转发给当前 sink；无 sink 时直接打印摘要或内容到 stdout。
 func (p *ToolPrinter) PrintToolResult(name string, args string, result string) {
 	text := formatToolResultText(p.indent, name, args, result)
 	if sink := currentToolEventSink(); sink != nil {
@@ -120,7 +121,7 @@ func formatToolResultText(indent string, name string, args string, result string
 	if strings.TrimSpace(result) == "" {
 		b.WriteString(indent)
 		b.WriteString("⎿ ")
-		b.WriteString(Gray("(无输出)"))
+		b.WriteString(logger.Gray("(无输出)"))
 		b.WriteString("\n")
 		return b.String()
 	}
@@ -158,8 +159,7 @@ func formatToolResultText(indent string, name string, args string, result string
 	return b.String()
 }
 
-// PrintToolError 打印工具执行错误
-// 格式: ⎿ ✗ error
+// PrintToolError 将工具错误转发给当前 sink；无 sink 时直接打印精简错误到 stdout。
 func (p *ToolPrinter) PrintToolError(name string, args string, err error) {
 	text, errText := formatToolErrorText(p.indent, name, args, err)
 	if sink := currentToolEventSink(); sink != nil {
@@ -172,18 +172,18 @@ func (p *ToolPrinter) PrintToolError(name string, args string, err error) {
 func formatToolErrorText(indent string, name string, args string, err error) (string, string) {
 	summary := summarizeToolCall(name, args)
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("%s⎿ %s %s\n", indent, Red("✗"), Red(summarizeToolError(name, err))))
+	b.WriteString(fmt.Sprintf("%s⎿ %s %s\n", indent, logger.Red("✗"), logger.Red(summarizeToolError(name, err))))
 	if len(summary.Fields) > 0 {
 		for _, field := range summary.Fields {
 			b.WriteString(indent)
 			b.WriteString("  ")
-			b.WriteString(Gray(field))
+			b.WriteString(logger.Gray(field))
 			b.WriteString("\n")
 		}
 	} else if strings.TrimSpace(args) != "" {
 		b.WriteString(indent)
 		b.WriteString("  ")
-		b.WriteString(Gray("args: " + TruncateString(args, 180)))
+		b.WriteString(logger.Gray("args: " + logger.TruncateString(args, 180)))
 		b.WriteString("\n")
 	}
 	errText := ""
@@ -226,35 +226,38 @@ func summarizeToolError(name string, err error) string {
 	if path != "" {
 		return fmt.Sprintf("%s failed: %s (%s)", displayName, shortenPath(path), reason)
 	}
-	return fmt.Sprintf("%s failed: %s", displayName, TruncateString(strings.TrimSpace(message), 180))
+	return fmt.Sprintf("%s failed: %s", displayName, logger.TruncateString(strings.TrimSpace(message), 180))
 }
 
-// Global instance
-var defaultToolPrinter = newToolPrinter()
+// defaultToolPrinter 是包级便捷函数共享的只读格式器。
+var defaultToolPrinter = &ToolPrinter{indent: "  "}
 
-// PrintToolCall 全局函数：打印工具调用
+// PrintToolCall 使用默认格式器输出工具调用。
 func PrintToolCall(name string, args string, concurrent bool) {
 	defaultToolPrinter.PrintToolCall(name, args, concurrent)
 }
 
+// FormatToolCall 使用默认格式器生成工具调用文本，但不输出也不触发 sink。
 func FormatToolCall(name string, args string, concurrent bool) string {
 	return formatToolCall(defaultToolPrinter.indent, name, args, concurrent)
 }
 
-// PrintToolResult 全局函数：打印工具结果
+// PrintToolResult 使用默认格式器输出工具结果。
 func PrintToolResult(name string, args string, result string) {
 	defaultToolPrinter.PrintToolResult(name, args, result)
 }
 
+// FormatToolResult 使用默认格式器生成工具结果文本，但不输出也不触发 sink。
 func FormatToolResult(name string, args string, result string) string {
 	return formatToolResultText(defaultToolPrinter.indent, name, args, result)
 }
 
-// PrintToolError 全局函数：打印工具错误
+// PrintToolError 使用默认格式器输出工具错误。
 func PrintToolError(name string, args string, err error) {
 	defaultToolPrinter.PrintToolError(name, args, err)
 }
 
+// FormatToolError 使用默认格式器生成展示文本和原始错误文本，但不输出也不触发 sink。
 func FormatToolError(name string, args string, err error) (string, string) {
 	return formatToolErrorText(defaultToolPrinter.indent, name, args, err)
 }
@@ -266,7 +269,7 @@ func summarizeToolCall(name string, args string) toolCallSummary {
 	var raw map[string]interface{}
 	if err := json.Unmarshal([]byte(args), &raw); err != nil {
 		if strings.TrimSpace(args) != "" {
-			summary.Fields = append(summary.Fields, "args: "+TruncateString(args, 100))
+			summary.Fields = append(summary.Fields, "args: "+logger.TruncateString(args, 100))
 		}
 		return summary
 	}
@@ -298,7 +301,7 @@ func summarizeToolCall(name string, args string) toolCallSummary {
 			summary.Fields = append(summary.Fields, formatField("recursive", "true"))
 		}
 	case "exec_shell":
-		summary.Fields = append(summary.Fields, formatField("command", TruncateString(stringValue(raw["command"]), 120)))
+		summary.Fields = append(summary.Fields, formatField("command", logger.TruncateString(stringValue(raw["command"]), 120)))
 	default:
 		keys := make([]string, 0, len(raw))
 		for key := range raw {
@@ -306,7 +309,7 @@ func summarizeToolCall(name string, args string) toolCallSummary {
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			summary.Fields = append(summary.Fields, formatField(key, TruncateString(valueString(raw[key]), 100)))
+			summary.Fields = append(summary.Fields, formatField(key, logger.TruncateString(valueString(raw[key]), 100)))
 		}
 	}
 
@@ -343,7 +346,7 @@ func summarizeToolResult(name string, args string, result string) toolResultSumm
 			files[file] = struct{}{}
 			line := intValue(match["line"])
 			text := stringValue(match["text"])
-			lines = append(lines, fmt.Sprintf("%s:%d  %s", file, line, TruncateString(text, 80)))
+			lines = append(lines, fmt.Sprintf("%s:%d  %s", file, line, logger.TruncateString(text, 80)))
 		}
 		fields = append(fields, formatField("files", fmt.Sprintf("%d", len(files))))
 		return toolResultSummary{Fields: compactFields(fields), Lines: linesWithEllipsis(lines, len(matches), 4)}
@@ -384,7 +387,7 @@ func summarizeToolResult(name string, args string, result string) toolResultSumm
 			if idx := strings.Index(stderr, "\n"); idx >= 0 {
 				first = stderr[:idx]
 			}
-			fields = append(fields, formatField("stderr", TruncateString(first, 100)))
+			fields = append(fields, formatField("stderr", logger.TruncateString(first, 100)))
 		}
 		lines := splitDisplayLines(stdout, 5, 160)
 		if len(lines) == 0 && stderr != "" {
@@ -395,12 +398,6 @@ func summarizeToolResult(name string, args string, result string) toolResultSumm
 		return toolResultSummary{Lines: splitDisplayLines(result, 4, 150)}
 	}
 }
-
-/*
-func printIndentedLines(prefix string, lines []string) {
-	fmt.Print(formatIndentedLines(prefix, lines))
-}
-*/
 
 func formatIndentedLines(prefix string, lines []string) string {
 	var b strings.Builder
@@ -428,17 +425,17 @@ func splitDisplayLines(text string, limit int, maxWidth int) []string {
 		if i >= limit {
 			break
 		}
-		lines = append(lines, TruncateString(line, maxWidth))
+		lines = append(lines, logger.TruncateString(line, maxWidth))
 	}
 	if len(parts) > limit {
-		lines = append(lines, Gray("..."))
+		lines = append(lines, logger.Gray("..."))
 	}
 	return lines
 }
 
 func linesWithEllipsis(lines []string, total int, shown int) []string {
 	if total > shown {
-		return append(lines, Gray("..."))
+		return append(lines, logger.Gray("..."))
 	}
 	return lines
 }
@@ -554,34 +551,6 @@ func stringSlice(v interface{}) []string {
 	}
 	return result
 }
-
-/*
-func shortenedPaths(paths []string, limit int) []string {
-	shown := make([]string, 0, min(limit, len(paths)))
-	for i, path := range paths {
-		if i >= limit {
-			break
-		}
-		shown = append(shown, shortenPath(path))
-	}
-	return shown
-}
-
-func uniqueKeys(m map[string]struct{}) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	return keys
-}
-
-func firstLine(text string) string {
-	if idx := strings.Index(text, "\n"); idx >= 0 {
-		return text[:idx]
-	}
-	return text
-}
-*/
 
 func min(a, b int) int {
 	if a < b {

@@ -1,4 +1,6 @@
-package logger
+// toolprint_test.go 验证工具错误事件向 sink 提供精简展示摘要。
+// 调用方：Go test；测试结束后恢复进程级 ToolEvent sink。
+package toolevent
 
 import (
 	"errors"

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"bytes"
+	"github.com/lzq/5hAgent/internal/toolevent"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/task"
 )
 
@@ -37,15 +37,15 @@ func captureStdout(t *testing.T, fn func()) string {
 }
 
 func TestHeadlessWorkLogPrintsTokensAndToolEvents(t *testing.T) {
-	defer logger.SetToolEventSink(nil)
+	defer toolevent.SetToolEventSink(nil)
 	dataDir := t.TempDir()
 	startedAt := time.Date(2026, 6, 23, 10, 11, 12, 0, time.UTC)
 	log := newHeadlessWorkLog(true, dataDir, "Demo Agent", startedAt)
 	output := captureStdout(t, func() {
 		log.Start(&task.Task{ID: "demo", Title: "Demo task"})
 		log.OnToken("hello")
-		logger.PrintToolCall("base.read_file", `{"path":"README.md"}`, false)
-		logger.PrintToolResult("base.read_file", `{"path":"README.md"}`, `{"total_lines":3}`)
+		toolevent.PrintToolCall("base.read_file", `{"path":"README.md"}`, false)
+		toolevent.PrintToolResult("base.read_file", `{"path":"README.md"}`, `{"total_lines":3}`)
 		log.OnToken("done")
 		log.End(nil)
 	})
@@ -93,14 +93,14 @@ func TestHeadlessWorkLogPrintsTokensAndToolEvents(t *testing.T) {
 }
 
 func TestHeadlessWorkLogQuietSuppressesConsoleButWritesFile(t *testing.T) {
-	defer logger.SetToolEventSink(nil)
+	defer toolevent.SetToolEventSink(nil)
 	dataDir := t.TempDir()
 	startedAt := time.Date(2026, 6, 23, 10, 11, 12, 0, time.UTC)
 	log := newHeadlessWorkLog(false, dataDir, "Demo Agent", startedAt)
 	output := captureStdout(t, func() {
 		log.Start(&task.Task{ID: "demo", Title: "Demo task"})
 		log.OnToken("hidden")
-		logger.PrintToolCall("base.read_file", `{"path":"README.md"}`, false)
+		toolevent.PrintToolCall("base.read_file", `{"path":"README.md"}`, false)
 		log.End(nil)
 	})
 	if output != "" {

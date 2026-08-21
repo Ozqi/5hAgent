@@ -5,13 +5,13 @@ package tui
 import (
 	"context"
 	"fmt"
+	"github.com/lzq/5hAgent/internal/toolevent"
 	"os"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lzq/5hAgent/internal/commands"
-	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/tools"
 )
 
@@ -151,7 +151,7 @@ func (m *AppModel) submit() tea.Cmd {
 func (m *AppModel) handleDebugCommand(text string) tea.Cmd {
 	fields := strings.Fields(text)
 	if len(fields) >= 2 && fields[1] == "tool-running" {
-		event := logger.ToolEvent{Kind: "call", Name: "base.exec_shell", Args: `{"cmd":"sleep 5 && echo debug-done"}`}
+		event := toolevent.ToolEvent{Kind: "call", Name: "base.exec_shell", Args: `{"cmd":"sleep 5 && echo debug-done"}`}
 		m.toolCalls++
 		m.lastTool = fallback(tools.DisplayName(event.Name), event.Name)
 		m.applyToolEvent(event)
@@ -159,7 +159,7 @@ func (m *AppModel) handleDebugCommand(text string) tea.Cmd {
 		m.refreshView()
 		return tea.Batch(tickSpinner(), func() tea.Msg {
 			time.Sleep(5 * time.Second)
-			return debugToolResultMsg{event: logger.ToolEvent{Kind: "result", Name: "base.exec_shell", Args: event.Args, Text: "  ⎿ debug-done\n"}}
+			return debugToolResultMsg{event: toolevent.ToolEvent{Kind: "result", Name: "base.exec_shell", Args: event.Args, Text: "  ⎿ debug-done\n"}}
 		})
 	}
 	m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: "unknown debug command"})
@@ -241,7 +241,7 @@ func (m *AppModel) handleRunCommand(text string) tea.Cmd {
 	m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: "/run", Content: "running..."})
 	m.refreshView()
 	return tea.Batch(tickSpinner(), func() tea.Msg {
-		summary, err := m.runTasks(m.ctx, func(event logger.ToolEvent) {
+		summary, err := m.runTasks(m.ctx, func(event toolevent.ToolEvent) {
 			if m.program != nil {
 				m.program.Send(toolEventMsg{event: event})
 			}

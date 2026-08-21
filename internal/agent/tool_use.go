@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/lzq/5hAgent/internal/toolevent"
 	"strings"
 	"sync"
 
@@ -241,29 +242,29 @@ func (a *Agent) addToolResult(messageCtx *agentctx.Context, tc schema.ToolCall, 
 
 func (a *Agent) printToolCall(name string, args string, concurrent bool) {
 	if a != nil && a.toolEventSink != nil {
-		text := logger.FormatToolCall(name, args, concurrent)
-		a.toolEventSink(logger.ToolEvent{Kind: "call", Name: name, Text: text, Args: args, Concurrent: concurrent})
+		text := toolevent.FormatToolCall(name, args, concurrent)
+		a.toolEventSink(toolevent.ToolEvent{Kind: "call", Name: name, Text: text, Args: args, Concurrent: concurrent})
 		return
 	}
-	logger.PrintToolCall(name, args, concurrent)
+	toolevent.PrintToolCall(name, args, concurrent)
 }
 
 func (a *Agent) printToolResult(name string, args string, result string) {
 	if a != nil && a.toolEventSink != nil {
-		text := logger.FormatToolResult(name, args, result)
-		a.toolEventSink(logger.ToolEvent{Kind: "result", Name: name, Text: text, Args: args, Result: result})
+		text := toolevent.FormatToolResult(name, args, result)
+		a.toolEventSink(toolevent.ToolEvent{Kind: "result", Name: name, Text: text, Args: args, Result: result})
 		return
 	}
-	logger.PrintToolResult(name, args, result)
+	toolevent.PrintToolResult(name, args, result)
 }
 
 func (a *Agent) printToolError(name string, args string, err error) {
 	if a != nil && a.toolEventSink != nil {
-		text, errText := logger.FormatToolError(name, args, err)
-		a.toolEventSink(logger.ToolEvent{Kind: "error", Name: name, Text: text, Args: args, Error: errText})
+		text, errText := toolevent.FormatToolError(name, args, err)
+		a.toolEventSink(toolevent.ToolEvent{Kind: "error", Name: name, Text: text, Args: args, Error: errText})
 		return
 	}
-	logger.PrintToolError(name, args, err)
+	toolevent.PrintToolError(name, args, err)
 }
 
 // formatToolErr 格式化工具执行错误

@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"fmt"
+	"github.com/lzq/5hAgent/internal/toolevent"
 	"io"
 	"os"
 	"path/filepath"
@@ -65,7 +66,7 @@ func (l *headlessWorkLog) Start(t *task.Task) {
 		}
 	}
 	if l.useGlobalSink {
-		l.restoreSink = logger.PushToolEventSink(func(event logger.ToolEvent) {
+		l.restoreSink = toolevent.PushToolEventSink(func(event toolevent.ToolEvent) {
 			l.printToolEvent(event)
 		})
 	}
@@ -134,7 +135,7 @@ func (l *headlessWorkLog) OnReasoning(token string) {
 	l.ensureFileAssistantHeader()
 }
 
-func (l *headlessWorkLog) printToolEvent(event logger.ToolEvent) {
+func (l *headlessWorkLog) printToolEvent(event toolevent.ToolEvent) {
 	if l == nil {
 		return
 	}

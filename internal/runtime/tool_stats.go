@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/lzq/5hAgent/internal/toolevent"
 	"os"
 	"path/filepath"
 	"time"
@@ -24,11 +25,11 @@ type toolFailureStat struct {
 }
 
 // RecordToolEvent records user-session tool failure events for later diagnosis.
-func (r *Runtime) RecordToolEvent(event logger.ToolEvent) {
+func (r *Runtime) RecordToolEvent(event toolevent.ToolEvent) {
 	r.handleToolEvent(event, "", "")
 }
 
-func (r *Runtime) recordToolFailure(event logger.ToolEvent, taskID string, processID string) {
+func (r *Runtime) recordToolFailure(event toolevent.ToolEvent, taskID string, processID string) {
 	if event.Kind != "error" {
 		return
 	}

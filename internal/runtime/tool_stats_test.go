@@ -2,12 +2,11 @@ package runtime
 
 import (
 	"encoding/json"
+	"github.com/lzq/5hAgent/internal/toolevent"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/lzq/5hAgent/internal/logger"
 )
 
 func TestRecordToolEventWritesFailureStats(t *testing.T) {
@@ -20,7 +19,7 @@ func TestRecordToolEventWritesFailureStats(t *testing.T) {
 		ProjectDir: projectDir,
 	}
 
-	rt.RecordToolEvent(logger.ToolEvent{
+	rt.RecordToolEvent(toolevent.ToolEvent{
 		Kind:  "error",
 		Name:  "base.read_file",
 		Args:  `{"path":"/tmp/missing"}`,
@@ -49,7 +48,7 @@ func TestRecordToolEventIgnoresNonErrors(t *testing.T) {
 	t.Setenv("HOME", home)
 	rt := &Runtime{ProjectDir: t.TempDir()}
 
-	rt.RecordToolEvent(logger.ToolEvent{Kind: "result", Name: "base.read_file"})
+	rt.RecordToolEvent(toolevent.ToolEvent{Kind: "result", Name: "base.read_file"})
 
 	userPath := filepath.Join(home, ".5hAgent", "tool-stats", "failures.jsonl")
 	if _, err := os.Stat(userPath); !os.IsNotExist(err) {

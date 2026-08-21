@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/lzq/5hAgent/internal/toolevent"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,7 +76,7 @@ type RunOptions struct {
 	TaskID        string
 	ReportDir     string
 	WorkLog       bool // 是否在 headless 模式输出可读工作日志
-	ToolEventSink func(logger.ToolEvent)
+	ToolEventSink func(toolevent.ToolEvent)
 }
 
 // RunReport 是无头执行写入报告文件前的结构化结果。
@@ -322,7 +323,7 @@ func (r *Runtime) SwitchModel(ctx context.Context, modelRef string) (string, err
 	return r.ModelRef, nil
 }
 
-func (r *Runtime) handleToolEvent(event logger.ToolEvent, taskID string, processID string) {
+func (r *Runtime) handleToolEvent(event toolevent.ToolEvent, taskID string, processID string) {
 	if r == nil {
 		return
 	}
@@ -384,7 +385,7 @@ func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess) er
 	workLog.useGlobalSink = false
 	workLog.Start(logTask)
 	proc.SetWorkLogPath(workLog.path)
-	prevSink := r.Agent.SetToolEventSink(func(event logger.ToolEvent) {
+	prevSink := r.Agent.SetToolEventSink(func(event toolevent.ToolEvent) {
 		workLog.printToolEvent(event)
 		r.handleToolEvent(event, proc.SourceTask.ID, proc.ID)
 	})
@@ -463,7 +464,7 @@ func (r *Runtime) RunTaskOnce(ctx context.Context, opts RunOptions) (*RunReport,
 	workLog := newHeadlessWorkLog(opts.WorkLog, projectDataDir, r.Agent.Name(), started)
 	workLog.useGlobalSink = false
 	workLog.Start(selected)
-	prevSink := r.Agent.SetToolEventSink(func(event logger.ToolEvent) {
+	prevSink := r.Agent.SetToolEventSink(func(event toolevent.ToolEvent) {
 		workLog.printToolEvent(event)
 		r.handleToolEvent(event, selected.ID, "")
 		if opts.ToolEventSink != nil {

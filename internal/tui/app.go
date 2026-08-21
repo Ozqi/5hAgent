@@ -7,6 +7,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"github.com/lzq/5hAgent/internal/toolevent"
 	"os"
 	"sort"
 	"strings"
@@ -22,7 +23,6 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/lzq/5hAgent/internal/agent"
 	agentctx "github.com/lzq/5hAgent/internal/context"
-	"github.com/lzq/5hAgent/internal/logger"
 	"github.com/lzq/5hAgent/internal/skill"
 	"github.com/lzq/5hAgent/internal/systemd"
 	"github.com/lzq/5hAgent/internal/task"
@@ -169,7 +169,7 @@ type assistantErrorMsg struct {
 }
 
 type toolEventMsg struct {
-	event logger.ToolEvent
+	event toolevent.ToolEvent
 }
 
 type remoteEventMsg struct{ event systemd.ProcessEvent }
@@ -179,7 +179,7 @@ type remoteDisconnectedMsg struct{}
 type spinnerTickMsg struct{}
 
 type debugToolResultMsg struct {
-	event logger.ToolEvent
+	event toolevent.ToolEvent
 }
 
 type runTasksDoneMsg struct {
@@ -188,13 +188,13 @@ type runTasksDoneMsg struct {
 }
 
 // RunTasksFunc 是 TUI /run 命令调用 runtime 连续执行 task.md 的薄接口。
-type RunTasksFunc func(context.Context, func(logger.ToolEvent)) (string, error)
+type RunTasksFunc func(context.Context, func(toolevent.ToolEvent)) (string, error)
 
 // SwitchModelFunc 是 TUI /model 命令切换当前 Runtime 模型的薄接口。
 type SwitchModelFunc func(context.Context, string) (string, error)
 
 // ToolEventFunc 接收 TUI 普通对话中的工具事件。
-type ToolEventFunc func(logger.ToolEvent)
+type ToolEventFunc func(toolevent.ToolEvent)
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
@@ -444,7 +444,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "thinking":
 			return m.Update(assistantThinkingMsg{token: event.Text})
 		case "tool":
-			return m.Update(toolEventMsg{event: logger.ToolEvent{Kind: event.Kind, Name: event.Name, Args: event.Args, Text: event.Text, Result: event.Result, Error: event.Error}})
+			return m.Update(toolEventMsg{event: toolevent.ToolEvent{Kind: event.Kind, Name: event.Name, Args: event.Args, Text: event.Text, Result: event.Result, Error: event.Error}})
 		case "system":
 			m.busy = false
 			m.currentStatus = "idle"
@@ -1172,7 +1172,7 @@ func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, promptDir
 	// WithMouseCellMotion 开启点击、释放和滚轮事件；viewport.Update 负责具体滚动。
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	model.program = p
-	prevSink := ag.SetToolEventSink(func(event logger.ToolEvent) {
+	prevSink := ag.SetToolEventSink(func(event toolevent.ToolEvent) {
 		if onToolEvent != nil {
 			onToolEvent(event)
 		}
