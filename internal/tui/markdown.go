@@ -10,39 +10,6 @@ import (
 	"github.com/lzq/5hAgent/internal/logger"
 )
 
-func splitReadyMarkdown(input string, force bool) (string, string) {
-	if force {
-		return input, ""
-	}
-
-	var lastBoundary int
-	inCodeBlock := false
-	for i := 0; i < len(input); {
-		lineEnd := strings.IndexByte(input[i:], '\n')
-		if lineEnd < 0 {
-			break
-		}
-		lineEnd += i + 1
-		line := input[i:lineEnd]
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
-			inCodeBlock = !inCodeBlock
-			if !inCodeBlock {
-				lastBoundary = lineEnd
-			}
-		}
-		if !inCodeBlock && trimmed == "" {
-			lastBoundary = lineEnd
-		}
-		i = lineEnd
-	}
-
-	if lastBoundary == 0 {
-		return "", input
-	}
-	return input[:lastBoundary], input[lastBoundary:]
-}
-
 func renderMarkdownForTerminal(input string, color bool) string {
 	blocks := splitMarkdownBlocks(input)
 	if len(blocks) == 0 {
