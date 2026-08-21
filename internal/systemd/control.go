@@ -49,6 +49,7 @@ type InteractiveProcess interface {
 	Snapshot() ProcessSnapshot
 	Attach() ([]ProcessEvent, <-chan ProcessEvent, func())
 	Submit(string) error
+	Stop() error
 }
 
 type controlMessage struct {
@@ -201,6 +202,16 @@ func handleControlConn(conn net.Conn, sys *AgentSystemd, workspace string, inter
 				if enc.Encode(response) != nil {
 					return
 				}
+				continue
+			}
+			if request.Type == "stop" {
+				response := controlMessage{Type: "stop_result", ID: request.ID}
+				if err := target.Stop(); err != nil {
+					response.Error = err.Error()
+				}
+				if enc.Encode(response) != nil {
+					return
+				}
 			}
 		}
 	}
@@ -325,7 +336,7 @@ func (c *ProcessClient) read(dec *json.Decoder) {
 			case <-c.done:
 				return
 			}
-		} else if message.Type == "input_result" {
+		} else if message.Type == "input_result" || message.Type == "stop_result" {
 			c.mu.Lock()
 			result := c.pending[message.ID]
 			delete(c.pending, message.ID)
@@ -356,13 +367,22 @@ func (c *ProcessClient) Events() <-chan ProcessEvent { return c.events }
 
 // Submit 向 daemon Agent 提交一轮用户输入。
 func (c *ProcessClient) Submit(text string) error {
+	return c.sendControl("input", text)
+}
+
+// Stop 请求 daemon Agent 停止当前运行。
+func (c *ProcessClient) Stop() error {
+	return c.sendControl("stop", "")
+}
+
+func (c *ProcessClient) sendControl(kind string, text string) error {
 	c.mu.Lock()
 	c.nextID++
 	id := c.nextID
 	result := make(chan error, 1)
 	c.pending[id] = result
 	_ = c.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-	err := c.enc.Encode(controlMessage{Type: "input", ID: id, Text: text})
+	err := c.enc.Encode(controlMessage{Type: kind, ID: id, Text: text})
 	_ = c.conn.SetWriteDeadline(time.Time{})
 	if err != nil {
 		delete(c.pending, id)
@@ -378,7 +398,7 @@ func (c *ProcessClient) Submit(text string) error {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
-		return fmt.Errorf("submit input timed out")
+		return fmt.Errorf("%s timed out", kind)
 	}
 }
 

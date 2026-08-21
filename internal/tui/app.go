@@ -112,6 +112,7 @@ type AppModel struct {
 	runTasks     RunTasksFunc
 	switchModel  SwitchModelFunc
 	remoteSubmit func(string) error
+	remoteStop   func() error
 	ctx          context.Context
 	runCancel    context.CancelFunc
 	runEntry     int

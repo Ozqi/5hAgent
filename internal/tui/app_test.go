@@ -147,6 +147,25 @@ func TestStopCommandReportsNoActiveRun(t *testing.T) {
 	}
 }
 
+func TestRemoteStopCommandCallsDaemonClient(t *testing.T) {
+	called := false
+	model := NewAppModel(context.Background(), nil, "test-model", "", nil, nil, nil, nil, "test-session", nil, nil)
+	model.remoteSubmit = func(string) error { t.Fatal("remoteSubmit should not be called for /stop"); return nil }
+	model.remoteStop = func() error { called = true; return nil }
+	model.busy = true
+	model.input.SetValue("/stop")
+
+	if cmd := model.submit(); cmd != nil {
+		t.Fatalf("submit(/stop) cmd = %v, want nil", cmd)
+	}
+	if !called {
+		t.Fatal("remoteStop was not called")
+	}
+	if model.currentStatus != "stopping" {
+		t.Fatalf("currentStatus = %q, want stopping", model.currentStatus)
+	}
+}
+
 func TestAssistantTokenIgnoredAfterStop(t *testing.T) {
 	model := NewAppModel(context.Background(), nil, "test-model", "", nil, nil, nil, nil, "test-session", nil, nil)
 	model.busy = false

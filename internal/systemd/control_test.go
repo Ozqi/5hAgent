@@ -8,6 +8,26 @@ import (
 	"time"
 )
 
+type fakeInteractiveProcess struct {
+	stopCalled chan struct{}
+}
+
+func (p *fakeInteractiveProcess) Snapshot() ProcessSnapshot {
+	return ProcessSnapshot{ID: "interactive", State: ProcessRunning, StartedAt: time.Now().UTC(), Interactive: true}
+}
+
+func (p *fakeInteractiveProcess) Attach() ([]ProcessEvent, <-chan ProcessEvent, func()) {
+	events := make(chan ProcessEvent)
+	return nil, events, func() { close(events) }
+}
+
+func (p *fakeInteractiveProcess) Submit(string) error { return nil }
+
+func (p *fakeInteractiveProcess) Stop() error {
+	close(p.stopCalled)
+	return nil
+}
+
 func TestControlServerListsRunningProcesses(t *testing.T) {
 	controlDir, err := os.MkdirTemp("/private/tmp", "5ha-ctl-")
 	if err != nil {
@@ -79,5 +99,36 @@ func TestListProcessesRemovesStaleSupervisorSocket(t *testing.T) {
 	}
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatalf("stale supervisor socket still exists: %v", err)
+	}
+}
+
+func TestProcessClientStopCallsInteractiveProcess(t *testing.T) {
+	controlDir, err := os.MkdirTemp("/private/tmp", "5ha-ctl-")
+	if err != nil {
+		t.Fatalf("MkdirTemp() error = %v", err)
+	}
+	defer os.RemoveAll(controlDir)
+	sys := New()
+	proc := &fakeInteractiveProcess{stopCalled: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	server, err := StartControlServer(ctx, controlDir, sys, "/workspace", proc)
+	if err != nil {
+		t.Fatalf("StartControlServer() error = %v", err)
+	}
+	defer cancel()
+	defer server.Close()
+
+	client, err := AttachProcess(controlDir, "interactive")
+	if err != nil {
+		t.Fatalf("AttachProcess() error = %v", err)
+	}
+	defer client.Close()
+	if err := client.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	select {
+	case <-proc.stopCalled:
+	case <-time.After(time.Second):
+		t.Fatal("interactive process was not stopped")
 	}
 }

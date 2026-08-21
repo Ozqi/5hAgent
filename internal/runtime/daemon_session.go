@@ -16,15 +16,16 @@ import (
 
 // DaemonSession 串行执行用户输入，并缓存 daemon 生命周期内的结构化输出供重连回放。
 type DaemonSession struct {
-	mu       sync.Mutex
-	ctx      context.Context
-	runtime  *Runtime
-	started  time.Time
-	busy     bool
-	provider string
-	seq      uint64
-	events   []systemd.ProcessEvent
-	subs     map[chan systemd.ProcessEvent]struct{}
+	mu        sync.Mutex
+	ctx       context.Context
+	runtime   *Runtime
+	started   time.Time
+	busy      bool
+	provider  string
+	runCancel context.CancelFunc
+	seq       uint64
+	events    []systemd.ProcessEvent
+	subs      map[chan systemd.ProcessEvent]struct{}
 }
 
 // NewDaemonSession 为一个 Runtime 创建长驻交互会话。
@@ -72,6 +73,9 @@ func (s *DaemonSession) Submit(text string) error {
 	}
 	if strings.HasPrefix(text, "/") {
 		s.publish(systemd.ProcessEvent{Type: "user", Text: text})
+		if text == "/stop" {
+			return s.stop()
+		}
 		if s.handlePickerSlash(text) {
 			return nil
 		}
@@ -83,11 +87,31 @@ func (s *DaemonSession) Submit(text string) error {
 		s.mu.Unlock()
 		return fmt.Errorf("agent is busy")
 	}
+	runCtx, cancel := context.WithCancel(s.ctx)
 	s.busy = true
+	s.runCancel = cancel
 	s.mu.Unlock()
 	s.publish(systemd.ProcessEvent{Type: "user", Text: text})
 	s.publish(systemd.ProcessEvent{Type: "state", Busy: true})
-	go s.run(text)
+	go s.run(runCtx, text)
+	return nil
+}
+
+// Stop 停止当前 attached daemon 会话正在执行的一轮 Agent。
+func (s *DaemonSession) Stop() error {
+	return s.stop()
+}
+
+func (s *DaemonSession) stop() error {
+	s.mu.Lock()
+	cancel := s.runCancel
+	if !s.busy || cancel == nil {
+		s.mu.Unlock()
+		s.publish(systemd.ProcessEvent{Type: "system", Text: "no active run"})
+		return nil
+	}
+	s.mu.Unlock()
+	cancel()
 	return nil
 }
 
@@ -213,7 +237,10 @@ func (s *DaemonSession) handleSlash(text string) string {
 	case "/run":
 		return "/run is not available in attached daemon mode yet"
 	case "/stop":
-		return "/stop is not available in attached daemon mode yet"
+		if err := s.stop(); err != nil {
+			return err.Error()
+		}
+		return ""
 	case "/session":
 		return fmt.Sprintf("Current session: %s", s.runtime.SessionID)
 	default:
@@ -225,7 +252,7 @@ func (s *DaemonSession) handleSlash(text string) string {
 	return result
 }
 
-func (s *DaemonSession) run(text string) {
+func (s *DaemonSession) run(runCtx context.Context, text string) {
 	prev := s.runtime.Agent.SetToolEventSink(func(event toolevent.ToolEvent) {
 		s.runtime.RecordToolEvent(event)
 		s.publish(systemd.ProcessEvent{
@@ -233,19 +260,22 @@ func (s *DaemonSession) run(text string) {
 			Text: event.Text, Result: event.Result, Error: event.Error,
 		})
 	})
-	_, err := s.runtime.Agent.RunStream(s.ctx, s.runtime.MessageCtx, text,
+	_, err := s.runtime.Agent.RunStream(runCtx, s.runtime.MessageCtx, text,
 		func(token string) { s.publish(systemd.ProcessEvent{Type: "assistant", Text: token}) },
 		func(token string) { s.publish(systemd.ProcessEvent{Type: "thinking", Text: token}) },
 	)
 	s.runtime.Agent.SetToolEventSink(prev)
 	s.mu.Lock()
-	if err != nil {
+	if runCtx.Err() != nil {
+		s.publishLocked(systemd.ProcessEvent{Type: "system", Text: "stopped current run"})
+	} else if err != nil {
 		s.publishLocked(systemd.ProcessEvent{Type: "error", Error: err.Error()})
 	} else {
 		s.publishLocked(systemd.ProcessEvent{Type: "done"})
 	}
 	s.publishLocked(systemd.ProcessEvent{Type: "state"})
 	s.busy = false
+	s.runCancel = nil
 	s.mu.Unlock()
 }
 

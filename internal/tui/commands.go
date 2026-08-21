@@ -26,6 +26,23 @@ func (m *AppModel) submit() tea.Cmd {
 		if text == "/detach" {
 			return tea.Quit
 		}
+		if text == "/stop" {
+			if m.remoteStop == nil {
+				m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: "/stop is not available"})
+				m.currentStatus = "error"
+				m.refreshView()
+				return nil
+			}
+			if err := m.remoteStop(); err != nil {
+				m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: err.Error()})
+				m.currentStatus = "error"
+				m.refreshView()
+				return nil
+			}
+			m.currentStatus = "stopping"
+			m.refreshView()
+			return nil
+		}
 		if m.busy {
 			m.currentStatus = "busy"
 			m.refreshView()

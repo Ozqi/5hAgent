@@ -14,6 +14,7 @@ type RemoteClient interface {
 	Snapshot() systemd.ProcessSnapshot
 	Events() <-chan systemd.ProcessEvent
 	Submit(string) error
+	Stop() error
 	Close() error
 }
 
@@ -22,6 +23,7 @@ func LaunchAttachedTUI(ctx context.Context, client RemoteClient) error {
 	snapshot := client.Snapshot()
 	model := NewAppModel(ctx, nil, snapshot.Model, "", nil, nil, nil, nil, snapshot.SessionID, nil, nil)
 	model.remoteSubmit = client.Submit
+	model.remoteStop = client.Stop
 	model.busy = snapshot.State == systemd.ProcessRunning
 	if model.busy {
 		model.currentStatus = "attached"
