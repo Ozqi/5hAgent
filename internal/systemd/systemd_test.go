@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -22,12 +23,11 @@ type blockingRunner struct {
 }
 
 type flakySource struct {
-	calls int
+	calls atomic.Int64
 }
 
 func (s *flakySource) Next(ctx context.Context) (Event, error) {
-	s.calls++
-	if s.calls == 1 {
+	if s.calls.Add(1) == 1 {
 		return Event{}, &os.PathError{Op: "stat", Path: "missing", Err: os.ErrNotExist}
 	}
 	<-time.After(10 * time.Millisecond)
@@ -163,7 +163,8 @@ func TestStartSourceContinuesAfterRecoverableError(t *testing.T) {
 	if !ok {
 		t.Fatal("nextEvent() not ok")
 	}
-	if event.ID != "ok" || source.calls < 2 {
-		t.Fatalf("event=%+v calls=%d, want recovered event after retry", event, source.calls)
+	calls := source.calls.Load()
+	if event.ID != "ok" || calls < 2 {
+		t.Fatalf("event=%+v calls=%d, want recovered event after retry", event, calls)
 	}
 }
