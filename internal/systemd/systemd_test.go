@@ -152,6 +152,24 @@ func TestTaskCreatedPayloadKeepsSourceTrace(t *testing.T) {
 	}
 }
 
+func TestApplyEventIgnoresTerminalEventWithoutProcessID(t *testing.T) {
+	sys := New()
+	proc := &AgentProcess{ID: "agent-1", State: ProcessRunning}
+	sys.processes[proc.ID] = proc
+
+	for _, eventType := range []string{"process.failed", "process.exited"} {
+		sys.applyEvent(Event{Type: eventType})
+		if proc.State != ProcessRunning {
+			t.Fatalf("state after empty-ID %s = %s, want %s", eventType, proc.State, ProcessRunning)
+		}
+	}
+
+	sys.applyEvent(Event{Type: "process.failed", ProcessID: proc.ID})
+	if proc.State != ProcessFailed {
+		t.Fatalf("state after targeted failure = %s, want %s", proc.State, ProcessFailed)
+	}
+}
+
 func TestStartSourceContinuesAfterRecoverableError(t *testing.T) {
 	sys := New()
 	ctx, cancel := context.WithCancel(context.Background())

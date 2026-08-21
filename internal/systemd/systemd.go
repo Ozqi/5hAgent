@@ -269,6 +269,9 @@ func (s *AgentSystemd) nextEvent(ctx context.Context) (Event, bool) {
 }
 
 func (s *AgentSystemd) applyEvent(event Event) {
+	if (event.Type == "process.exited" || event.Type == "process.failed") && event.ProcessID == "" {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, proc := range s.processes {
