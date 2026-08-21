@@ -5,12 +5,14 @@ package systemd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -101,7 +103,19 @@ func StartControlServer(ctx context.Context, controlDir string, sys *AgentSystem
 		_ = os.Remove(old)
 	}
 	path := filepath.Join(controlDir, supervisorSocket)
-	_ = os.Remove(path)
+	if _, err := os.Stat(path); err == nil {
+		conn, dialErr := net.DialTimeout("unix", path, 200*time.Millisecond)
+		if dialErr == nil {
+			conn.Close()
+			return nil, fmt.Errorf("supervisor already running at %s", path)
+		}
+		if !errors.Is(dialErr, syscall.ECONNREFUSED) {
+			return nil, fmt.Errorf("probe supervisor socket %s: %w", path, dialErr)
+		}
+		_ = os.Remove(path)
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("stat supervisor socket %s: %w", path, err)
+	}
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		return nil, fmt.Errorf("listen daemon control socket: %w", err)
@@ -235,7 +249,6 @@ func ListProcesses(controlDir string) ([]ProcessSnapshot, error) {
 	path := filepath.Join(controlDir, supervisorSocket)
 	conn, err := net.DialTimeout("unix", path, 200*time.Millisecond)
 	if err != nil {
-		_ = os.Remove(path)
 		return nil, nil
 	}
 	defer conn.Close()

@@ -2,6 +2,7 @@ package systemd
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -80,26 +81,40 @@ func TestControlServerListsRunningProcesses(t *testing.T) {
 	}
 }
 
-func TestListProcessesRemovesStaleSupervisorSocket(t *testing.T) {
+func TestStartControlServerRemovesRefusedSupervisorSocket(t *testing.T) {
 	controlDir, err := os.MkdirTemp("/private/tmp", "5ha-ctl-")
 	if err != nil {
 		t.Fatalf("MkdirTemp() error = %v", err)
 	}
 	defer os.RemoveAll(controlDir)
-	stale := filepath.Join(controlDir, supervisorSocket)
-	if err := os.WriteFile(stale, nil, 0o600); err != nil {
-		t.Fatalf("write stale supervisor socket: %v", err)
-	}
-	processes, err := ListProcesses(controlDir)
+
+	socketPath := filepath.Join(controlDir, supervisorSocket)
+	stale, err := net.Listen("unix", socketPath)
 	if err != nil {
-		t.Fatalf("ListProcesses() error = %v", err)
+		t.Fatalf("Listen() error = %v", err)
 	}
-	if len(processes) != 0 {
-		t.Fatalf("processes = %#v, want none", processes)
+	stale.(*net.UnixListener).SetUnlinkOnClose(false)
+	if err := stale.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
 	}
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Fatalf("stale supervisor socket still exists: %v", err)
+	if _, err := os.Stat(socketPath); err != nil {
+		t.Fatalf("closed listener did not leave socket: %v", err)
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	server, err := StartControlServer(ctx, controlDir, New(), "/workspace")
+	if err != nil {
+		cancel()
+		t.Fatalf("StartControlServer() error = %v", err)
+	}
+	defer cancel()
+	defer server.Close()
+
+	conn, err := net.DialTimeout("unix", socketPath, time.Second)
+	if err != nil {
+		t.Fatalf("replacement supervisor is not listening: %v", err)
+	}
+	conn.Close()
 }
 
 func TestProcessClientStopCallsInteractiveProcess(t *testing.T) {
