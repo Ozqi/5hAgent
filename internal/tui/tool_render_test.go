@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -39,5 +40,20 @@ func TestRenderToolHintEntryIncludesIntentAndArgs(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rendered header %q missing %q", got, want)
 		}
+	}
+}
+
+func TestSummarizeEditDiffTrimsAndLimits(t *testing.T) {
+	long := strings.Repeat("a", 200)
+	args, _ := json.Marshal(map[string]string{
+		"old_string": "same\n" + long + "\nold2\nold3\nold4\ntail",
+		"new_string": "same\nnew1\nnew2\nnew3\nnew4\ntail",
+	})
+	want := strings.Join([]string{
+		truncateMiddle("- "+long, 160), "- old2", "- old3", "- ...",
+		"+ new1", "+ new2", "+ new3", "+ ...",
+	}, "\n")
+	if got := summarizeEditDiff(string(args)); got != want {
+		t.Fatalf("summarizeEditDiff() = %q, want %q", got, want)
 	}
 }

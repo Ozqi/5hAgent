@@ -261,6 +261,11 @@ func summarizeToolEventOutput(event toolevent.ToolEvent) string {
 	entry := parseToolBlock(clean)
 	switch event.Kind {
 	case "result":
+		if event.Name == "base.edit" {
+			if diff := summarizeEditDiff(event.Args); diff != "" {
+				return diff
+			}
+		}
 		fields := append([]string{}, entry.Result...)
 		if len(fields) == 0 {
 			fields = strings.Split(strings.TrimSpace(strings.TrimPrefix(clean, "⎿ ")), "\n")
@@ -277,6 +282,41 @@ func summarizeToolEventOutput(event toolevent.ToolEvent) string {
 	default:
 		return compactOutputLines(strings.Split(clean, "\n"), 3)
 	}
+}
+
+func summarizeEditDiff(args string) string {
+	var input struct {
+		Old string `json:"old_string"`
+		New string `json:"new_string"`
+	}
+	if json.Unmarshal([]byte(args), &input) != nil || input.Old == "" || input.New == "" || input.Old == input.New {
+		return ""
+	}
+
+	oldLines, newLines := strings.Split(input.Old, "\n"), strings.Split(input.New, "\n")
+	start := 0
+	for start < len(oldLines) && start < len(newLines) && oldLines[start] == newLines[start] {
+		start++
+	}
+	oldEnd, newEnd := len(oldLines), len(newLines)
+	for oldEnd > start && newEnd > start && oldLines[oldEnd-1] == newLines[newEnd-1] {
+		oldEnd--
+		newEnd--
+	}
+
+	var output []string
+	add := func(prefix string, lines []string) {
+		shown := min(3, len(lines))
+		for _, line := range lines[:shown] {
+			output = append(output, prefix+line)
+		}
+		if len(lines) > shown {
+			output = append(output, prefix+"...")
+		}
+	}
+	add("- ", oldLines[start:oldEnd])
+	add("+ ", newLines[start:newEnd])
+	return compactOutputLines(output, len(output))
 }
 
 func compactOutputLines(lines []string, limit int) string {
@@ -338,6 +378,16 @@ func (m *AppModel) renderToolHintEntry(entry conversationEntry, width int) strin
 	lines := wrapVisibleText(compactToolOutputForWidth(output, lineWidth), lineWidth)
 	if entry.ToolState == "error" {
 		lines = loggerColorLines(lines, colorError)
+	} else if entry.ToolName == "edit" {
+		diffLines := strings.Split(lines, "\n")
+		for i, line := range diffLines {
+			color := colorResult
+			if strings.HasPrefix(line, "-") {
+				color = colorError
+			}
+			diffLines[i] = loggerColorLines(line, color)
+		}
+		lines = strings.Join(diffLines, "\n")
 	} else {
 		lines = loggerColorLines(lines, colorResult)
 	}
