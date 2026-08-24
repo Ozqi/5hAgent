@@ -49,9 +49,8 @@ Spec 长度不设固定上限，按模块代码复杂度和设计边界决定；
 
 | 文件 | 用途 |
 | --- | --- |
-| `diagrams/walle-architecture-topology.json` | walle 架构拓扑事实源，供 Mermaid/draw.io 分模块作图。 |
+| `diagrams/walle-architecture-topology.json` | walle 架构拓扑事实源，供 Mermaid 分模块作图。 |
 | `diagrams/walle-overall-runtime.mmd` | walle 总览图 Mermaid。 |
-| `diagrams/walle-overall-runtime.drawio` | walle 总览图 draw.io 文件。 |
 | `diagrams/walle-daemon-control.mmd` | daemon 控制面图。 |
 | `diagrams/walle-interactive-runtime.mmd` | 默认 TUI、daemon、Runtime 交互时序图。 |
 | `diagrams/walle-agent-turn.mmd` | 单轮 ReAct 时序图。 |

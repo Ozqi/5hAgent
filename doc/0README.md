@@ -16,7 +16,7 @@ doc/
 ├── interface/              # TUI、slash commands、logger
 ├── integrations/           # Tools、MCP
 ├── config/                 # LLM、prompt、调用链路
-└── topology.{json,md,mmd}  # 当前架构事实、说明与图源
+└── topology.md             # 当前架构拓扑导读
 ```
 
 ## 当前架构
@@ -70,4 +70,4 @@ flowchart TB
 - `runtime.New` 启动阶段只注册本地 base/skill 工具和 `context.context`，不启动 MCP stdio server。
 - TUI 使用 `prompt/tui.md`；其他 Runtime 调用默认使用 `prompt/main.md`。
 - Session 默认写 `~/.walle/sessions/*.jsonl`；通用 process 可写项目 `.walle` 下的 report/worklog。
-- 拓扑事实源见 [topology.json](topology.json)，图源见 [topology.mmd](topology.mmd)。
+- 拓扑导读见 [topology.md](topology.md)；架构图事实源集中在 [../.spec/diagrams/](../.spec/diagrams/)。

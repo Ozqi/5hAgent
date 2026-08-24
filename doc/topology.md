@@ -1,66 +1,52 @@
-# walle 拓扑来源说明
+# walle 架构拓扑
 
-> 由 Claude Fable 5 于 2026-08-23 阅读 `cmd/walle/*.go`、`internal/runtime/{runtime,daemon_session}.go`、`internal/systemd/{systemd,control}.go`、`internal/tools/registry.go` 与 `internal/tui/{app,commands}.go` 后更新。
-> 覆盖范围：默认入口、交互 daemon、control socket、Runtime 装配、通用 process 和工具边界。
+> 由 Claude Fable 5 于 2026-08-25 根据 `.spec/diagrams/walle-architecture-topology.json` 与当前模块文档收敛。
+> 覆盖范围：默认入口、daemon attach、Runtime 装配、Agent 执行、持久化边界。
 
-本页是 [topology.json](topology.json) 的人工来源文档；[topology.mmd](topology.mmd) 只从 JSON 表达同一组关系。
+本页是面向读者的拓扑导读，不再维护第二份 JSON/Mermaid 事实源。架构图事实源集中在 [`.spec/diagrams/walle-architecture-topology.json`](../.spec/diagrams/walle-architecture-topology.json)，图源集中在 [`.spec/diagrams/`](../.spec/diagrams/)。
 
-## 当前主链路
+## 主链路
 
-### 默认 TUI
+```mermaid
+flowchart TB
+  CLI[cmd/walle] -->|启动或复用| Daemon[walle daemon]
+  CLI -->|LaunchAttachedTUI| TUI[internal/tui]
+  TUI <-->|NDJSON attach/input/stop| Control[internal/systemd supervisor.sock]
+  Daemon --> Runtime[internal/runtime]
+  Daemon --> Session[DaemonSession]
+  Control -->|interactive route| Session
+  Session --> Runtime
+  Runtime --> Agent[internal/agent]
+  Runtime --> Context[internal/context]
+  Runtime --> Registry[tools.Registry]
+  Agent --> Registry
+  Context --> Store[~/.walle/sessions/*.jsonl]
+```
 
-1. `walle` 进入 `runTUI`。
-2. `startInteractiveClient` 尝试 attach `~/.walle/run/supervisor.sock` 中的 `interactive`。
-3. 不存在时启动当前二进制的 `daemon` 子命令并重试。
-4. `LaunchAttachedTUI` 接收历史与实时 `ProcessEvent`。
-5. 普通输入由 `DaemonSession.Submit` 交给 `Agent.RunStream`。
+## 当前事实
 
-### Daemon
-
-1. `walle daemon` 以 `PromptBase=tui` 创建 Runtime。
-2. 创建 `AgentSystemd`、`DaemonSession` 和 control server。
-3. 固定提供一个 attachable interactive Agent。
-4. 命令没有 `--poll`、`--interactive` 分支，也不监听任务文件。
-
-### Runtime
-
-1. 加载配置、日志、session 和 prompt。
-2. 创建 LLM 与 Agent。
-3. `Registry.Init(skillMgr)` 注册 `base.*` 和 `skill.skill`。
-4. 注册 `context.context`，再把工具 schema 绑定给模型。
-5. Runtime 可作为 `ProcessRunner` 执行通用 `AgentProcess`。
-
-## 模块证据
-
-| 模块 | 入口 | 当前职责 |
-| --- | --- | --- |
-| CLI | `cmd/walle/main.go` | 默认 TUI、daemon、ps、attach |
-| 默认 attach | `cmd/walle/interactive_command.go` | 复用或启动 daemon |
-| TUI | `internal/tui` | 输入、渲染、远端事件 |
-| Runtime | `internal/runtime/runtime.go` | Agent/Context/LLM/Tools 装配与通用 process runner |
-| Daemon session | `internal/runtime/daemon_session.go` | interactive 会话、slash command、事件回放 |
-| Systemd | `internal/systemd` | 通用 `process.start` 调度与 Unix Socket 控制面 |
-| Tools | `internal/tools/registry.go` | base/skill/context 固定工具，MCP 显式注册 |
-| Session | `internal/context` | 消息与 JSONL 持久化 |
-
-## 任务边界
-
-Runtime 只提供通用 process 执行能力。启动事件为 `process.start`，payload 为 `ProcessStartPayload{process_spec}`；`ProcessSnapshot` 使用 `Name`。任务管理由 Skill、MCP 或外置动态工具提供。
+1. 默认 `walle` 先 attach `~/.walle/run/supervisor.sock` 的 `interactive`；不存在时启动当前二进制的 `daemon` 子命令并重试。
+2. `walle daemon` 固定创建 Runtime、DaemonSession、AgentSystemd 和 control server。
+3. TUI 是 client：只处理输入、渲染、远端事件和本地 `/detach`、`/stop`。
+4. DaemonSession 是 interactive adapter：处理 slash command、事件历史、订阅者和当前 run cancel。
+5. Runtime 是装配层和模型状态真源：持有 Context、LLM、Agent、Tools、Skill 和通用 process runner。
+6. Agent 只执行 ReAct：读写 Context、调用绑定模型、执行工具、写回 assistant/tool result。
 
 ## 持久化边界
 
 | 路径 | 内容 |
 | --- | --- |
-| `~/.walle/.env` / `settings.json` | 用户配置 |
+| `~/.walle/.env` / `~/.walle/settings.json` | 用户配置 |
 | `~/.walle/prompt/*.md` | prompt |
 | `~/.walle/sessions/*.jsonl` | message session |
 | `~/.walle/run/supervisor.sock` | daemon 控制 socket |
 | `<project>/.walle/reports/*.md` | 通用 process report |
 | `<project>/.walle/agents/*/logs/*.md` | 通用 process worklog |
 
-## 同步规则
+## 不再维护的重复源
 
-1. 代码是真源。
-2. 先更新 `topology.json` 的节点、边与边界事实。
-3. 再同步 `topology.mmd` 和本页。
-4. Mermaid 不新增 JSON 中不存在的架构关系。
+`doc/topology.json` 和 `doc/topology.mmd` 已删除。后续更新拓扑时：
+
+1. 先改代码。
+2. 再更新 `.spec/diagrams/walle-architecture-topology.json` 和相关 Mermaid 图。
+3. 最后只在本页同步读者需要的摘要。
