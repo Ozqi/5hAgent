@@ -65,7 +65,7 @@ sequenceDiagram
 
 ## 事件映射
 
-`ProcessEvent.Type` 的稳定值：`user`、`assistant`、`thinking`、`tool`、`system`、`error`、`done`、`state`、`picker`、`model`。
+`ProcessEvent.Type` 的稳定值由 `internal/systemd/control.go` 的 `ProcessEvent*` 常量定义：`user`、`assistant`、`thinking`、`tool`、`system`、`error`、`done`、`state`、`picker`、`model`。
 
 Attach 握手顺序必须保持：`attached` snapshot -> 历史 `event` -> `ready` -> 实时 `event`。
 

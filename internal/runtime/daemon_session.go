@@ -74,14 +74,14 @@ func (s *DaemonSession) Submit(text string) error {
 		return fmt.Errorf("input is required")
 	}
 	if strings.HasPrefix(text, "/") {
-		s.publish(systemd.ProcessEvent{Type: "user", Text: text})
+		s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventUser, Text: text})
 		if text == "/stop" {
 			return s.stop()
 		}
 		if s.handlePickerSlash(text) {
 			return nil
 		}
-		s.publish(systemd.ProcessEvent{Type: "system", Text: s.handleSlash(text)})
+		s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: s.handleSlash(text)})
 		return nil
 	}
 	// 普通输入只允许单轮执行；取消函数与 busy 在启动 goroutine 前一起发布。
@@ -94,8 +94,8 @@ func (s *DaemonSession) Submit(text string) error {
 	s.busy = true
 	s.runCancel = cancel
 	s.mu.Unlock()
-	s.publish(systemd.ProcessEvent{Type: "user", Text: text})
-	s.publish(systemd.ProcessEvent{Type: "state", Busy: true})
+	s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventUser, Text: text})
+	s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventState, Busy: true})
 	go s.run(runCtx, text)
 	return nil
 }
@@ -110,7 +110,7 @@ func (s *DaemonSession) stop() error {
 	cancel := s.runCancel
 	if !s.busy || cancel == nil {
 		s.mu.Unlock()
-		s.publish(systemd.ProcessEvent{Type: "system", Text: "no active run"})
+		s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "no active run"})
 		return nil
 	}
 	s.mu.Unlock()
@@ -129,7 +129,7 @@ func (s *DaemonSession) handlePickerSlash(text string) bool {
 	busy := s.busy
 	s.mu.Unlock()
 	if busy {
-		s.publish(systemd.ProcessEvent{Type: "system", Text: "agent is busy"})
+		s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "agent is busy"})
 		return true
 	}
 	if fields[0] == "/provider" {
@@ -140,11 +140,11 @@ func (s *DaemonSession) handlePickerSlash(text string) bool {
 			for _, provider := range providers {
 				options = append(options, provider.Name)
 			}
-			s.publish(systemd.ProcessEvent{Type: "picker", Kind: "provider", Options: options})
+			s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventPicker, Kind: "provider", Options: options})
 			return true
 		}
 		if len(fields) != 2 {
-			s.publish(systemd.ProcessEvent{Type: "system", Text: "usage: /provider [name]"})
+			s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "usage: /provider [name]"})
 			return true
 		}
 		s.setProvider(fields[1])
@@ -158,16 +158,16 @@ func (s *DaemonSession) handlePickerSlash(text string) bool {
 			}
 			loginURL, done, err := s.runtime.StartOpenAILogin(s.ctx)
 			if err != nil {
-				s.publish(systemd.ProcessEvent{Type: "system", Text: err.Error()})
+				s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: err.Error()})
 				return true
 			}
-			s.publish(systemd.ProcessEvent{Type: "system", Text: "Open this URL to sign in with ChatGPT:\n" + loginURL})
+			s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "Open this URL to sign in with ChatGPT:\n" + loginURL})
 			go func() {
 				if err := <-done; err != nil {
-					s.publish(systemd.ProcessEvent{Type: "system", Text: "Codex login failed: " + err.Error()})
+					s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "Codex login failed: " + err.Error()})
 					return
 				}
-				s.publish(systemd.ProcessEvent{Type: "system", Text: "Codex login complete"})
+				s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "Codex login complete"})
 				go s.publishModels("openai")
 			}()
 			return true
@@ -181,7 +181,7 @@ func (s *DaemonSession) handlePickerSlash(text string) bool {
 		return true
 	}
 	if len(fields) != 2 {
-		s.publish(systemd.ProcessEvent{Type: "system", Text: "usage: /model [name]"})
+		s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "usage: /model [name]"})
 		return true
 	}
 	modelRef := fields[1]
@@ -196,13 +196,13 @@ func (s *DaemonSession) switchModel(modelRef string) {
 	// handlePickerSlash 已在启动 goroutine 前检查 busy；SwitchModel 自身只串行化多个切换请求。
 	result, err := s.runtime.SwitchModel(s.ctx, modelRef)
 	if err != nil {
-		s.publish(systemd.ProcessEvent{Type: "system", Text: err.Error()})
+		s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: err.Error()})
 		return
 	}
 	provider, _, _ := strings.Cut(result, "/")
 	s.setProvider(provider)
-	s.publish(systemd.ProcessEvent{Type: "model", Text: result})
-	s.publish(systemd.ProcessEvent{Type: "system", Text: "Switched model: " + result})
+	s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventModel, Text: result})
+	s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "Switched model: " + result})
 }
 
 func (s *DaemonSession) currentProvider() string {
@@ -220,10 +220,10 @@ func (s *DaemonSession) setProvider(provider string) {
 func (s *DaemonSession) publishModels(provider string) {
 	models, err := s.runtime.ProviderModels(s.ctx, provider)
 	if err != nil {
-		s.publish(systemd.ProcessEvent{Type: "system", Text: err.Error()})
+		s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: err.Error()})
 		return
 	}
-	s.publish(systemd.ProcessEvent{Type: "picker", Kind: "model", Name: provider, Options: models})
+	s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventPicker, Kind: "model", Name: provider, Options: models})
 }
 
 func (s *DaemonSession) handleSlash(text string) string {
@@ -261,25 +261,25 @@ func (s *DaemonSession) run(runCtx context.Context, text string) {
 	prev := s.runtime.Agent.SetToolEventSink(func(event toolevent.ToolEvent) {
 		s.runtime.RecordToolEvent(event)
 		s.publish(systemd.ProcessEvent{
-			Type: "tool", Kind: event.Kind, Name: event.Name, Args: event.Args,
+			Type: systemd.ProcessEventTool, Kind: event.Kind, Name: event.Name, Args: event.Args,
 			Text: event.Text, Result: event.Result, Error: event.Error,
 		})
 	})
 	defer s.runtime.Agent.SetToolEventSink(prev)
 	_, err := s.runtime.Agent.RunStream(runCtx, s.runtime.MessageCtx, text,
-		func(token string) { s.publish(systemd.ProcessEvent{Type: "assistant", Text: token}) },
-		func(token string) { s.publish(systemd.ProcessEvent{Type: "thinking", Text: token}) },
+		func(token string) { s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventAssistant, Text: token}) },
+		func(token string) { s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventThinking, Text: token}) },
 	)
 	// 2. 在锁内发布终态并清理运行状态，避免新 Submit 观察到半完成状态。
 	s.mu.Lock()
 	if runCtx.Err() != nil {
-		s.publishLocked(systemd.ProcessEvent{Type: "system", Text: "stopped current run"})
+		s.publishLocked(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "stopped current run"})
 	} else if err != nil {
-		s.publishLocked(systemd.ProcessEvent{Type: "error", Error: err.Error()})
+		s.publishLocked(systemd.ProcessEvent{Type: systemd.ProcessEventError, Error: err.Error()})
 	} else {
-		s.publishLocked(systemd.ProcessEvent{Type: "done"})
+		s.publishLocked(systemd.ProcessEvent{Type: systemd.ProcessEventDone})
 	}
-	s.publishLocked(systemd.ProcessEvent{Type: "state"})
+	s.publishLocked(systemd.ProcessEvent{Type: systemd.ProcessEventState})
 	s.busy = false
 	s.runCancel = nil
 	s.mu.Unlock()

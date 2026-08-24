@@ -30,19 +30,35 @@ type ProcessSnapshot struct {
 	Interactive bool         `json:"interactive,omitempty"`
 }
 
+// ProcessEventType 是 daemon 向 attached TUI 推送的事件类型。
+type ProcessEventType string
+
+const (
+	ProcessEventUser      ProcessEventType = "user"
+	ProcessEventAssistant ProcessEventType = "assistant"
+	ProcessEventThinking  ProcessEventType = "thinking"
+	ProcessEventTool      ProcessEventType = "tool"
+	ProcessEventSystem    ProcessEventType = "system"
+	ProcessEventError     ProcessEventType = "error"
+	ProcessEventDone      ProcessEventType = "done"
+	ProcessEventState     ProcessEventType = "state"
+	ProcessEventPicker    ProcessEventType = "picker"
+	ProcessEventModel     ProcessEventType = "model"
+)
+
 // ProcessEvent 是 daemon 向 attached TUI 推送的结构化事件。
 type ProcessEvent struct {
-	Seq     uint64   `json:"seq"`
-	Type    string   `json:"type"`
-	Text    string   `json:"text,omitempty"`
-	Kind    string   `json:"kind,omitempty"`
-	Name    string   `json:"name,omitempty"`
-	Args    string   `json:"args,omitempty"`
-	Result  string   `json:"result,omitempty"`
-	Error   string   `json:"error,omitempty"`
-	Busy    bool     `json:"busy,omitempty"`
-	Turn    int      `json:"turn,omitempty"`
-	Options []string `json:"options,omitempty"`
+	Seq     uint64           `json:"seq"`
+	Type    ProcessEventType `json:"type"`
+	Text    string           `json:"text,omitempty"`
+	Kind    string           `json:"kind,omitempty"`
+	Name    string           `json:"name,omitempty"`
+	Args    string           `json:"args,omitempty"`
+	Result  string           `json:"result,omitempty"`
+	Error   string           `json:"error,omitempty"`
+	Busy    bool             `json:"busy,omitempty"`
+	Turn    int              `json:"turn,omitempty"`
+	Options []string         `json:"options,omitempty"`
 }
 
 // InteractiveProcess 是控制通道依赖的最小长驻 Agent 接口。
@@ -376,7 +392,7 @@ func (c *ProcessClient) read(dec *json.Decoder) {
 			}
 		} else if message.Type == "error" {
 			select {
-			case c.events <- ProcessEvent{Type: "error", Error: message.Error}:
+			case c.events <- ProcessEvent{Type: ProcessEventError, Error: message.Error}:
 			case <-c.done:
 				return
 			}

@@ -329,11 +329,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.remoteTurn = event.Turn
 		}
 		switch event.Type {
-		case "user":
+		case systemd.ProcessEventUser:
 			m.entries = append(m.entries, conversationEntry{Role: roleUser, Content: event.Text})
 			m.refreshView()
 			return m, nil
-		case "state":
+		case systemd.ProcessEventState:
 			m.busy = event.Busy
 			if event.Busy {
 				m.currentStatus = "running"
@@ -343,33 +343,33 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.currentStatus = "idle"
 			m.refreshView()
 			return m, m.submitPendingInputCmd()
-		case "assistant":
+		case systemd.ProcessEventAssistant:
 			return m.Update(assistantTokenMsg{token: event.Text})
-		case "thinking":
+		case systemd.ProcessEventThinking:
 			return m.Update(assistantThinkingMsg{token: event.Text})
-		case "tool":
+		case systemd.ProcessEventTool:
 			return m.Update(toolEventMsg{event: toolevent.ToolEvent{Kind: event.Kind, Name: event.Name, Args: event.Args, Text: event.Text, Result: event.Result, Error: event.Error}})
-		case "system":
+		case systemd.ProcessEventSystem:
 			m.busy = false
 			m.currentStatus = "idle"
 			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: event.Text})
 			m.refreshView()
 			return m, nil
-		case "picker":
+		case systemd.ProcessEventPicker:
 			m.busy = false
 			m.currentStatus = "select " + event.Kind
 			m.picker = &pickerState{Kind: event.Kind, Provider: event.Name, Options: append([]string(nil), event.Options...)}
 			m.refreshView()
 			return m, nil
-		case "model":
+		case systemd.ProcessEventModel:
 			m.busy = false
 			m.modelName = event.Text
 			m.currentStatus = "idle"
 			m.refreshView()
 			return m, nil
-		case "done":
+		case systemd.ProcessEventDone:
 			return m.Update(assistantDoneMsg{})
-		case "error":
+		case systemd.ProcessEventError:
 			return m.Update(assistantErrorMsg{err: fmt.Errorf("%s", event.Error)})
 		}
 		return m, nil
