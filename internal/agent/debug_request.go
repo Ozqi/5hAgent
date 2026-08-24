@@ -1,12 +1,11 @@
-// debug_request.go - 将 Agent 层可见的逻辑 LLM 请求写入现有 debug log。
 package agent
 
 import (
 	"encoding/json"
 	"strings"
 
+	"github.com/Ozqi/walle/internal/logger"
 	"github.com/cloudwego/eino/schema"
-	"github.com/lzq/5hAgent/internal/logger"
 )
 
 type debugLLMRequest struct {

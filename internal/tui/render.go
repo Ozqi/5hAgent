@@ -1,13 +1,11 @@
-// tui_render.go - TUI 布局和状态栏渲染
-// 功能：渲染主布局、输入栏、运行状态和底部 metadata。
 package tui
 
 import (
 	"fmt"
 	"strings"
 
+	"github.com/Ozqi/walle/internal/tools"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/lzq/5hAgent/internal/tools"
 )
 
 func renderMainPane(m *AppModel) string {
@@ -122,9 +120,6 @@ func renderInputFooter(snapshot statusSnapshot, _ string, width int) string {
 				parts = append(parts, lipgloss.NewStyle().Foreground(colorBlue).Render("git "+branch))
 			}
 		}
-		if meta.TotalTasks > 0 {
-			parts = append(parts, lipgloss.NewStyle().Foreground(colorCommand).Render(fmt.Sprintf("tasks %d active / %d total", meta.ActiveTasks, meta.TotalTasks)))
-		}
 		if meta.ScrollPercent < 100 {
 			parts = append(parts, lipgloss.NewStyle().Foreground(colorPurple).Render(fmt.Sprintf("scroll %d%%", meta.ScrollPercent)))
 		}
@@ -156,14 +151,8 @@ func renderInputFooter(snapshot statusSnapshot, _ string, width int) string {
 	if meta.ContextSummaries > 0 {
 		parts = append(parts, lipgloss.NewStyle().Foreground(colorMuted).Render(fmt.Sprintf("sum %d", meta.ContextSummaries)))
 	}
-	if meta.TotalTasks > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorCommand).Render(fmt.Sprintf("tasks %d active / %d total", meta.ActiveTasks, meta.TotalTasks)))
-	}
 	if len(snapshot.EnabledSkills) > 0 {
 		parts = append(parts, lipgloss.NewStyle().Foreground(colorGreen).Render(skillSummary(snapshot.EnabledSkills)))
-	}
-	if len(snapshot.HighlightedTaskLine) > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorCommand).Render("focus "+truncateMiddle(strings.Join(snapshot.HighlightedTaskLine, ","), 48)))
 	}
 	if meta.ScrollPercent < 100 {
 		parts = append(parts, lipgloss.NewStyle().Foreground(colorPurple).Render(fmt.Sprintf("scroll %d%%", meta.ScrollPercent)))

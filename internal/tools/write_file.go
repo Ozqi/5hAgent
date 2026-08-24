@@ -1,7 +1,3 @@
-// write_file.go - 文件写入工具
-// 功能：创建或覆盖文件，自动创建父目录
-// 主要类型：WriteFileInput, WriteFileOutput
-// 导出函数：NewWriteFileTool
 package tools
 
 import (
@@ -15,20 +11,20 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// WriteFileInput defines the input parameters for write_file tool
+// WriteFileInput 描述 write_file 工具的输入参数
 type WriteFileInput struct {
 	Path    string `json:"path" jsonschema:"required,description=Absolute path to the file to write"`
 	Content string `json:"content" jsonschema:"required,description=Content to write to the file"`
 }
 
-// WriteFileOutput defines the output structure for write_file tool
+// WriteFileOutput 描述 write_file 工具的输出结构
 type WriteFileOutput struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 	Bytes   int    `json:"bytes"`
 }
 
-// NewWriteFileTool creates a new write_file tool using Eino's InferEnhancedTool
+// NewWriteFileTool 使用 Eino InferEnhancedTool 创建 write_file 工具
 func NewWriteFileTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
 	root := ""
 	if len(workspaceRoot) > 0 {
@@ -38,7 +34,7 @@ func NewWriteFileTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, erro
 		"base.write_file",
 		"Write non-empty content to a file. Always send JSON object arguments. Required: path (absolute file path), content (full file content). Creates parent directories if needed and overwrites existing file. Example: {\"path\":\"/home/user/project/file.txt\",\"content\":\"hello\\n\"}",
 		func(ctx context.Context, input WriteFileInput) (*schema.ToolResult, error) {
-			// Validate input
+			// 模型输入在这里进入文件系统信任边界；resolvePath 只解析相对路径，不限制绝对路径或上级目录。
 			if input.Path == "" {
 				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'path' is required. You must provide the file path to write")
 			}
@@ -47,13 +43,12 @@ func NewWriteFileTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, erro
 				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'content' is required. You must provide the content to write")
 			}
 
-			// Create parent directories if they don't exist
+			// 先创建父目录，再以固定权限覆盖目标文件；任一步失败都直接返回。
 			dir := filepath.Dir(input.Path)
 			if err := os.MkdirAll(dir, 0755); err != nil {
 				return nil, fmt.Errorf("failed to create parent directories for '%s': %w", input.Path, err)
 			}
 
-			// Write file
 			if err := os.WriteFile(input.Path, []byte(input.Content), 0644); err != nil {
 				return nil, fmt.Errorf("failed to write: %w", err)
 			}

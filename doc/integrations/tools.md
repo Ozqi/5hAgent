@@ -1,5 +1,8 @@
 # Tools
 
+> 由 Claude Fable 5 于 2026-08-23 阅读 `internal/tools/*.go`、`internal/toolmeta/toolmeta.go` 与 `internal/agent/tool_use.go` 后更新。
+> 覆盖范围：内置工具、Registry、模型绑定与 MCP 扩展边界。
+
 ## 职责
 
 `internal/tools` 提供 LLM 可调用工具；`internal/agent/tool_use.go` 负责执行工具调用。
@@ -7,9 +10,8 @@
 ## 注册
 
 ```text
-Registry.Init(taskList, skillMgr)
+Registry.Init(skillMgr)
   -> base.*
-  -> task.task
   -> skill.skill
 RegisterContextTool(model, promptDir)
   -> context.context
@@ -29,9 +31,10 @@ RegisterContextTool(model, promptDir)
 | `base.grep` | 读 | 正则文本搜索 |
 | `base.list_dir` | 读 | 目录列表 |
 | `base.exec_shell` | 写 | 执行 shell |
-| `task.task` | 混合 | task CRUD |
 | `skill.skill` | 读 | 查看 skill |
-| `context.context` | 混合 | inspect/pin/audit/compress |
+| `context.context` | 混合 | inspect/pin/edit/audit/compress |
+
+任务管理不属于固定工具表；需要时由 Skill、MCP 或外置动态工具提供。
 
 ## 执行
 
@@ -53,4 +56,4 @@ toolCollector -> toolQueue -> exeToolCall -> invokeTool -> addToolResult
 
 1. 在 `internal/tools` 实现 typed input/output。
 2. 在 `registry.go` 注册 full name 和 metadata。
-3. 加入能力测试，确认 schema 和 meta 一致。
+3. 通过 Registry schema 输出和真实工具调用确认 schema 与 meta 一致。

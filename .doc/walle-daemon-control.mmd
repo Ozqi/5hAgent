@@ -1,0 +1,24 @@
+%% 事实源: .doc/walle-architecture-topology.json view_daemon_control
+flowchart LR
+  cli["walle CLI"]
+  tui["TUI client"]
+
+  subgraph Socket["~/.walle/run/supervisor.sock"]
+    control["NDJSON control\nlist / attach / input / stop"]
+  end
+
+  subgraph Host["walle daemon"]
+    systemd["internal/systemd\ngeneric process table"]
+    session["DaemonSession\ninteractive runtime wrapper"]
+    runtime["internal/runtime"]
+  end
+
+  output["generic process\nreport / worklog"]
+
+  cli -->|spawn daemon when missing| runtime
+  cli -->|ps / attach| control
+  tui -->|attach / input / events| control
+  control -->|route interactive| session
+  systemd -->|serve| control
+  systemd -->|ProcessRunner.RunProcess| runtime
+  runtime -->|write when process runs| output

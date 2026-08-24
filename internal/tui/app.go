@@ -1,13 +1,9 @@
-// tui.go - 终端 UI 主界面
-// 功能：Bubble Tea 构建的交互式对话界面，显示对话/状态面板，支持 /task /skill /compress 命令
-// 主要类型：AppModel, conversationEntry, statusSnapshot
-// 导出函数：NewAppModel, LaunchTUI
+// Package tui 实现基于 Bubble Tea 的终端对话界面、daemon attach 界面和运行状态渲染。
 package tui
 
 import (
 	"context"
 	"fmt"
-	"github.com/lzq/5hAgent/internal/toolevent"
 	"os"
 	"sort"
 	"strings"
@@ -15,31 +11,31 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Ozqi/walle/internal/agent"
+	agentctx "github.com/Ozqi/walle/internal/context"
+	"github.com/Ozqi/walle/internal/skill"
+	"github.com/Ozqi/walle/internal/systemd"
+	"github.com/Ozqi/walle/internal/toolevent"
+	"github.com/Ozqi/walle/internal/tools"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	ansi "github.com/charmbracelet/x/ansi"
 	"github.com/cloudwego/eino/schema"
-	"github.com/lzq/5hAgent/internal/agent"
-	agentctx "github.com/lzq/5hAgent/internal/context"
-	"github.com/lzq/5hAgent/internal/skill"
-	"github.com/lzq/5hAgent/internal/systemd"
-	"github.com/lzq/5hAgent/internal/task"
-	"github.com/lzq/5hAgent/internal/tools"
 	"github.com/mattn/go-runewidth"
 )
 
 const (
 	roleUser         = "user"
 	roleAssistant    = "assistant"
-	roleTool         = "tool"
 	roleSystem       = "system"
 	roleHint         = "hint"
 	roleThinking     = "thinking"
 	defaultTUIWidth  = 100
 	defaultTUIHeight = 30
 	quitConfirmDelay = 2 * time.Second
+	maxHintRows      = 12
 )
 
 type conversationEntry struct {
@@ -63,9 +59,8 @@ func entryNow(entry conversationEntry) conversationEntry {
 }
 
 type statusSnapshot struct {
-	Runtime             runtimeMeta
-	EnabledSkills       []string
-	HighlightedTaskLine []string
+	Runtime       runtimeMeta
+	EnabledSkills []string
 }
 
 type runtimeMeta struct {
@@ -83,8 +78,6 @@ type runtimeMeta struct {
 	SessionID        string
 	Workdir          string
 	Git              gitMeta
-	ActiveTasks      int
-	TotalTasks       int
 }
 
 type gitMeta struct {
@@ -105,18 +98,14 @@ type AppModel struct {
 	agentName    string
 	sessionID    string
 	promptDir    string
-	taskList     *task.TaskList
 	skillMgr     *skill.Manager
 	ctxManager   *agentctx.Manager
 	messageCtx   *agentctx.Context
-	runTasks     RunTasksFunc
 	switchModel  SwitchModelFunc
 	remoteSubmit func(string) error
 	remoteStop   func() error
 	ctx          context.Context
 	runCancel    context.CancelFunc
-	runEntry     int
-	runLines     []string
 
 	width  int
 	height int
@@ -131,6 +120,7 @@ type AppModel struct {
 
 	currentAssistant int
 	currentStatus    string
+	remoteTurn       int
 	spinnerFrame     int
 	lastInput        string
 	escPending       bool
@@ -183,14 +173,6 @@ type debugToolResultMsg struct {
 	event toolevent.ToolEvent
 }
 
-type runTasksDoneMsg struct {
-	summary string
-	err     error
-}
-
-// RunTasksFunc 是 TUI /run 命令调用 runtime 连续执行 task.md 的薄接口。
-type RunTasksFunc func(context.Context, func(toolevent.ToolEvent)) (string, error)
-
 // SwitchModelFunc 是 TUI /model 命令切换当前 Runtime 模型的薄接口。
 type SwitchModelFunc func(context.Context, string) (string, error)
 
@@ -205,10 +187,11 @@ var (
 	colorGreen   = lipgloss.Color("#9ece6a")
 	colorBlue    = lipgloss.Color("#7aa2f7")
 	colorPurple  = lipgloss.Color("#bb9af7")
-	colorYellow  = lipgloss.Color("#e0af68")
+	colorOrange  = lipgloss.Color("#DFA241")
+	colorYellow  = lipgloss.Color("#F2C14E")
 	colorGray    = lipgloss.Color("#565f89")
 	colorWhite   = lipgloss.Color("#e2e1f1")
-	colorCommand = lipgloss.Color("#89b4fa")
+	colorCommand = colorOrange
 	colorResult  = lipgloss.Color("#cdd6f4")
 	colorError   = lipgloss.Color("#f38ba8")
 	colorInputBg = lipgloss.Color("#404a4f")
@@ -237,12 +220,10 @@ type slashCommandHint struct {
 }
 
 var slashCommandHints = []slashCommandHint{
-	{Name: "/task", Usage: "/task <list|create|update|get|delete|archive|reopen>", Desc: "task file"},
 	{Name: "/skill", Usage: "/skill <list|get|reload>", Desc: "skills"},
 	{Name: "/compress", Usage: "/compress", Desc: "context"},
 	{Name: "/mcp", Usage: "/mcp <list|add|remove|enable|disable>", Desc: "mcp servers"},
 	{Name: "/session", Usage: "/session <new|list|id>", Desc: "sessions"},
-	{Name: "/run", Usage: "/run", Desc: "run task.md until no pending tasks"},
 	{Name: "/stop", Usage: "/stop", Desc: "stop current run"},
 	{Name: "/model", Usage: "/model <provider/model>", Desc: "ollama/gemma4, mira/gpt-5.5"},
 	{Name: "/provider", Usage: "/provider [name]", Desc: "select and authenticate provider"},
@@ -257,7 +238,8 @@ var modelHints = []string{
 	"mira/claude-opus-4-6",
 }
 
-func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string, runTasks RunTasksFunc, switchModel SwitchModelFunc) *AppModel {
+// NewAppModel 创建本地 Agent TUI 的初始模型，并从消息上下文恢复历史条目。
+func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string, switchModel SwitchModelFunc) *AppModel {
 	vp := viewport.New(0, 0)
 	// viewport 自身支持滚轮，但还需要 LaunchTUI 开启 Bubble Tea mouse mode。
 	vp.MouseWheelEnabled = true
@@ -270,7 +252,7 @@ func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, promptD
 	input.SetHeight(1)
 	input.Prompt = "> "
 	// 输入框使用参考 tmux 对话窗口的低对比深灰条，避免大白块抢视觉焦点。
-	input.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(colorGreen).Background(colorInputBg).Bold(true)
+	input.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(colorYellow).Background(colorInputBg).Bold(true)
 	input.FocusedStyle.Text = lipgloss.NewStyle().Foreground(colorInputFg).Background(colorInputBg)
 	input.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(colorGray).Background(colorInputBg)
 	input.FocusedStyle.CursorLine = lipgloss.NewStyle().Foreground(colorInputFg).Background(colorInputBg)
@@ -288,14 +270,11 @@ func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, promptD
 		}(), "Agent"),
 		sessionID:        sessionID,
 		promptDir:        promptDir,
-		taskList:         taskList,
 		skillMgr:         skillMgr,
 		ctxManager:       ctxManager,
 		messageCtx:       messageCtx,
-		runTasks:         runTasks,
 		switchModel:      switchModel,
 		ctx:              ctx,
-		runEntry:         -1,
 		viewport:         vp,
 		input:            input,
 		currentAssistant: -1,
@@ -305,7 +284,8 @@ func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, promptD
 	}
 }
 
-// loadHistoryEntries 从 ctxManager 加载历史消息到 conversationEntry
+// loadHistoryEntries 将持久化消息恢复为 TUI 可渲染条目。
+// assistant 的 reasoning、tool call 和正文会拆成不同 entry；tool result 按 ToolCallID 回填到对应工具提示。
 func loadHistoryEntries(ctxManager *agentctx.Manager, messageCtx *agentctx.Context) []conversationEntry {
 	if ctxManager == nil || messageCtx == nil {
 		return nil
@@ -375,19 +355,24 @@ func messageCreatedAt(msg *schema.Message) string {
 	return ""
 }
 
+// Init 返回 Bubble Tea 启动时需要执行的光标闪烁命令。
 func (m *AppModel) Init() tea.Cmd {
 	return textarea.Blink
 }
 
+// Update 处理 Bubble Tea 消息并更新 TUI 状态机。
+// 消息按布局、本地 Agent 输出、daemon attach 事件、工具事件、picker 模态和键鼠输入分层处理。
 func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		// 布局事件只更新尺寸和缓存视图，不触发 Agent 状态变化。
 		m.width = msg.Width
 		m.height = msg.Height
 		m.resize()
 		m.refreshView()
 		return m, nil
 	case assistantTokenMsg:
+		// 本地 Agent 输出事件只追加 assistant/thinking/tool entry，再由 refreshView 重绘。
 		if !m.busy {
 			return m, nil
 		}
@@ -427,7 +412,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshView()
 		return m, nil
 	case remoteEventMsg:
+		// attached 模式把 daemon 协议事件翻译成本地 TUI 状态，不直接访问 Runtime。
 		event := msg.event
+		if event.Turn > 0 {
+			m.remoteTurn = event.Turn
+		}
 		switch event.Type {
 		case "user":
 			m.entries = append(m.entries, conversationEntry{Role: roleUser, Content: event.Text})
@@ -478,6 +467,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshView()
 		return m, nil
 	case spinnerTickMsg:
+		// 工具事件和 spinner 事件只影响展示状态；实际执行仍在 Agent 或 daemon goroutine 中。
 		if m.busy {
 			m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
 			m.refreshView()
@@ -489,32 +479,12 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentStatus = "idle"
 		m.refreshView()
 		return m, nil
-	case runTasksDoneMsg:
-		m.busy = false
-		m.currentAssistant = -1
-		if msg.err != nil {
-			m.currentStatus = "error"
-			content := msg.err.Error()
-			if strings.TrimSpace(msg.summary) != "" {
-				content = strings.TrimSpace(msg.summary) + "\n\n" + content
-			}
-			m.finishRunEntry(content)
-		} else {
-			m.currentStatus = "idle"
-			m.finishRunEntry(msg.summary)
-		}
-		m.refreshView()
-		return m, nil
 	case toolEventMsg:
 		if msg.event.Kind == "call" {
 			m.toolCalls++
 			m.lastTool = fallback(tools.DisplayName(msg.event.Name), msg.event.Name)
 		}
-		if m.runEntry >= 0 {
-			m.applyRunToolEvent(msg.event)
-		} else {
-			m.applyToolEvent(msg.event)
-		}
+		m.applyToolEvent(msg.event)
 		m.currentAssistant = -1
 		m.refreshView()
 		if msg.event.Kind == "call" {
@@ -539,6 +509,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.picker != nil {
+			// picker 是模态输入；存在时不让普通快捷键和 textarea 继续消费按键。
 			switch msg.String() {
 			case "up", "ctrl+p":
 				if m.picker.Cursor > 0 {
@@ -607,11 +578,29 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.submit()
 		case "tab":
-			text := strings.TrimSpace(m.input.Value())
+			raw := m.input.Value()
+			text := strings.TrimSpace(raw)
+			if text == "/model" {
+				m.input.SetValue("/model ")
+				m.input.CursorEnd()
+				m.refreshView()
+				return m, nil
+			}
+			if isModelHintInput(raw, text) {
+				matches := m.modelHintMatches(modelArgPrefix(raw))
+				if len(matches) == 1 {
+					m.input.SetValue("/model " + matches[0])
+					m.input.CursorEnd()
+				}
+				m.refreshView()
+				return m, nil
+			}
 			if strings.HasPrefix(text, "/") && !strings.Contains(text, " ") {
 				if matches := slashHintMatches(text); len(matches) == 1 {
 					m.input.SetValue(matches[0].Name + " ")
+					m.input.CursorEnd()
 				}
+				m.refreshView()
 			}
 			return m, nil
 		case "pgdown", "ctrl+f":
@@ -681,15 +670,16 @@ func confirm(pending *bool, last *time.Time, within time.Duration) bool {
 	return false
 }
 
+// View 渲染当前 TUI 画面，并保留底部占位行避免输入框贴边。
 func (m *AppModel) View() string {
 	m.resize()
 	// 当前布局保持单列：历史记录在上，输入框附近承载运行状态。
 	mainView := renderMainPane(m)
-	statusBar := renderBottomStatusBar(m.width)
 	mainHeight := max(1, m.height-1)
+	bottomPad := statusBarStyle.Width(max(1, m.width)).Render(strings.Repeat(" ", max(1, m.width)))
 	return lipgloss.JoinVertical(lipgloss.Left,
 		renderFixedLines(strings.Split(mainView, "\n"), max(1, m.width), mainHeight),
-		statusBar,
+		bottomPad,
 	)
 }
 
@@ -725,6 +715,7 @@ func renderedLineCount(text string) int {
 	return strings.Count(text, "\n") + 1
 }
 
+// refreshView 重新渲染所有会话条目，并在 auto-scroll 开启时保持贴底。
 func (m *AppModel) refreshView() {
 	m.resize()
 	contentWidth := max(8, m.viewport.Width)
@@ -738,7 +729,7 @@ func (m *AppModel) refreshView() {
 		parts = append(parts, m.renderConversationEntry(entry, contentWidth))
 	}
 	if len(parts) == 0 {
-		parts = append(parts, renderEmptyState(contentWidth))
+		parts = append(parts, renderEmptyState(contentWidth, m.viewport.Height))
 	}
 	m.viewText = strings.Join(parts, "\n\n")
 	m.viewport.SetContent(m.viewText)
@@ -748,27 +739,83 @@ func (m *AppModel) refreshView() {
 	}
 }
 
-func renderEmptyState(width int) string {
+func renderEmptyState(width int, height int) string {
+	padBottom := func(content string) string {
+		return content + strings.Repeat("\n", max(0, height-renderedLineCount(content)))
+	}
+	if width >= 40 && height >= 8 {
+		info := lipgloss.JoinVertical(lipgloss.Left,
+			lipgloss.NewStyle().Bold(true).Foreground(colorYellow).Render("walle"),
+			lipgloss.NewStyle().Foreground(colorMuted).Render("Go Agent Runtime"),
+			lipgloss.NewStyle().Foreground(colorMuted).Render("Inspect · Patch · Run"),
+			lipgloss.NewStyle().Foreground(colorMuted).Render("type / for commands"),
+		)
+		return padBottom(lipgloss.NewStyle().PaddingLeft(1).Render(lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			renderWallePixelIcon(),
+			"   ",
+			info,
+		)))
+	}
+	if width >= 16 && height >= 8 {
+		return padBottom(lipgloss.NewStyle().
+			Width(width).
+			Align(lipgloss.Center).
+			Render(renderWallePixelIcon()))
+	}
+	if width >= 12 && height >= 4 {
+		return padBottom(lipgloss.NewStyle().
+			Width(width).
+			Align(lipgloss.Center).
+			Render(renderWallePixelIconCompact()))
+	}
 	lines := []string{
-		lipgloss.NewStyle().Foreground(colorYellow).Render("5hAgent ready"),
+		lipgloss.NewStyle().Foreground(colorYellow).Render("walle 已就绪"),
 		lipgloss.NewStyle().Foreground(colorMuted).Render("type a prompt to start"),
 		lipgloss.NewStyle().Foreground(colorMuted).Render("type / for commands"),
 	}
 	for i, line := range lines {
 		lines[i] = truncateMiddle(line, max(20, width-2))
 	}
-	return strings.Join(lines, "\n")
+	return padBottom(strings.Join(lines, "\n"))
+}
+
+func renderWallePixelIcon() string {
+	orange := lipgloss.NewStyle().Foreground(colorOrange)
+	yellow := lipgloss.NewStyle().Foreground(colorYellow)
+	return strings.Join([]string{
+		orange.Render(" ╭───╮ ╭───╮"),
+		orange.Render("╱  ") + yellow.Render("●") + orange.Render(" ╲_╱ ") + yellow.Render("●") + orange.Render("  ╲"),
+		orange.Render("╲____╱ ╲____╱"),
+		orange.Render("     ║╬║"),
+		orange.Render("╭██╮╭─╨─╮╭██╮"),
+		orange.Render("│██├┤") + yellow.Render("▪▦▪") + orange.Render("├┤██│"),
+		orange.Render("╰██╯╰───╯╰██╯"),
+	}, "\n")
+}
+
+func renderWallePixelIconCompact() string {
+	orange := lipgloss.NewStyle().Foreground(colorOrange)
+	yellow := lipgloss.NewStyle().Foreground(colorYellow)
+	return strings.Join([]string{
+		orange.Render("╭─╮ ╭─╮"),
+		orange.Render("│") + yellow.Render("●") + orange.Render("╰─╯") + yellow.Render("●") + orange.Render("│"),
+		orange.Render("  ╰╥╯"),
+		orange.Render("▟█╰") + yellow.Render("▪") + orange.Render("╯█▙"),
+	}, "\n")
 }
 
 // snapshot 汇总输入框附近状态区需要的数据。
 // 调用层级：View -> renderMainPane -> snapshot。
-// 主要步骤：读取 token、context、skill、task 的只读摘要；不在渲染函数里直接散落业务查询。
+// 主要步骤：读取 token、context 和 skill 的只读摘要；不在渲染函数里直接散落业务查询。
 func (m *AppModel) snapshot() statusSnapshot {
 	contextTokens, sessionTokens, contextWindow := 0, 0, 0
 	turn := 0
 	if m.ag != nil {
 		contextTokens, sessionTokens, contextWindow = m.ag.TokenUsage()
 		turn = m.ag.CurrentTurn()
+	} else {
+		turn = m.remoteTurn
 	}
 	snapshot := statusSnapshot{Runtime: runtimeMeta{
 		Busy:           m.busy,
@@ -795,23 +842,9 @@ func (m *AppModel) snapshot() statusSnapshot {
 	}
 	if m.skillMgr != nil {
 		for _, s := range m.skillMgr.ListSkills() {
-			if s.Enabled {
-				snapshot.EnabledSkills = append(snapshot.EnabledSkills, s.Name)
-			}
+			snapshot.EnabledSkills = append(snapshot.EnabledSkills, s.Name)
 		}
 		sort.Strings(snapshot.EnabledSkills)
-	}
-	if m.taskList != nil {
-		total, _, inProgress, _, _, _, _ := m.taskList.GetProgress()
-		snapshot.Runtime.TotalTasks = total
-		snapshot.Runtime.ActiveTasks = inProgress
-		tasks := m.taskList.ListTasksByStatus(task.StatusInProgress)
-		for i, task := range tasks {
-			if i >= 3 {
-				break
-			}
-			snapshot.HighlightedTaskLine = append(snapshot.HighlightedTaskLine, fmt.Sprintf("%s %s", task.ID, task.Status))
-		}
 	}
 	return snapshot
 }
@@ -856,18 +889,41 @@ func (m *AppModel) renderSlashHint(width int) string {
 			return slashHintStyle.Width(width).Render("No options available")
 		}
 		lines := []string{"Select " + m.picker.Kind}
-		for index, option := range m.picker.Options {
+		start := max(0, m.picker.Cursor-maxHintRows/2)
+		end := min(len(m.picker.Options), start+maxHintRows)
+		start = max(0, end-maxHintRows)
+		for index := start; index < end; index++ {
+			option := m.picker.Options[index]
 			prefix := "  "
 			if index == m.picker.Cursor {
 				prefix = "> "
 			}
 			lines = append(lines, prefix+option)
 		}
+		if len(m.picker.Options) > end {
+			lines = append(lines, fmt.Sprintf("  ... %d more", len(m.picker.Options)-end))
+		}
 		return slashHintStyle.Width(width).Render(strings.Join(lines, "\n"))
 	}
-	text := strings.TrimSpace(m.input.Value())
+	raw := m.input.Value()
+	text := strings.TrimSpace(raw)
 	if !strings.HasPrefix(text, "/") {
 		return ""
+	}
+	if isModelHintInput(raw, text) {
+		matches := m.modelHintMatches(modelArgPrefix(raw))
+		if len(matches) == 0 {
+			return ""
+		}
+		limit := min(len(matches), maxHintRows)
+		lines := make([]string, 0, limit+1)
+		for _, option := range matches[:limit] {
+			lines = append(lines, wrapVisibleText("  "+option, max(8, width-2)))
+		}
+		if len(matches) > limit {
+			lines = append(lines, fmt.Sprintf("  ... %d more", len(matches)-limit))
+		}
+		return slashHintStyle.Width(width).Render(strings.Join(lines, "\n"))
 	}
 	matches := slashHintMatches(text)
 	if len(matches) == 0 {
@@ -902,8 +958,37 @@ func slashHintMatches(input string) []slashCommandHint {
 	return matches
 }
 
-func renderBottomStatusBar(width int) string {
-	return statusBarStyle.Width(max(1, width)).Render(strings.Repeat(" ", max(1, width)))
+func isModelHintInput(raw string, trimmed string) bool {
+	return trimmed == "/model" || strings.HasPrefix(trimmed, "/model ")
+}
+
+func modelArgPrefix(input string) string {
+	fields := strings.Fields(input)
+	if len(fields) < 2 {
+		return ""
+	}
+	return fields[1]
+}
+
+func (m *AppModel) modelHintMatches(prefix string) []string {
+	seen := map[string]bool{}
+	matches := make([]string, 0, len(modelHints)+1)
+	add := func(ref string) {
+		ref = strings.TrimSpace(ref)
+		if ref == "" || !strings.Contains(ref, "/") || seen[ref] {
+			return
+		}
+		if prefix != "" && !strings.HasPrefix(ref, prefix) {
+			return
+		}
+		seen[ref] = true
+		matches = append(matches, ref)
+	}
+	add(m.modelName)
+	for _, hint := range modelHints {
+		add(hint)
+	}
+	return matches
 }
 
 func (m *AppModel) renderConversationEntry(entry conversationEntry, width int) string {
@@ -919,8 +1004,6 @@ func (m *AppModel) renderConversationEntry(entry conversationEntry, width int) s
 		return renderIndentedEntry(withEntryTime(entry, m.renderToolHintEntry(entry, innerWidth), innerWidth))
 	case roleThinking:
 		return renderIndentedEntry(withEntryTime(entry, renderThinkingEntry(entry.Content, innerWidth), innerWidth))
-	case roleTool:
-		return renderIndentedEntry(withEntryTime(entry, renderToolEntry(entry.Content, innerWidth), innerWidth))
 	case roleSystem:
 		return renderIndentedEntry(withEntryTime(entry, renderSystemEntry(entry.SystemTitle, entry.Content, innerWidth), innerWidth))
 	default:
@@ -1166,10 +1249,11 @@ func tickSpinner() tea.Cmd {
 	})
 }
 
-func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, taskList *task.TaskList, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string, runTasks RunTasksFunc, switchModel SwitchModelFunc, onToolEvent ToolEventFunc) error {
+// LaunchTUI 启动本地 Agent TUI，并在退出时恢复 Agent 的工具事件 sink。
+func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string, switchModel SwitchModelFunc, onToolEvent ToolEventFunc) error {
 	launchMu.Lock()
 	defer launchMu.Unlock()
-	model := NewAppModel(ctx, ag, modelName, promptDir, taskList, skillMgr, ctxManager, messageCtx, sessionID, runTasks, switchModel)
+	model := NewAppModel(ctx, ag, modelName, promptDir, skillMgr, ctxManager, messageCtx, sessionID, switchModel)
 	// WithMouseCellMotion 开启点击、释放和滚轮事件；viewport.Update 负责具体滚动。
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	model.program = p

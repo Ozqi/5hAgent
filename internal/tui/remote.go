@@ -1,12 +1,11 @@
-// tui_remote.go - attached TUI 的 Unix Socket 客户端入口。
 package tui
 
 import (
 	"context"
 	"fmt"
 
+	"github.com/Ozqi/walle/internal/systemd"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/lzq/5hAgent/internal/systemd"
 )
 
 // RemoteClient 是任意 attached TUI 所需的最小 daemon 客户端契约。
@@ -20,8 +19,10 @@ type RemoteClient interface {
 
 // LaunchAttachedTUI 连接 daemon Agent；退出界面只关闭客户端连接。
 func LaunchAttachedTUI(ctx context.Context, client RemoteClient) error {
+	// 1. 用 attach 快照初始化界面，并把输入和停止操作绑定到远端客户端。
 	snapshot := client.Snapshot()
-	model := NewAppModel(ctx, nil, snapshot.Model, "", nil, nil, nil, nil, snapshot.SessionID, nil, nil)
+	model := NewAppModel(ctx, nil, snapshot.Model, "", nil, nil, nil, snapshot.SessionID, nil)
+	model.remoteTurn = snapshot.Turn
 	model.remoteSubmit = client.Submit
 	model.remoteStop = client.Stop
 	model.busy = snapshot.State == systemd.ProcessRunning
@@ -31,6 +32,7 @@ func LaunchAttachedTUI(ctx context.Context, client RemoteClient) error {
 	model.metaCache.Workdir = snapshot.Workspace
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	model.program = p
+	// 2. Events 已合并历史重放和实时流；流关闭时通知界面远端已断开。
 	go func() {
 		for event := range client.Events() {
 			p.Send(remoteEventMsg{event: event})
@@ -38,10 +40,11 @@ func LaunchAttachedTUI(ctx context.Context, client RemoteClient) error {
 		p.Send(remoteDisconnectedMsg{})
 	}()
 	_, err := p.Run()
+	// 3. TUI 退出只发送 detach/Close，远端执行继续存活，可再次 attach。
 	_ = client.Close()
 	if err == nil && snapshot.ID != "" {
 		fmt.Printf("Detached from %s; agent is still running.\n", snapshot.ID)
-		fmt.Printf("Check: 5hagent ps\nReattach: 5hagent attach %s\n", snapshot.ID)
+		fmt.Printf("Check: walle ps\nReattach: walle attach %s\n", snapshot.ID)
 	}
 	return err
 }

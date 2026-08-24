@@ -27,14 +27,15 @@
   ],
   "security": {
     "callback": ["127.0.0.1:1455", "127.0.0.1:1457"],
-    "credential_path": "~/.5hAgent/auth/codex.json",
+    "credential_path": "~/.walle/auth/codex.json",
     "credential_mode": "0600",
     "requirements": ["PKCE S256", "random state", "redacted logs", "atomic credential writes"],
-    "forbidden": ["project .5hagent", "session jsonl", "reports", "debug request logs"]
+    "forbidden": ["project .walle", "session jsonl", "reports", "debug request logs"]
   },
   "persistence": {
-    "selection_path": "~/.5hAgent/state.json",
-    "precedence": ["--model", "saved provider/model", "LLM_MODEL"]
+    "default_selection_path": "~/.walle/settings.json",
+    "runtime_switch": "memory only",
+    "precedence": ["--model", "settings.json default_model", "LLM_MODEL"]
   },
   "mvp": [
     "browser OAuth",

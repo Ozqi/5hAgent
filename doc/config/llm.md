@@ -26,7 +26,7 @@ LLM_OLLAMA_BASE_URL=http://localhost:11434/v1
 LLM_OLLAMA_API_KEY=dummy
 ```
 
-`LLM_MODEL` 后半段会原样传给 Ollama，例如 `qwen3:14b`、`ornith:9b`、`ornith:35b` 或 HuggingFace GGUF 引用。Ollama library 中的 Ornith-1.0 面向 agentic coding，当前可用标签包括 `ornith:9b` 和 `ornith:35b`；日常 smoke test 优先用 `ornith:9b`，更重的代码任务再尝试 `ornith:35b`。
+`LLM_MODEL` 后半段会原样传给 Ollama，例如 `qwen3:14b`、`ornith:9b`、`ornith:35b` 或 HuggingFace GGUF 引用。Ollama library 中的 Ornith-1.0 面向 agentic coding，当前可用标签包括 `ornith:9b` 和 `ornith:35b`；日常短任务优先用 `ornith:9b`，更重的代码任务再尝试 `ornith:35b`。
 
 Ornith 属于较新的 Ollama library 模型；如果拉取时报 `requires a newer version of Ollama`，先升级 Ollama 客户端。
 
@@ -34,7 +34,7 @@ Ornith 属于较新的 Ollama library 模型；如果拉取时报 `requires a ne
 
 Codex 是 OpenAI provider 的 ChatGPT OAuth 认证方式，不需要 `LLM_CODEX_API_KEY` 或 proxy 配置。在 TUI 输入 `/provider` 并选择 `openai`，完成浏览器登录后再从 `/model` 选择账号可用模型。
 
-OAuth 凭据位于 `~/.5hAgent/auth/codex.json`（`0600`）。用户级默认模型位于 `~/.5hAgent/settings.json` 的 `default_model`；运行中的 runtime 模型选择位于 `~/.5hAgent/runtimes/<runtime-id>/state.json`。CLI `--model` 优先于 runtime 当前状态和用户默认值。
+OAuth 凭据位于 `~/.walle/auth/codex.json`（`0600`）。用户级默认模型位于 `~/.walle/settings.json` 的 `default_model`。CLI `--model` 只覆盖本次 Runtime，优先于用户默认值；`SwitchModel` 只更新当前 Runtime 内存。
 
 ## 文件
 
@@ -61,4 +61,4 @@ OAuth 凭据位于 `~/.5hAgent/auth/codex.json`（`0600`）。用户级默认模
 | `--llm-format` | 临时覆盖接口格式 |
 | `--llm-model` | 临时覆盖模型名 |
 
-这些参数不改写 `~/.5hAgent/.env`。
+这些参数不改写 `~/.walle/.env`。

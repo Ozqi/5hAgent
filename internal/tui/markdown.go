@@ -1,13 +1,11 @@
-// markdown_stream.go - Markdown 渲染
-// 功能：终端 Markdown 着色展示（代码块/标题/列表/引用）
 package tui
 
 import (
 	"regexp"
 	"strings"
 
+	"github.com/Ozqi/walle/internal/logger"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/lzq/5hAgent/internal/logger"
 )
 
 func renderMarkdownForTerminal(input string, color bool) string {
@@ -190,7 +188,6 @@ func renderTable(block string, color bool) string {
 		return block
 	}
 
-	// 解析所有行
 	var rawRows [][]string
 	sepIdx := -1
 	for _, line := range lines {

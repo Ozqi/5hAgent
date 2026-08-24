@@ -1,5 +1,3 @@
-// auth.go - Codex ChatGPT OAuth、凭据存储和刷新。
-// 凭据只保存在用户目录，调用方只能获取短期 access token 和 account id。
 package codex
 
 import (
@@ -21,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lzq/5hAgent/internal/utils"
+	"github.com/Ozqi/walle/internal/utils"
 )
 
 const (
@@ -40,7 +38,7 @@ var (
 	defaultStoreErr  error
 )
 
-// Credentials 是 5hAgent 自己持久化的 ChatGPT OAuth 凭据。
+// Credentials 是 walle 自己持久化的 ChatGPT OAuth 凭据。
 type Credentials struct {
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token"`
@@ -49,7 +47,7 @@ type Credentials struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 }
 
-// Store 串行化登录、读取和 refresh token 写回。
+// Store 串行化凭据读取、refresh token 更新和原子写回。
 type Store struct {
 	mu     sync.Mutex
 	path   string
@@ -77,7 +75,9 @@ func (s *Store) LoggedIn() bool {
 	return err == nil && credentials.AccessToken != "" && credentials.RefreshToken != ""
 }
 
-// StartLogin 启动短期 localhost OAuth callback，立即返回可点击 URL 和完成通道。
+// StartLogin 启动短期 localhost OAuth callback，立即返回授权 URL 和完成通道。
+// 阶段：绑定回调端口并生成 PKCE/state，启动 HTTP server，校验回调后交换 token，最后关闭 server。
+// 副作用：尝试打开系统浏览器；成功后以 0600 权限原子写入凭据文件；超时或 ctx 取消会结束回调服务。
 func (s *Store) StartLogin(ctx context.Context) (string, <-chan error, error) {
 	listener, port, err := listenCallback()
 	if err != nil {
@@ -105,7 +105,7 @@ func (s *Store) StartLogin(ctx context.Context) (string, <-chan error, error) {
 		"state":                      {state},
 		"id_token_add_organizations": {"true"},
 		"codex_cli_simplified_flow":  {"true"},
-		"originator":                 {"5hagent"},
+		"originator":                 {"walle"},
 	}
 	authURL := authIssuer + "/oauth/authorize?" + query.Encode()
 	done := make(chan error, 1)
@@ -144,12 +144,12 @@ func (s *Store) StartLogin(ctx context.Context) (string, <-chan error, error) {
 			return
 		}
 		if err := s.exchange(request.Context(), code, verifier, redirectURI); err != nil {
-			http.Error(writer, "Login failed; return to 5hAgent", http.StatusBadGateway)
+			http.Error(writer, "Login failed; return to walle", http.StatusBadGateway)
 			complete(err)
 			return
 		}
 		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = io.WriteString(writer, "<h2>5hAgent login complete</h2><p>You can close this page.</p>")
+		_, _ = io.WriteString(writer, "<h2>walle login complete</h2><p>You can close this page.</p>")
 		complete(nil)
 	})
 	go func() {
@@ -172,7 +172,7 @@ func (s *Store) StartLogin(ctx context.Context) (string, <-chan error, error) {
 	return authURL, done, nil
 }
 
-// ForceRefresh 刷新可能被服务端提前撤销的 access token。
+// ForceRefresh 强制刷新可能被服务端提前撤销的 access token，并在持锁期间写回凭据。
 func (s *Store) ForceRefresh(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -187,7 +187,7 @@ func (s *Store) ForceRefresh(ctx context.Context) error {
 	return s.save(credentials)
 }
 
-// Token 返回有效 access token；临近过期时自动刷新并原子写回。
+// Token 返回有效 access token 和 account ID；临近过期时在持锁期间刷新并原子写回。
 func (s *Store) Token(ctx context.Context) (string, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -208,6 +208,7 @@ func (s *Store) Token(ctx context.Context) (string, string, error) {
 }
 
 func (s *Store) exchange(ctx context.Context, code string, verifier string, redirectURI string) error {
+	// 1. 使用授权码和 PKCE verifier 请求 OAuth token endpoint。
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
@@ -240,12 +241,14 @@ func (s *Store) exchange(ctx context.Context, code string, verifier string, redi
 	if token.ExpiresIn == 0 {
 		token.ExpiresIn = 3600
 	}
+	// 2. 从 JWT payload 提取 account ID，并串行化首次凭据落盘。
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.save(Credentials{AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, IDToken: token.IDToken, AccountID: accountID(token.IDToken, token.AccessToken), ExpiresAt: time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)})
 }
 
 func (s *Store) refresh(ctx context.Context, credentials Credentials) (Credentials, error) {
+	// 1. 使用 refresh token 请求新凭据；服务端未返回的字段沿用旧值。
 	body, _ := json.Marshal(map[string]string{"client_id": clientID, "grant_type": "refresh_token", "refresh_token": credentials.RefreshToken})
 	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, authIssuer+"/oauth/token", strings.NewReader(string(body)))
 	request.Header.Set("Content-Type", "application/json")
@@ -281,6 +284,7 @@ func (s *Store) refresh(ctx context.Context, credentials Credentials) (Credentia
 	if token.ExpiresIn == 0 {
 		token.ExpiresIn = 3600
 	}
+	// 2. 重新计算过期时间，具体落盘由持有 Store.mu 的调用方负责。
 	credentials.ExpiresAt = time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
 	return credentials, nil
 }
@@ -298,6 +302,7 @@ func (s *Store) load() (Credentials, error) {
 }
 
 func (s *Store) save(credentials Credentials) error {
+	// 写临时文件后 rename，避免进程中断留下半写入的 token JSON。
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}

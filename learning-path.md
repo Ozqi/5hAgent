@@ -1,4 +1,4 @@
-# Learning Path
+# Learning Path（或者说开发过程留痕）
 
 本仓库保留原始 `master` 历史，同时提供 5 个 `learn/stage-*` 分支作为循序渐进的阅读入口。`develop` 是后续 baseline 规整分支，不属于稳定学习阶段。Stage 6 当前先以设计文档记录，不对应稳定学习分支。
 
@@ -23,7 +23,7 @@ git log --oneline --reverse learn/stage-1-core-agent..learn/stage-2-tools-task
 
 | 分支 | 关注点 | 建议阅读 |
 | --- | --- | --- |
-| `learn/stage-1-core-agent` | 最小 ReAct Agent：入口、LLM、主循环 | `cmd/5hagent/main.go`, `internal/agent/`, `internal/llm/` |
+| `learn/stage-1-core-agent` | 最小 ReAct Agent：入口、LLM、主循环 | `cmd/walle/main.go`, `internal/agent/`, `internal/llm/` |
 | `learn/stage-2-tools-task` | 工具执行扩展：文件工具、并发、流式工具执行、TaskList | `internal/tools/`, `internal/agent/tool_use.go`, `internal/task/` |
 | `learn/stage-3-skill-prompt` | Skill、Prompt、文档化：可复用工作流和提示词管理 | `internal/skill/`, `internal/tools/skill_tool.go`, `internal/utils/`, `prompt/`, `doc/` |
 | `learn/stage-4-mcp-session-tui` | 外部能力和产品化：MCP、配置、session、TUI、日志 | `internal/mcp/`, `internal/commands/`, `internal/context/`, `internal/cli/`, `internal/logger/` |

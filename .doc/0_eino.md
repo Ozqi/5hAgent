@@ -1,4 +1,4 @@
-# Eino 快速参考 - 5hAgent 开发指南
+# Eino 快速参考 - walle 开发指南
 
 ## 1. 核心接口
 
@@ -383,7 +383,7 @@ tool.WithTimeout(30 * time.Second)
 
 ## 5. 快速对照表
 
-| 5hAgent 手写               | Eino 原生                             |
+| walle 手写                 | Eino 原生                             |
 | -------------------------- | ------------------------------------- |
 | `toolCollector`            | `schema.ToolCall.Index` + `ToolsNode` |
 | `toolQueue` + `exeToolCall` | `ToolsNode`                          |

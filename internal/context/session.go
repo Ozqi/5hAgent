@@ -1,6 +1,3 @@
-// session.go - 消息持久化：Session 和 Store
-// 功能：会话存储管理，支持创建/恢复/列出/删除会话
-// 主要类型：Session, Store
 package context
 
 import (
@@ -73,7 +70,7 @@ func (s *Store) GetOrCreate(id string) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if id == "" {
-		id = generateSessionID()
+		id = time.Now().UTC().Format("20060102150405.000000000")
 	}
 
 	if session, ok := s.cache[id]; ok {
@@ -81,7 +78,7 @@ func (s *Store) GetOrCreate(id string) (*Session, error) {
 	}
 
 	// 尝试从文件加载
-	filePath := s.sessionFilePath(id)
+	filePath := filepath.Join(s.dir, id+".jsonl")
 	if data, err := os.ReadFile(filePath); err == nil {
 		session, err := s.loadFromFile(filePath, data)
 		if err == nil {
@@ -167,13 +164,17 @@ func (s *Store) Append(session *Session, msg *schema.Message) error {
 
 	// 如果是第一条用户消息，生成标题
 	if session.Title == "New Session" && msg.Role == schema.User {
-		session.Title = generateTitle(msg.Content)
+		runes := []rune(msg.Content)
+		session.Title = msg.Content
+		if len(runes) > 30 {
+			session.Title = string(runes[:27]) + "..."
+		}
 	}
 
 	return s.saveToFile(session)
 }
 
-// ReplaceMessages replaces all session messages and persists the session.
+// ReplaceMessages 替换会话中的全部消息并持久化。
 func (s *Store) ReplaceMessages(session *Session, messages []*schema.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -192,7 +193,7 @@ func (s *Store) LoadMessages(session *Session) ([]*schema.Message, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(session.messages) > 0 {
-		return cloneMessages(session.messages), nil
+		return copyMessageSlice(session.messages), nil
 	}
 
 	data, err := os.ReadFile(session.filePath)
@@ -204,12 +205,8 @@ func (s *Store) LoadMessages(session *Session) ([]*schema.Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	session.messages = cloneMessages(messages)
+	session.messages = copyMessageSlice(messages)
 	return messages, nil
-}
-
-func (s *Store) sessionFilePath(id string) string {
-	return filepath.Join(s.dir, id+".jsonl")
 }
 
 func (s *Store) saveToFile(session *Session) error {
@@ -217,9 +214,9 @@ func (s *Store) saveToFile(session *Session) error {
 		return nil
 	}
 
+	// 1. 将会话头和全部消息转换为完整 JSONL 快照。
 	var entries []sessionFileEntry
 
-	// 添加会话头
 	entries = append(entries, sessionFileEntry{
 		Type:      "session",
 		ID:        session.ID,
@@ -228,7 +225,6 @@ func (s *Store) saveToFile(session *Session) error {
 		UpdatedAt: session.UpdatedAt.Format(time.RFC3339),
 	})
 
-	// 添加消息
 	for _, msg := range session.messages {
 		ensureMessageCreatedAt(msg, session.UpdatedAt)
 		entry := sessionFileEntry{
@@ -244,6 +240,7 @@ func (s *Store) saveToFile(session *Session) error {
 		entries = append(entries, entry)
 	}
 
+	// 2. 先写同目录临时文件，再 rename 替换，避免读到半份会话。
 	tmpFile, err := os.CreateTemp(s.dir, filepath.Base(session.filePath)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("create session temp file: %w", err)
@@ -389,16 +386,4 @@ func splitJSONLines(data []byte) [][]byte {
 		lines = append(lines, line)
 	}
 	return lines
-}
-
-func generateSessionID() string {
-	return fmt.Sprintf("%s", time.Now().UTC().Format("20060102150405"))
-}
-
-func generateTitle(content string) string {
-	runes := []rune(content)
-	if len(runes) <= 30 {
-		return content
-	}
-	return string(runes[:27]) + "..."
 }

@@ -1,6 +1,3 @@
-// color.go - ANSI 颜色输出
-// 功能：Red/Green/Yellow/Blue/Cyan/Magenta/Gray/Bold 颜色函数
-// 导出函数：Red, Green, Yellow, Blue, Cyan, Magenta, Gray, Bold
 package logger
 
 import (
@@ -92,35 +89,27 @@ func colorTag(tag string) string {
 	}
 }
 
-// 导出的颜色函数，供其他模块使用
+// Red 使用红色包装文本；禁用颜色时原样返回。
 func Red(text string) string {
 	return colorize(colorRed, text)
 }
 
-func Green(text string) string {
-	return colorize(colorGreen, text)
-}
-
+// Yellow 使用黄色包装文本；禁用颜色时原样返回。
 func Yellow(text string) string {
 	return colorize(colorYellow, text)
 }
 
-func Blue(text string) string {
-	return colorize(colorBlue, text)
-}
-
+// Cyan 使用青色包装文本；禁用颜色时原样返回。
 func Cyan(text string) string {
 	return colorize(colorCyan, text)
 }
 
-func Magenta(text string) string {
-	return colorize(colorMagenta, text)
-}
-
+// Gray 使用灰色包装文本；禁用颜色时原样返回。
 func Gray(text string) string {
 	return colorize(colorGray, text)
 }
 
+// Bold 使用粗体包装文本；禁用颜色时原样返回。
 func Bold(text string) string {
 	if !colorEnabled {
 		return text

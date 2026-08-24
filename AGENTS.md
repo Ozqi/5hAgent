@@ -1,42 +1,33 @@
 # AGENTS.md
 
-本文件是本仓库给 agentic contributor 的工作契约。回答、注释和文档优先使用中文；代码标识符、命令、错误文本和外部 API 名称保持原文。
+本文件是本仓库给 agentic contributor 的工作契约。回答、注释和文档使用中文；代码标识符、命令、错误文本和外部 API 名称保持原文。
 
 ## 项目定位
 
-`5hAgent` 是一个轻量级 Go + Eino Agent runtime。当前 baseline 不再把 TUI 当成唯一入口，而是用 `internal/runtime` 同时支撑 TUI 和无头任务执行。
-
-```text
-cmd/5hagent/main.go
-  -> internal/runtime
-     -> internal/llm
-     -> internal/utils
-     -> internal/task
-     -> internal/context
-     -> internal/agent
-        -> internal/agent/tool_use.go
-        -> internal/skill
-     -> internal/tools
-     -> internal/commands
-  -> internal/cli
-```
+`walle` 是一个轻量级 Go + Eino Agent runtime。默认 CLI 自动启动或复用 daemon，再把 TUI attach 到由 daemon 托管的交互 Agent。
 
 交互边界：
 
-- TUI：`5hagent` 初始化 runtime 后启动 Bubble Tea。
-- Headless：`5hagent run [--task <id>]` 读取项目目录 `.5hagent/task.md`，执行一个 `in_progress` 或 `pending` 任务，并写 `.5hagent/reports/<task-id>.md`。
-- Daemon：`5hagent daemon [--poll <duration>]` 启动最小 Agent Systemd 循环，监听 `.5hagent/task.md` 并把 `pending/in_progress` 任务作为 AgentProcess 执行。
-- Session：对话消息默认持久化到 `~/.5hAgent/sessions/*.jsonl`。
+- TUI：`internal/tui` 是独立 Bubble Tea 客户端，通过 Unix Socket attach daemon Agent。
+- Daemon：`walle daemon` 固定托管一个可 attach 的交互 Agent；没有 `--poll` 或 `--interactive` 模式。
+- Process：`ps`、`attach`、`stop` 和 `internal/systemd` 的通用 process 能力保留；Runtime 不内置 TaskList、task watcher、task report/status。
+- Session：对话消息默认持久化到 `~/.walle/sessions/*.jsonl`。
 
-## 当前代码事实
 
-- 主入口：`cmd/5hagent/main.go`
+# 架构导航
+
+## 当前代码结构
+
+- 主入口：`cmd/walle/main.go`
+- Bubble Tea TUI：`internal/tui/*.go`
+- CLI 基础输出：`internal/cli/ui.go`
+- daemon IPC：`internal/systemd/control.go`
+- daemon 交互会话：`internal/runtime/daemon_session.go`
 - 共享运行时：`internal/runtime/runtime.go`
 - ReAct 主循环：`internal/agent/agent.go`
 - ToolCall 收集和执行：`internal/agent/tool_use.go`
 - Context 和压缩：`internal/context/ctx.go`
 - Session 持久化：`internal/context/session.go`
-- 任务文件：`internal/task/tasklist.go`
 - 工具实现：`internal/tools/*.go`
 - 工具注册：`internal/tools/registry.go`
 - 工具元数据：`internal/toolmeta/toolmeta.go`
@@ -47,14 +38,15 @@ cmd/5hagent/main.go
 
 ## 文档分工
 
-- `README.md`：面向用户，记录安装、快速开始、运行命令和常用测试入口。
+- `README.md`：面向用户，记录安装、快速开始和运行命令。
 - `doc/0README.md`：文档总览，按模块导航到各子文档。
 - `doc/*.md`：模块实现说明，记录架构、关键文件、关键函数和当前边界。
+- `.spec/*.md`：代码生成约束；改对应模块前先读对应 spec，冲突时以 AGENTS.md 和当前代码事实为准。
 - `开发日志.md`：按时间线记录重要改动、取舍和验证结果。
 - `AGENTS.md`：给 agentic contributor 的全局项目契约，记录项目事实、分支状态、模块边界和协作规则；不要重复 README 里的完整命令教程。
 - `CLAUDE.md`：Claude Code 入口提示词；需要和本文件的协作节奏保持一致，但不必重复完整项目事实。
 
-如果某个运行或测试命令已经在 README 或模块文档中维护，本文件只保留必要指针，不再复制一份。
+如果某个运行或验收命令已经在 README 或模块文档中维护，本文件只保留必要指针，不再复制一份。
 
 ## 全局配置事实
 
@@ -63,10 +55,10 @@ cmd/5hagent/main.go
 - 本地 Ollama 作为 provider `ollama` 配置，通过 `LLM_MODEL=ollama/<model>` + `LLM_OLLAMA_FORMAT=openai` + `LLM_OLLAMA_BASE_URL=http://localhost:11434/v1` 接入。
 - CLI 可用 `--model provider/model` 临时切换完整模型引用；`--llm-format`、`--llm-model` 只临时覆盖当前 provider 的接口格式或模型名。
 - Agent 配置包括 `AGENT_NAME`、`AGENT_MAX_TOTAL_TOKENS`、`AGENT_REPEAT_TOOL_LIMIT`、`AGENT_CONTEXT_AUTO_COMPRESS`。
-- Prompts 从 `~/.5hAgent/prompt/*.md` 加载；主 prompt 是 `main.md`，模型专用前缀是 `prefix.<provider>.<model-slug>.md`。
-- Skills 启动时从 `~/.5hAgent/skills/*/SKILL.md` 和项目 `.5hagent/skills/*/SKILL.md` 加载；项目同名 skill 覆盖全局 skill，Agent 生命周期内不热加载也不动态启停。
-- 项目数据目录是当前工作目录下的 `.5hagent/`；用户级配置目录是 `~/.5hAgent/`。
-- 需要跑真实 headless/LLM/toolcall 测试时，统一使用 `/Users/bytedance/Proj/5hWorkSpace` 作为测试 workspace，不要再临时散落到 `/private/tmp`。
+- Prompts 从 `~/.walle/prompt/*.md` 加载；主 prompt 是 `main.md`，模型专用前缀是 `prefix.<provider>.<model-slug>.md`。
+- Skills 启动时从 `~/.walle/skills/*/SKILL.md` 和项目 `.walle/skills/*/SKILL.md` 加载；项目同名 skill 覆盖全局 skill，Agent 生命周期内不热加载也不动态启停。
+- 项目数据目录是当前工作目录下的 `.walle/`；用户级配置目录是 `~/.walle/`。
+- 需要做真实 LLM/toolcall 验收时，统一使用 `/Users/bytedance/Proj/5hWorkSpace` 作为验收 workspace，不要再临时散落到 `/private/tmp`。
 
 当前没有 checked-in `Makefile`、`golangci-lint` 配置、Cursor rules 或 Copilot instruction。不要在文档里虚构不存在的 lint 命令。
 
@@ -74,9 +66,9 @@ cmd/5hagent/main.go
 
 初始化链路：
 
-1. `cmd/5hagent/main.go` 解析 CLI 参数，选择 TUI 或 headless。
-2. `internal/runtime.New` 统一初始化配置、logger、任务文件、session、LLM、Agent 和本地工具。
-3. `tools.NewRegistry().Init` 注册 base/task/skill/sys 工具和 registry 级工具元数据。
+1. `cmd/walle/main.go` 解析 CLI 参数，选择默认 TUI、daemon、`ps` 或 `attach`。
+2. `internal/runtime.New` 统一初始化配置、logger、session、LLM、Agent 和本地工具。
+3. `tools.NewRegistry().Init` 注册 base/skill 工具和 registry 级工具元数据。
 4. `toolRegistry.RegisterContextTool` 注册 `context.context`。
 5. Runtime 收集当前 registry 的所有 `schema.ToolInfo`，调用 `WithTools` 生成绑定工具后的 model，再注入 Agent。
 6. 启动阶段不启动 MCP stdio server，也不等待 MCP 工具注册；`/mcp` 当前只管理配置。
@@ -93,20 +85,19 @@ cmd/5hagent/main.go
 
 持久化边界：
 
-- `.5hagent/task.md` 是 headless task 的真源。
-- `.5hagent/reports/<task-id>.md` 是 headless 执行报告。
-- `~/.5hAgent/sessions/*.jsonl` 是 TUI/headless message session 存储。
+- `~/.walle/sessions/*.jsonl` 是交互 Agent 的 message session 存储。
+- Runtime 不创建或维护 `.walle/task.md`、task report/status；任务管理由外部能力按需提供。
 - `ContextMeta` 中的 pinned range 和 audit event 当前只在内存中维护。
 
 ## 工具系统约定
 
 工具注册集中在 `internal/tools/registry.go`：
 
-- `tools.NewRegistry().Init(taskList, skillMgr)` 注册 base/task/skill/sys 工具，并重置当前 registry 的工具列表和元数据。
+- `tools.NewRegistry().Init(skillMgr)` 注册 base/skill 工具，并重置当前 registry 的工具列表和元数据。
 - `toolRegistry.RegisterContextTool(llm, promptDir)` 注册 `context.context`，必须在 `WithTools` 前调用。
 - `toolRegistry.RegisterMCPTools(serverName, client, specs)` 注册 MCP 远端工具。
 - 包级工具列表兼容入口已移除；runtime 应持有自己的 `tools.Registry` 实例。
-- 当前启动链路不调用 `RegisterMCPTools`，避免 TUI/headless 启动等待外部 MCP 进程；需要恢复 MCP 工具执行时应做 lazy 启动或显式连接。
+- 当前启动链路不调用 `RegisterMCPTools`，避免 Runtime 启动等待外部 MCP 进程；需要恢复 MCP 工具执行时应做 lazy 启动或显式连接。
 
 LLM 可见工具当前包括：
 
@@ -118,7 +109,6 @@ LLM 可见工具当前包括：
 - `base.grep`
 - `base.list_dir`
 - `base.exec_shell`
-- `task.task`
 - `skill.skill`
 - `context.context`
 
@@ -132,18 +122,13 @@ LLM 可见工具当前包括：
 
 - `internal/systemd` 是纯调度核心，只依赖标准库；不要在该包重新引入 `agentctx`、`skill`、`task` 等执行层或业务包。
 - `ProcessSpec` 只包含 `SystemPrompt` 和 `ExitCondition`；Project、WorkDir、SessionID、工具白名单等执行期细节仍归 runtime 或工具层处理。
-- `AgentSystemd.Run(ctx, runner)` 是唯一调度循环入口；当前只执行硬编码 task supervisor 规则，不再包含 decision 升级点。
-- `ProcessRunner` 当前签名是 `RunProcess(ctx, proc)`；runtime 只负责执行 AgentProcess，不再注入 IPC。
-- `TaskFileEventSource` 属于 `internal/runtime/event_source_task.go` 适配层；`internal/systemd` 只保留通用 `EventSource` 和 `FileEventSource`。
-- `task.created` 使用 `TaskCreatedPayload{process_spec, task_id, task_title}`；dispatch 严格解析并拒绝未知字段。
-- 非空事件 ID 会进入 `seen` 去重表，避免重复处理；当前没有 retry/max-retry 调度状态。
-- `RunProcess` 结束后投递 `process.exited/process.failed`；report/worklog 路径保存在 `AgentProcess`，不再重复放进事件 payload。
-- `task.created` 的 `task_id/task_title` 会进入 `AgentProcess.SourceTask`，不进入 `ProcessSpec`；runtime 用它写 process report、worklog，并在进程结束后把源 task 标记为 `completed/failed`。
-- Session 持久化归 `runtime/context` 现有 session manager；`sys.session` 不再作为 LLM 可见工具注册，避免 AgentProcess 额外定义一套落盘语义。
-- daemon report 使用 `<task-id>.<process-id>.<timestamp>.md`，不要恢复成只用 `agent-<n>.md` 的覆盖式命名。
-- daemon stdout 需要保留 process start/completed/failed、task id 和 report path，方便长期运行时判断状态。
-- `dispatch` 异步启动失败但尚未创建进程时，需要补发 `process.failed` 事件；已创建进程后的 runner 错误由 `RunProcess` 自己投递失败事件。
-- `cmd/5hagent/main.go` 的 `daemon` 子命令是当前最小运行期调用方；systemd 冒烟测试覆盖 process exited 和异步失败事件。
+- `AgentSystemd.Run(ctx, runner)` 保留通用事件调度循环；当前 daemon 入口只托管 interactive session，不内置文件事件源。
+- 启动事件固定为 `process.start`，payload 为 `ProcessStartPayload{process_spec}`；严格解析并拒绝未知字段。
+- `AgentProcess` 不再保存 `SourceTask`，`ProcessSnapshot` 用 `Name` 作为展示字段。
+- `ProcessRunner` 当前签名是 `RunProcess(ctx, proc)`；Runtime 只负责执行通用 AgentProcess。
+- 非空事件 ID 会进入 `seen` 去重表；`RunProcess` 结束后投递 `process.exited/process.failed`。
+- Session 持久化归 `runtime/context`；process report/status 不属于当前 Runtime 接口。
+- `cmd/walle/main.go` 的 `daemon` 子命令固定创建 `DaemonSession` 和 control server。
 
 ## 上下文和压缩
 
@@ -166,46 +151,68 @@ LLM 可见工具当前包括：
 | `learn/stage-5-current` | Stage 5 学习快照：当前公开 baseline，对齐 `master` / `origin/master`。 |
 | Stage 6 设计 | Agent Systemd 顶层调度设计：启动只传 system prompt / exit condition，context 默认视作进程内存；先记录在 `doc/runtime/agent-systemd.md`，尚未对应稳定学习分支。 |
 | `master` | 公开稳定 baseline；当前指向 `learn/stage-5-current`。 |
-| `develop` | 当前开发主线；在 `master` 之后继续开发 headless runtime、Ollama baseline、context 工具和文档。 |
+| `develop` | 当前开发主线；在 `master` 之后继续开发 runtime、Ollama baseline、context 工具和文档。 |
 
 这些 `learn/stage-*` 分支是递进快照，不要把它们当作长期功能分支随意改写。日常新改动优先落在 `develop`；需要发布稳定 baseline 时再由维护者决定是否合入 `master` 或新增 stage 快照。
-
-## Git 提交规范
-
-提交信息遵循 Conventional Commits 1.0.0：
-
-```text
-<type>[optional scope][!]: <description>
-
-[optional body]
-
-[optional footer(s)]
-```
-
-关键规则：
-
-- `feat` 表示新增功能，对应 SemVer minor。
-- `fix` 表示修复 bug，对应 SemVer patch。
-- 其他类型可按实际意图使用，例如 `docs`、`test`、`refactor`、`chore`、`build`、`ci`。
-- scope 可选，放在类型后括号内，例如 `feat(runtime): ...`。
-- 破坏性变更必须用 `!` 标记，或在 footer 中写 `BREAKING CHANGE: ...`。
-- description 使用祈使、简短描述，不以句号结尾。
-- 一次提交只表达一个清晰意图；不要把无关代码、文档和格式化混在一起。
 
 ## 工作流要求
 
 - 编辑前先读相关代码和文档。
+- 编辑代码前先读对应 `.spec/*.md`，确认模块职责、禁止事项和生成规则。
 - 优先做最小正确改动，复用现有函数、类型和包结构。
 - 不要随意新增 helper 或抽象；只有明显降低复杂度时再加。
 - 不要回滚不属于当前任务的工作树改动。
 - 日常小步改动不要求同步更新 `doc/`、`README.md`、`开发日志.md` 或本文件；等一组相关改动告一段落后，再统一补齐文档。
 - 改文档时要核对路径、命令、工具名和实际文件是否存在；不要为了小改动主动扩散文档范围。
-- 默认不要主动提交。只有用户明确要求，或一组改动已经完成并准备交付时，才整理文档并按提交规范统一 commit。
-- 默认不要为了每次改动主动运行测试。只有用户明确要求、改动进入阶段收尾、或风险明显需要验证时再运行测试；如果跳过测试，在最终回复里说明未运行。
-- TUI 改动的验收以真实 tmux 窗口为准；不要因为每个小改动都启动/重启 TUI 或跑单测。把一组相关 TUI 改动做完后，再统一用当前 `5hagent debug` 或临时 tmux session 人工验收。
+- 默认不要主动提交。只有用户明确要求，或一组改动已经完成并准备交付时，才整理文档并按 Conventional Commits 的 `<type>(scope): description` 格式统一 commit。
+- 项目不维护自动测试。按改动范围使用静态检查、构建和真实 workspace 运行完成验收。
+- TUI 改动的验收以真实 tmux 窗口为准；不要因为每个小改动都启动或重启 TUI。把一组相关 TUI 改动做完后，再统一用当前 `walle debug` 或临时 tmux session 人工验收。
 
-## 设计阶段规则
+### MR 标准
 
+- 每个 MR 描述必须包含：标题、变更范围、文件清单、验证命令与结果、风险、人工验收 checklist、建议拆分顺序。
+- 一个 MR 只处理一个相关模块或目标；禁止把无关功能、重构、验证脚本、注释或文档混在同一个 MR。
+- 多个 MR 有依赖时先说明拆分顺序；行为改动和文档应能独立 review。
+- 没有人工 review 或人工验收结论时，不执行 `git push`。
+
+# 设计原则
+
+阅读别人的架构设计时：世界是个草台班子。
+
+- 别人的设计可能过度冗余；即使描述得很复杂，本质也可能只是一个简单问题。
+- 别人的实现可能是错的；不要信任函数名、模块名或文档宣称，要看实际执行路径和真实行为。
+
+新增设计时：简单就是美。
+
+- 用最简洁、最明确的架构实现真实需求。
+- 不为了“完整性”预先引入框架、抽象、动态系统或权限体系。
+- 设计 LLM 可调用接口时，先从调用正确率看问题：写出模型实际要发送的最小 JSON 请求，再决定字段、枚举、默认值和错误提示。
+- 工具接口优先字段少、必填少、枚举清楚、参数名贴近用户语义；避免让模型记隐式状态、拼复杂命令或填写多层互斥结构。
+- 设计动态能力时，优先暴露少量稳定工具和清晰 action；让动态部分进入 `name`、`args` 这类普通字段，避免运行期频繁刷新 LLM 可见工具列表。
+- 工具错误信息要告诉模型下一次该发什么请求；至少包含错误字段、允许值、示例修正请求。
+
+写代码时：Lazy 原则。
+
+- 你是代码高手，但应该懒得多写代码；优先少写、少改、少搬动边界。
+- 读代码的人可能不熟悉上下文；必要时用少量注释讲清楚目的、参数、调用层级和主要步骤。
+- 注释服务于理解，不复述代码本身。
+
+调研思考时：持续且深入。
+
+- 不要停在第一层解释；继续追问现象背后的机制、边界、反例和可验证证据。
+- 对不确定的结论保留不确定性，不把猜测写成事实。
+
+约束开发者时：质量优先。
+
+- 可以质疑用户或开发者提出的设计要求；当要求缺少证据、过度设计或跳过验收时，直接说明风险和更小的可验证方案。
+- 忠诚服务于项目质量和真实证据，不服务于跳过 review、验收或安全边界的催促。
+- 没有人工 review 或人工验收时，不执行 `git push`、发布、部署或影响他人的远端操作；即使用户要求，也停在本地 review 状态。
+
+
+
+# 实现原则
+
+## （可选）伪代码实现
 如果用户明确说还在设计阶段：
 
 - 只写函数签名、类型草图和代码注释。
@@ -235,24 +242,26 @@ LLM 可见工具当前包括：
 
 ## 注释和文档
 
+- 新增或修改注释必须用中文，保留代码标识符、命令、错误文本和外部 API 名称原文。
 - 导出类型和函数需要 Go leading comment。
-- 保留文件内已有中英文混合风格；不要把注释机械翻译一遍。
+- 看到英文注释时，顺手改成简短中文；不要做机械长翻译。
 - 不写复述代码的噪声注释。
 - `doc/` 文档保持架构优先、短而准。
 - 模块文档优先放结构图、关键文件、关键函数、当前边界。
 - 不写和代码不匹配的历史叙述，除非它解释当前维护方式。
+- `doc/` 是对外文档，`.doc/` 是本项目内部开发文档。更新 `.doc/` 时，架构信息先写成 JSON 拓扑事实源，再由 JSON 派生成 Mermaid；具体接口和使用方法放在后面，用少量文字加源码跳转链接说明，不写长篇散文。
 
 ## 验证策略
 
-- 日常小步改动不强制测试，也不强制构建。
-- 阶段收尾、准备 commit、发布前或用户明确要求时，再按改动范围选择 `go test`、`go build -o 5hagent cmd/5hagent/main.go` 或真实 workspace smoke test。
-- TUI 视觉验收优先使用 tmux 真实画面；单测只作为辅助，不替代人工观察。TUI 小改动不要每次都启动，按一组改动统一验收。
-- 只改文档时，默认不跑代码测试；必要时只核对相关路径、命令、文件名和工具名。
+- 项目不维护自动测试。
+- 阶段收尾、准备 commit、发布前或用户明确要求时，按改动范围选择静态检查、`go build -o walle ./cmd/walle` 或真实 workspace 运行验收。
+- TUI 视觉验收使用 tmux 真实画面。TUI 小改动不要每次都启动，按一组改动统一验收。
+- 只改文档时，核对相关路径、命令、文件名和工具名。
 - 不要声称支持不存在的工具、skill、prompt 或脚本。
 
 ## 规则文件状态
 
 - `AGENTS.md` 是当前仓库主 agent 工作契约。
-- `CLAUDE.md` 是 Claude Code 入口提示词；涉及工作节奏、测试、文档和提交策略时，需要和本文件保持一致。
+- `CLAUDE.md` 是 Claude Code 入口提示词；涉及工作节奏、验收、文档和提交策略时，需要和本文件保持一致。
 - 当前未发现 `.cursor/rules/`、`.cursorrules`、`.github/copilot-instructions.md`。
 - 如果后续新增这些规则文件，需要把新增规则同步折叠回本文件，避免多处规则互相漂移。

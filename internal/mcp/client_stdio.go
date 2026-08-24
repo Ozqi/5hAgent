@@ -1,5 +1,3 @@
-// client_stdio.go - MCP Stdio Client 实现
-// 通过 stdio 与 MCP 服务器通信，实现 mcp.Client 接口
 package mcp
 
 import (
@@ -15,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lzq/5hAgent/internal/logger"
+	"github.com/Ozqi/walle/internal/logger"
 	"github.com/tidwall/gjson"
 )
 
@@ -40,7 +38,7 @@ type jsonrpcError struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
-// StdioClient MCP stdio 传输客户端
+// StdioClient 管理单个 MCP server 子进程、stdio 管道和待完成 JSON-RPC 请求。
 type StdioClient struct {
 	serverName string
 	command    string
@@ -64,7 +62,7 @@ type StdioClient struct {
 	cancel context.CancelFunc
 }
 
-// StdioClientConfig 配置
+// StdioClientConfig 描述 MCP 子进程启动参数和初始化超时。
 type StdioClientConfig struct {
 	Name           string
 	Command        string
@@ -73,7 +71,8 @@ type StdioClientConfig struct {
 	StartupTimeout time.Duration
 }
 
-// NewStdioClient 创建并启动 stdio MCP 客户端
+// NewStdioClient 创建子进程并在 StartupTimeout 内完成 MCP initialize 和首次 tools/list。
+// 副作用：启动外部进程及 stdout/stderr 读取 goroutine；初始化失败会关闭已启动的客户端。
 func NewStdioClient(ctx context.Context, config StdioClientConfig) (*StdioClient, error) {
 	if config.StartupTimeout == 0 {
 		config.StartupTimeout = 10 * time.Second
@@ -97,11 +96,12 @@ func NewStdioClient(ctx context.Context, config StdioClientConfig) (*StdioClient
 	return c, nil
 }
 
-// start 启动 MCP 服务器进程
+// start 启动 MCP server 子进程并完成协议初始化。
+// 阶段：合并环境变量，创建 stdio 管道并启动进程，启动读取循环和 stderr 排空，最后执行 initialize/tools/list。
 func (c *StdioClient) start(ctx context.Context) error {
 	cmd := exec.Command(c.command, c.args...)
 
-	// 设置环境变量：先继承系统环境，再用自定义值覆盖
+	// 1. 先继承系统环境，再用 server 自定义值覆盖同名变量。
 	envMap := make(map[string]string)
 	for _, e := range os.Environ() {
 		if k, v, ok := strings.Cut(e, "="); ok {
@@ -116,7 +116,7 @@ func (c *StdioClient) start(ctx context.Context) error {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 
-	// 设置 stdio
+	// 2. 创建 stdio 管道；stderr 只负责持续排空，避免子进程因缓冲区写满阻塞。
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("failed to create stdin pipe: %w", err)
@@ -132,7 +132,7 @@ func (c *StdioClient) start(ctx context.Context) error {
 		return fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
-	// 启动进程
+	// 3. 启动进程，并建立独立生命周期 context 供所有待完成请求感知退出。
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start process: %w", err)
 	}
@@ -144,7 +144,7 @@ func (c *StdioClient) start(ctx context.Context) error {
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 
-	// 启动读取循环
+	// 4. 启动 stdout JSON-RPC 分发和 stderr 排空 goroutine。
 	go c.readLoop()
 
 	// 启动 stderr 读取（避免缓冲区满）
@@ -154,7 +154,6 @@ func (c *StdioClient) start(ctx context.Context) error {
 			n, err := stderr.Read(buf)
 			if n > 0 {
 				// 可以选择打印或丢弃 stderr
-				// fmt.Fprintf(os.Stderr, "[MCP %s stderr] %s", c.serverName, string(buf[:n]))
 			}
 			if err != nil {
 				break
@@ -162,7 +161,7 @@ func (c *StdioClient) start(ctx context.Context) error {
 		}
 	}()
 
-	// 初始化
+	// 5. 在调用方给定的启动超时内完成 MCP handshake 和工具发现。
 	if err := c.initialize(ctx); err != nil {
 		c.Close()
 		return err
@@ -171,7 +170,8 @@ func (c *StdioClient) start(ctx context.Context) error {
 	return nil
 }
 
-// readLoop 读取 stdout 并分发响应/通知
+// readLoop 持续读取逐行 JSON-RPC，将响应投递给 pendingReqs，并异步处理工具列表变更通知。
+// 副作用：循环结束会取消客户端 context，使所有等待中的 sendRequest 尽快返回。
 func (c *StdioClient) readLoop() {
 	defer func() {
 		if c.cancel != nil {
@@ -191,12 +191,11 @@ func (c *StdioClient) readLoop() {
 			continue
 		}
 
-		// 解析消息
 		lineStr := string(line)
 		if gjson.Valid(lineStr) {
 			msg := gjson.Parse(lineStr)
 
-			// 检查是否有 id 字段（响应消息 vs 通知）
+			// JSON-RPC response 带 id，notification 不带 id；两类消息在这里分流。
 			if id := msg.Get("id"); id.Exists() {
 				idVal := id.Int()
 
@@ -238,7 +237,7 @@ func (c *StdioClient) readLoop() {
 	}
 }
 
-// initialize 发送初始化请求
+// initialize 完成 MCP handshake，发送 initialized 通知并拉取首个工具列表快照。
 func (c *StdioClient) initialize(ctx context.Context) error {
 	params := map[string]interface{}{
 		"protocolVersion": "2024-11-05",
@@ -247,7 +246,7 @@ func (c *StdioClient) initialize(ctx context.Context) error {
 			"sampling": map[string]bool{},
 		},
 		"clientInfo": map[string]interface{}{
-			"name":    "5hAgent",
+			"name":    "walle",
 			"version": "0.1.0",
 		},
 	}
@@ -265,10 +264,8 @@ func (c *StdioClient) initialize(ctx context.Context) error {
 
 	c.initialized.Store(true)
 
-	// 发送 initialized 通知
 	c.sendNotification("initialized", nil)
 
-	// 获取工具列表
 	if err := c.refreshTools(ctx); err != nil {
 		return fmt.Errorf("failed to get tools: %w", err)
 	}
@@ -276,50 +273,51 @@ func (c *StdioClient) initialize(ctx context.Context) error {
 	return nil
 }
 
-// refreshTools 刷新工具列表
+// refreshTools 请求 tools/list，并兼容数组旧格式和 {tools: [...]} 新格式更新本地快照。
 func (c *StdioClient) refreshTools(ctx context.Context) error {
 	var resp jsonrpcResponse
 	if err := c.sendRequest(ctx, "tools/list", nil, &resp); err != nil {
 		return err
 	}
-
 	if resp.Error != nil {
 		return fmt.Errorf("tools/list error: %s", resp.Error.Message)
 	}
 
-	// 检查结果是否是数组（旧格式）还是对象（新格式）
+	// 在局部变量中完成旧数组格式和新 {tools:[...]} 格式解析，再一次性发布快照。
 	resultStr := string(resp.Result)
-	if gjson.Valid(resultStr) {
-		result := gjson.Parse(resultStr)
-		if result.IsArray() {
-			// 处理旧格式
-			var tools []ToolSpec
-			if err := json.Unmarshal(resp.Result, &tools); err == nil {
-				c.tools = tools
+	if !gjson.Valid(resultStr) {
+		return nil
+	}
+	result := gjson.Parse(resultStr)
+	var tools []ToolSpec
+	if result.IsArray() {
+		if err := json.Unmarshal(resp.Result, &tools); err != nil {
+			return nil
+		}
+	} else {
+		toolsArr := result.Get("tools").Array()
+		tools = make([]ToolSpec, 0, len(toolsArr))
+		for _, t := range toolsArr {
+			tool := ToolSpec{
+				Name:        t.Get("name").Str,
+				Description: t.Get("description").Str,
+				ReadOnly:    t.Get("readOnly").Bool(),
 			}
-		} else {
-			// 处理新格式 { tools: [...] }
-			toolsArr := result.Get("tools").Array()
-			tools := make([]ToolSpec, 0, len(toolsArr))
-			for _, t := range toolsArr {
-				tool := ToolSpec{
-					Name:        t.Get("name").Str,
-					Description: t.Get("description").Str,
-					ReadOnly:    t.Get("readOnly").Bool(),
-				}
-				if inputSchemaRaw := t.Get("inputSchema").Raw; inputSchemaRaw != "" {
-					tool.InputSchema = json.RawMessage(inputSchemaRaw)
-				}
-				tools = append(tools, tool)
+			if inputSchemaRaw := t.Get("inputSchema").Raw; inputSchemaRaw != "" {
+				tool.InputSchema = json.RawMessage(inputSchemaRaw)
 			}
-			c.tools = tools
+			tools = append(tools, tool)
 		}
 	}
 
+	c.mu.Lock()
+	c.tools = tools
+	c.mu.Unlock()
 	return nil
 }
 
-// CallTool 调用 MCP 工具，实现 Client 接口
+// CallTool 调用 MCP 工具并提取 text content；每次调用最多等待 30 秒。
+// 参数 arguments 优先按 JSON 传递，无效 JSON 则作为普通字符串；MCP isError 会转换为 Go error。
 func (c *StdioClient) CallTool(ctx context.Context, toolName string, arguments string) (string, error) {
 	if !c.initialized.Load() {
 		return "", fmt.Errorf("MCP client not initialized")
@@ -366,7 +364,7 @@ func (c *StdioClient) CallTool(ctx context.Context, toolName string, arguments s
 	isError := result.Get("isError").Bool()
 	content := result.Get("content").Raw
 
-	// 解析 content 数组，提取文本
+	// MCP content 支持多种 part；当前只把 text part 合并回模型上下文。
 	var texts []string
 	var contents []map[string]interface{}
 	if err := json.Unmarshal([]byte(content), &contents); err == nil {
@@ -398,7 +396,8 @@ func (c *StdioClient) CallTool(ctx context.Context, toolName string, arguments s
 
 }
 
-// sendRequest 发送请求并等待响应
+// sendRequest 分配请求 ID、注册响应通道、串行写入 stdin，并等待响应或任一 context 结束。
+// 副作用：pendingReqs 的注册和清理由 mu 保护；stdinMu 防止并发 JSON 行互相穿插。
 func (c *StdioClient) sendRequest(ctx context.Context, method string, params json.RawMessage, resp *jsonrpcResponse) error {
 	id := c.requestID.Add(1)
 
@@ -414,7 +413,6 @@ func (c *StdioClient) sendRequest(ctx context.Context, method string, params jso
 		return fmt.Errorf("marshal request failed: %w", err)
 	}
 
-	// 创建响应通道
 	ch := make(chan *jsonrpcResponse, 1)
 	c.mu.Lock()
 	c.pendingReqs[id] = ch
@@ -426,7 +424,7 @@ func (c *StdioClient) sendRequest(ctx context.Context, method string, params jso
 		c.mu.Unlock()
 	}()
 
-	// 发送请求（stdinMu 保护并发写入）
+	// pending 注册必须先于写入；stdinMu 保证多个 JSON-RPC frame 不会交错。
 	c.stdinMu.Lock()
 	_, err = c.stdin.Write(append(reqJSON, '\n'))
 	c.stdinMu.Unlock()
@@ -434,7 +432,6 @@ func (c *StdioClient) sendRequest(ctx context.Context, method string, params jso
 		return fmt.Errorf("write request failed: %w", err)
 	}
 
-	// 等待响应
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -449,7 +446,7 @@ func (c *StdioClient) sendRequest(ctx context.Context, method string, params jso
 	}
 }
 
-// sendNotification 发送通知（不等待响应）
+// sendNotification 串行写入不带 ID 的 JSON-RPC 通知，不等待响应；写失败仅记录日志。
 func (c *StdioClient) sendNotification(method string, params interface{}) {
 	paramsJSON, _ := json.Marshal(params)
 	req := jsonrpcRequest{
@@ -466,7 +463,7 @@ func (c *StdioClient) sendNotification(method string, params interface{}) {
 	}
 }
 
-// ListTools 返回可用工具列表
+// ListTools 在读锁下返回当前工具快照的浅拷贝。
 func (c *StdioClient) ListTools() []ToolSpec {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -475,7 +472,8 @@ func (c *StdioClient) ListTools() []ToolSpec {
 	return result
 }
 
-// Close 关闭连接
+// Close 取消客户端 context、关闭管道，并终止及回收 MCP 子进程。
+// 副作用：会使所有等待中的请求失败，并强制 Kill 尚未退出的子进程。
 func (c *StdioClient) Close() error {
 	c.cancel()
 
@@ -497,10 +495,10 @@ func (c *StdioClient) Close() error {
 	return nil
 }
 
-// ServerName 返回服务器名称
+// ServerName 返回配置中的 MCP server 名称。
 func (c *StdioClient) ServerName() string {
 	return c.serverName
 }
 
-// Ensure 接口实现
+// 编译期确认 StdioClient 实现 Client。
 var _ Client = (*StdioClient)(nil)

@@ -1,7 +1,4 @@
-// ctx.go - 消息上下文管理
-// 功能：Context 创建、消息存储、LLM 压缩（当消息数超 MaxMessages 时）
-// 主要类型：Context, Manager, CompressResult
-// 导出函数：NewManager, CreateContext, GetMessages, AddMessage, Compress, ShouldCompress, LMCompress, ManualCompress
+// Package context 管理 Agent 消息上下文、会话持久化、上下文审计和压缩。
 package context
 
 import (
@@ -13,9 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Ozqi/walle/internal/utils"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-	"github.com/lzq/5hAgent/internal/utils"
 )
 
 const (
@@ -25,8 +22,8 @@ const (
 	KeepRecentMessages = 30
 )
 
-// Context Agent 运行上下文
-// 每个 Agent 实例拥有独立的 Context
+// Context 保存一个会话或 AgentProcess 的消息和运行时元数据。
+// mu 同时保护 messages、Session 引用和仅驻留内存的 meta。
 type Context struct {
 	mu       sync.RWMutex
 	messages []*schema.Message
@@ -34,8 +31,8 @@ type Context struct {
 	meta     ContextMeta
 }
 
-// Context Manager 负责创建、克隆、管理多个 Context 实例
-// 同时管理 Session 持久化
+// Manager 创建和管理多个 Context，并按配置将消息同步到可选的 Session Store。
+// autobind 只控制 CreateContext 是否自动绑定 Session，不影响显式的 Session 操作。
 type Manager struct {
 	store    *Store // 会话存储
 	autobind bool   // CreateContext 是否自动绑定 session
@@ -43,11 +40,13 @@ type Manager struct {
 
 type toolRuntimeKey struct{}
 
+// ToolRuntime 保存工具调用期间可访问的消息管理器和当前 Context。
 type ToolRuntime struct {
 	Manager *Manager
 	Context *Context
 }
 
+// WithToolRuntime 把当前消息运行时注入标准 context，供 context 工具读取。
 func WithToolRuntime(ctx context.Context, mgr *Manager, msgCtx *Context) context.Context {
 	rt, _ := ctx.Value(toolRuntimeKey{}).(ToolRuntime)
 	rt.Manager = mgr
@@ -55,11 +54,13 @@ func WithToolRuntime(ctx context.Context, mgr *Manager, msgCtx *Context) context
 	return context.WithValue(ctx, toolRuntimeKey{}, rt)
 }
 
+// ToolRuntimeFrom 从标准 context 读取完整的消息运行时。
 func ToolRuntimeFrom(ctx context.Context) (ToolRuntime, bool) {
 	rt, ok := ctx.Value(toolRuntimeKey{}).(ToolRuntime)
 	return rt, ok && rt.Manager != nil && rt.Context != nil
 }
 
+// CompressResult 描述一次手动压缩前后的消息数和归档文件路径。
 type CompressResult struct {
 	Before      int
 	After       int
@@ -120,12 +121,6 @@ func NewManager(sessionDir ...string) *Manager {
 	return &Manager{store: store, autobind: store != nil}
 }
 
-// NewMemoryManagerWithStore 创建默认内存 Context、但允许显式绑定 Session 的 manager。
-func NewMemoryManagerWithStore(sessionDir string) *Manager {
-	store, _ := NewStore(sessionDir)
-	return &Manager{store: store, autobind: false}
-}
-
 // CreateContext 创建新的 Context
 // 参数:
 //   - sessionID: 会话 ID（可选，为空则创建新会话）
@@ -147,7 +142,7 @@ func (m *Manager) CreateContext(sessionID string) (*Context, error) {
 		// 从 Session 加载已有消息
 		messages, err := m.store.LoadMessages(session)
 		if err == nil && len(messages) > 0 {
-			ctx.messages = cloneMessages(messages)
+			ctx.messages = copyMessageSlice(messages)
 		}
 	}
 
@@ -199,7 +194,7 @@ func (m *Manager) GetMessages(ctx *Context) ([]*schema.Message, error) {
 	}
 	ctx.mu.RLock()
 	defer ctx.mu.RUnlock()
-	return cloneMessages(ctx.messages), nil
+	return copyMessageSlice(ctx.messages), nil
 }
 
 // Inspect 返回当前上下文的结构化视图，不返回完整消息内容。
@@ -216,7 +211,9 @@ func (m *Manager) Inspect(ctx *Context) (*ContextInspect, error) {
 		Messages:     make([]MessageInspect, 0, len(ctx.messages)),
 	}
 
+	// 1. system 消息和最近历史属于自动保护范围，再叠加用户显式 pin 标记。
 	protected := make([]bool, len(ctx.messages))
+	// 2. 只生成长度、预览和标记，避免工具直接暴露完整上下文。
 	for i, msg := range ctx.messages {
 		if msg.Role == schema.System {
 			protected[i] = true
@@ -288,7 +285,8 @@ func (m *Manager) Audit(ctx *Context) []ContextEvent {
 	return events
 }
 
-// AddMessage 添加消息到 Context
+// AddMessage 先更新内存消息，再把新增消息追加到关联的 Session。
+// Store 写入不在 Context 锁内执行；写入失败时内存消息已经生效。
 // 参数:
 //   - ctx: Context 实例
 //   - msg: 要添加的消息
@@ -303,7 +301,7 @@ func (m *Manager) AddMessage(ctx *Context, msg *schema.Message) error {
 	session := ctx.Session
 	ctx.mu.Unlock()
 
-	// 持久化到 Session
+	// 解锁后执行磁盘 I/O，避免阻塞同一 Context 的读取。
 	if m.store != nil && session != nil {
 		if err := m.store.Append(session, msg); err != nil {
 			return fmt.Errorf("persist message: %w", err)
@@ -313,7 +311,8 @@ func (m *Manager) AddMessage(ctx *Context, msg *schema.Message) error {
 	return nil
 }
 
-// EditMessage 修改一条普通对话消息，并同步持久化 session。
+// EditMessage 修改一条普通对话消息，并同步持久化 Session。
+// system、包含 ToolCall 或已 pinned 的消息不可编辑；持久化失败时内存修改已经生效。
 func (m *Manager) EditMessage(ctx *Context, index int, content string, reason string) error {
 	if ctx == nil {
 		return fmt.Errorf("context is nil")
@@ -325,6 +324,7 @@ func (m *Manager) EditMessage(ctx *Context, index int, content string, reason st
 		return fmt.Errorf("reason is required")
 	}
 
+	// 1. 持锁校验目标消息，更新内存并生成完整消息快照。
 	ctx.mu.Lock()
 	if index < 0 || index >= len(ctx.messages) {
 		ctx.mu.Unlock()
@@ -358,10 +358,11 @@ func (m *Manager) EditMessage(ctx *Context, index int, content string, reason st
 		AfterCount:  len(ctx.messages),
 		CreatedAt:   time.Now().UTC(),
 	})
-	messages := cloneMessages(ctx.messages)
+	messages := copyMessageSlice(ctx.messages)
 	session := ctx.Session
 	ctx.mu.Unlock()
 
+	// 2. 解锁后替换 Session 文件，避免持锁执行磁盘 I/O。
 	if m.store != nil && session != nil {
 		if err := m.store.ReplaceMessages(session, messages); err != nil {
 			return fmt.Errorf("persist edited message: %w", err)
@@ -370,13 +371,14 @@ func (m *Manager) EditMessage(ctx *Context, index int, content string, reason st
 	return nil
 }
 
-// ReplaceMessages 替换上下文消息，并同步持久化 session。
+// ReplaceMessages 是压缩和批量改写后的统一入口，先替换内存，再同步关联的 Session。
+// Store 写入失败时内存消息已经生效。
 func (m *Manager) ReplaceMessages(ctx *Context, messages []*schema.Message) error {
 	if ctx == nil {
 		return fmt.Errorf("context is nil")
 	}
 	ctx.mu.Lock()
-	ctx.messages = cloneMessages(messages)
+	ctx.messages = copyMessageSlice(messages)
 	session := ctx.Session
 	ctx.mu.Unlock()
 	if m.store != nil && session != nil {
@@ -420,7 +422,7 @@ func (m *Manager) SwitchSession(ctx *Context, sessionID string) (*Context, error
 
 	messages, err := m.store.LoadMessages(session)
 	if err == nil {
-		newCtx.messages = cloneMessages(messages)
+		newCtx.messages = copyMessageSlice(messages)
 	}
 
 	return newCtx, nil
@@ -463,9 +465,8 @@ func (m *Manager) ShouldCompress(ctx *Context) bool {
 	return len(ctx.messages) > MaxMessages
 }
 
-// LMCompress 使用 LLM 压缩上下文
-// 将对话历史格式化后喂给 LLM，用摘要替换旧消息，保留最近 KeepRecentMessages 条。
-// promptDir: prompt 文件目录（用于加载 compress.md）
+// LMCompress 使用 LLM 摘要旧的非 system 消息，并保留全部 system 消息和最近历史。
+// promptDir 用于加载 compress.md；加载或模型调用失败时降级为不生成摘要的 Compress。
 func (m *Manager) LMCompress(goCtx context.Context, ctx *Context, llm model.ToolCallingChatModel, promptDir string) (int, int, error) {
 	if ctx == nil {
 		return 0, 0, fmt.Errorf("context is nil")
@@ -477,6 +478,7 @@ func (m *Manager) LMCompress(goCtx context.Context, ctx *Context, llm model.Tool
 		return before, before, nil
 	}
 
+	// prompt 或模型压缩失败时降级为仅保留 system 和最近历史。
 	compressPrompt, err := utils.Load(promptDir, "compress")
 	if err != nil {
 		return m.Compress(ctx)
@@ -493,6 +495,8 @@ func (m *Manager) LMCompress(goCtx context.Context, ctx *Context, llm model.Tool
 	return before, len(ctx.messages), nil
 }
 
+// ManualCompress 用 LLM 摘要旧消息，先写 Markdown 归档，再替换当前上下文和 Session。
+// 与 LMCompress 不同，手动压缩失败时直接返回错误，不执行 fallback。
 func (m *Manager) ManualCompress(goCtx context.Context, ctx *Context, llm model.ToolCallingChatModel, promptDir string, archiveDir string) (*CompressResult, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("context is nil")
@@ -513,6 +517,7 @@ func (m *Manager) ManualCompress(goCtx context.Context, ctx *Context, llm model.
 		return &CompressResult{Before: before, After: before}, nil
 	}
 
+	// 归档成功后才替换消息，避免压缩内容未落盘便丢失原始历史。
 	archivePath, err := writeCompressArchive(archiveDir, summary, archived)
 	if err != nil {
 		return nil, err
@@ -529,8 +534,9 @@ func (m *Manager) compressWithPrompt(goCtx context.Context, ctx *Context, llm mo
 		return nil, "", nil, fmt.Errorf("compression model is required")
 	}
 	// 压缩边界：system 消息全部保留；较旧 history 汇总成一条摘要；最近消息原样保留。
+	// pinned 当前只约束显式编辑，不参与此处的压缩筛选。
 	ctx.mu.RLock()
-	messages := cloneMessages(ctx.messages)
+	messages := copyMessageSlice(ctx.messages)
 	ctx.mu.RUnlock()
 	systemMsgs, historyMsgs := splitMessages(messages)
 	compressEnd := len(historyMsgs) - KeepRecentMessages
@@ -540,6 +546,7 @@ func (m *Manager) compressWithPrompt(goCtx context.Context, ctx *Context, llm mo
 	toCompress := historyMsgs[:compressEnd]
 	toKeep := historyMsgs[compressEnd:]
 
+	// 模型 I/O 仅接收待归档历史；system 和最近消息不进入摘要请求。
 	resp, err := llm.Generate(goCtx, []*schema.Message{{Role: schema.User, Content: compressPrompt + formatMessagesForCompression(toCompress)}})
 	if err != nil {
 		return nil, "", nil, err
@@ -566,15 +573,15 @@ func splitMessages(messages []*schema.Message) (systemMsgs []*schema.Message, hi
 func compressFallbackMessages(messages []*schema.Message) []*schema.Message {
 	systemMsgs, historyMsgs := splitMessages(messages)
 	if len(historyMsgs) <= KeepRecentMessages {
-		return append(cloneMessages(systemMsgs), historyMsgs...)
+		return append(copyMessageSlice(systemMsgs), historyMsgs...)
 	}
 	keepStart := len(historyMsgs) - KeepRecentMessages
-	compressed := cloneMessages(systemMsgs)
+	compressed := copyMessageSlice(systemMsgs)
 	compressed = append(compressed, historyMsgs[keepStart:]...)
 	return compressed
 }
 
-func cloneMessages(messages []*schema.Message) []*schema.Message {
+func copyMessageSlice(messages []*schema.Message) []*schema.Message {
 	if len(messages) == 0 {
 		return nil
 	}

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 5hAgent 一键安装脚本
-# 用法: curl -fsSL https://raw.githubusercontent.com/Ozqi/5hAgent/master/install.sh | bash
+# walle 一键安装脚本
+# 用法: curl -fsSL https://raw.githubusercontent.com/Ozqi/walle/master/install.sh | bash
 # 或者: bash install.sh
 
-REPO="Ozqi/5hAgent"
+REPO="Ozqi/walle"
 INSTALL_DIR="${HOME}/.local/bin"
-CONFIG_DIR="${HOME}/.5hAgent"
-BINARY_NAME="5hagent"
+CONFIG_DIR="${HOME}/.walle"
+BINARY_NAME="walle"
 
 info()  { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
 ok()    { printf "\033[1;32m✔ %s\033[0m\n" "$*"; }
@@ -36,9 +36,22 @@ append_if_missing() {
     fi
 }
 
+install_skill() {
+    local name="$1"
+    local source="$SRC_DIR/skills/$name"
+    local target="$CONFIG_DIR/skills/$name"
+    if [ -e "$target" ] || [ -L "$target" ]; then
+        warn "Skill 已存在，保留用户版本: $target"
+        return
+    fi
+    mkdir -p "$CONFIG_DIR/skills"
+    cp -R "$source" "$target"
+    ok "已预装 Skill: $name"
+}
+
 daemon_pids() {
     {
-        pgrep -f "(^|[ /])${BINARY_NAME} daemon --interactive" 2>/dev/null || true
+        pgrep -f "(^|[ /])${BINARY_NAME} daemon" 2>/dev/null || true
         if command -v lsof >/dev/null 2>&1 && [ -e "${INSTALL_DIR}/${BINARY_NAME}" ]; then
             lsof -t "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null || true
         fi
@@ -53,7 +66,7 @@ stop_daemon_for_install() {
         return
     fi
     DAEMON_WAS_RUNNING=1
-    warn "检测到正在运行的 5hAgent daemon，安装前先停止: $pids"
+    warn "检测到正在运行的 walle daemon，安装前先停止: $pids"
     # shellcheck disable=SC2086
     kill $pids 2>/dev/null || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -67,8 +80,8 @@ restart_daemon_after_install() {
     if [ "${DAEMON_WAS_RUNNING:-0}" != "1" ]; then
         return
     fi
-    info "重启 5hAgent daemon..."
-    nohup "${INSTALL_DIR}/${BINARY_NAME}" daemon --interactive >/dev/null 2>&1 &
+    info "重启 walle daemon..."
+    nohup "${INSTALL_DIR}/${BINARY_NAME}" daemon >/dev/null 2>&1 &
     ok "daemon 已重启"
 }
 
@@ -103,6 +116,7 @@ migrate_legacy_env() {
     fi
 }
 
+
 # ── 1. 检查 Go ──
 command -v go >/dev/null 2>&1 || err "未检测到 Go，请先安装 Go >= 1.24.2: https://go.dev/dl/"
 
@@ -129,7 +143,7 @@ fi
 
 # ── 3. 定位源码 ──
 TMP_DIR=""
-if [ -f "go.mod" ] && [ -d "cmd/5hagent" ]; then
+if [ -f "go.mod" ] && [ -d "cmd/walle" ]; then
     SRC_DIR=$(pwd)
     info "使用当前源码目录: $SRC_DIR"
 else
@@ -137,15 +151,15 @@ else
     trap 'rm -rf "$TMP_DIR"' EXIT
 
     info "克隆仓库..."
-    git clone --depth=1 "https://github.com/${REPO}.git" "$TMP_DIR/5hAgent" 2>/dev/null || \
-    git clone --depth=1 "git@github.com:${REPO}.git" "$TMP_DIR/5hAgent"
-    SRC_DIR="$TMP_DIR/5hAgent"
+    git clone --depth=1 "https://github.com/${REPO}.git" "$TMP_DIR/walle" 2>/dev/null || \
+    git clone --depth=1 "git@github.com:${REPO}.git" "$TMP_DIR/walle"
+    SRC_DIR="$TMP_DIR/walle"
 fi
 
 # ── 4. 编译 ──
-info "编译 5hAgent..."
+info "编译 walle..."
 cd "$SRC_DIR"
-go build -o "$BINARY_NAME" ./cmd/5hagent
+go build -o "$BINARY_NAME" ./cmd/walle
 ok "编译完成"
 
 # ── 5. 安装二进制 ──
@@ -190,6 +204,10 @@ fi
 mkdir -p "$CONFIG_DIR/prompt"
 cp -r "$SRC_DIR/prompt/"*.md "$CONFIG_DIR/prompt/" 2>/dev/null || true
 ok "已安装 prompt 模板到 $CONFIG_DIR/prompt/"
+
+# ── 6.6. 安装内置 Skill；已有同名目录视为用户版本，不覆盖 ──
+install_skill "tmux-skill"
+install_skill "agent-reach"
 
 # ── 7. PATH 提示 ──
 if echo "$PATH" | grep -q "$INSTALL_DIR"; then

@@ -1,20 +1,20 @@
-// tui_commands.go - TUI 输入和 slash 命令处理
-// 功能：处理用户提交、内置 slash 命令、模型切换、任务运行和停止。
 package tui
 
 import (
 	"context"
 	"fmt"
-	"github.com/lzq/5hAgent/internal/toolevent"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/Ozqi/walle/internal/commands"
+	"github.com/Ozqi/walle/internal/toolevent"
+	"github.com/Ozqi/walle/internal/tools"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/lzq/5hAgent/internal/commands"
-	"github.com/lzq/5hAgent/internal/tools"
 )
 
+// submit 将输入提交给 attached daemon 或本地 Agent。
+// attached 模式只在本地截获 /detach 和 /stop；本地模式同步处理 slash command，普通输入异步运行 Agent。
 func (m *AppModel) submit() tea.Cmd {
 	text := strings.TrimSpace(m.input.Value())
 	if text == "" {
@@ -93,17 +93,6 @@ func (m *AppModel) submit() tea.Cmd {
 		return nil
 	}
 
-	if cmdName == "/task" {
-		result, err := commands.HandleTask(text, m.taskList)
-		if err != nil {
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: err.Error()})
-		} else {
-			m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: result})
-		}
-		m.refreshView()
-		return nil
-	}
-
 	if cmdName == "/compress" {
 		result, err := commands.HandleCompress(m.ctx, text, m.ctxManager, m.messageCtx, m.ag.GetModel(), m.promptDir, "compact")
 		if err != nil {
@@ -139,10 +128,6 @@ func (m *AppModel) submit() tea.Cmd {
 
 	if cmdName == "/model" {
 		return m.handleModelCommand(text)
-	}
-
-	if cmdName == "/run" {
-		return m.handleRunCommand(text)
 	}
 
 	if strings.HasPrefix(text, "/") {
@@ -231,42 +216,7 @@ func modelUsage() string {
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-func cleanDisplayText(text string) string {
-	return strings.ReplaceAll(text, "\uFFFD", "")
-}
-
-// handleRunCommand 启动 task.md 连续执行模式。
-// 调用层级：submit -> handleRunCommand -> runtime.RunTasksUntilDone。
-// 主要步骤：校验命令参数；标记 TUI busy；后台执行 runtime 回调；完成后显示汇总。
-func (m *AppModel) handleRunCommand(text string) tea.Cmd {
-	fields := strings.Fields(text)
-	if len(fields) > 1 {
-		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "usage: /run"})
-		m.refreshView()
-		return nil
-	}
-	if m.runTasks == nil {
-		m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: text, Content: "/run is not available in this runtime"})
-		m.refreshView()
-		return nil
-	}
-	m.busy = true
-	m.currentStatus = "running tasks"
-	m.currentAssistant = -1
-	m.runLines = nil
-	m.runEntry = len(m.entries)
-	m.entries = append(m.entries, conversationEntry{Role: roleSystem, SystemTitle: "/run", Content: "running..."})
-	m.refreshView()
-	return tea.Batch(tickSpinner(), func() tea.Msg {
-		summary, err := m.runTasks(m.ctx, func(event toolevent.ToolEvent) {
-			if m.program != nil {
-				m.program.Send(toolEventMsg{event: event})
-			}
-		})
-		return runTasksDoneMsg{summary: summary, err: err}
-	})
-}
-
+// handleStopCommand 取消本地 Agent run，并立即把 UI 状态切回 stopped。
 func (m *AppModel) handleStopCommand(text string) tea.Cmd {
 	m.input.Reset()
 	if !m.busy || m.runCancel == nil {
@@ -284,6 +234,7 @@ func (m *AppModel) handleStopCommand(text string) tea.Cmd {
 	return nil
 }
 
+// runAgent 在后台执行本地 Agent，并把 token、reasoning 和终态送回 Bubble Tea 事件循环。
 func (m *AppModel) runAgent(runCtx context.Context, cancel context.CancelFunc, input string) {
 	if m.program == nil {
 		return
@@ -334,7 +285,7 @@ func (m *AppModel) handleSessionCommand(text string) (string, error) {
 			if s.ID == m.sessionID {
 				marker = "→ "
 			}
-			sb.WriteString(fmt.Sprintf("  %s%s - %s (updated: %s)\n", marker, s.ID, cleanDisplayText(s.Title), s.UpdatedAt.Format("2006-01-02 15:04")))
+			sb.WriteString(fmt.Sprintf("  %s%s - %s (updated: %s)\n", marker, s.ID, strings.ReplaceAll(s.Title, "\uFFFD", ""), s.UpdatedAt.Format("2006-01-02 15:04")))
 		}
 		return sb.String(), nil
 	case "new":

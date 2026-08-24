@@ -1,6 +1,4 @@
-// compress.go - /compress 命令处理
-// 功能：手动触发当前上下文压缩
-// 导出函数：HandleCompress
+// Package commands 解析 TUI 和 daemon 交互会话中的内置 slash command。
 package commands
 
 import (
@@ -9,11 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	agentctx "github.com/Ozqi/walle/internal/context"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-	agentctx "github.com/lzq/5hAgent/internal/context"
 )
 
+// HandleCompress 校验命令后调用上下文管理器压缩消息，并返回压缩结果和当前消息快照。
+// 副作用：可能写入消息归档及 session 存储；compactRoot 为空时使用相对目录 compact。
 func HandleCompress(goCtx context.Context, cmd string, mgr *agentctx.Manager, msgCtx *agentctx.Context, llm model.ToolCallingChatModel, promptDir string, compactRoot string) (string, error) {
 	if mgr == nil || msgCtx == nil {
 		return "", fmt.Errorf("context manager and message context are required")

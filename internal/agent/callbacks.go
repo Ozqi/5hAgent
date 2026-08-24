@@ -1,17 +1,14 @@
-// callbacks.go - Eino Callback 实现
-// 功能: 统一的日志、监控、调试输出，替代分散的 logger.DebugTag
-// 导出: AgentCallbacks, NewAgentCallbacks
 package agent
 
 import (
 	"context"
 
+	"github.com/Ozqi/walle/internal/logger"
+	"github.com/Ozqi/walle/internal/utils"
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/lzq/5hAgent/internal/logger"
-	"github.com/lzq/5hAgent/internal/utils"
 )
 
 // AgentCallbacks Eino Callback 处理器
@@ -29,7 +26,7 @@ func NewAgentCallbacks(debug bool, tokenBudget *utils.TokenBudget) *AgentCallbac
 	}
 }
 
-// region Model Callback
+// 区域：模型回调
 
 // OnModelStart 模型开始调用
 func (c *AgentCallbacks) OnModelStart(ctx context.Context, info *callbacks.RunInfo, input *model.CallbackInput) context.Context {
@@ -66,9 +63,9 @@ func (c *AgentCallbacks) OnModelError(ctx context.Context, info *callbacks.RunIn
 	return ctx
 }
 
-// endregion
+// 区域结束
 
-// region Tool Callback
+// 区域：工具回调
 
 // OnToolStart 工具开始调用
 func (c *AgentCallbacks) OnToolStart(ctx context.Context, info *callbacks.RunInfo, input *tool.CallbackInput) context.Context {
@@ -102,7 +99,7 @@ func (c *AgentCallbacks) OnToolError(ctx context.Context, info *callbacks.RunInf
 	return ctx
 }
 
-// endregion
+// 区域结束
 
 // region 流式 ToolCall 处理（用于 RunStream）
 

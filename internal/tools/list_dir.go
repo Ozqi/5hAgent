@@ -1,31 +1,3 @@
-// list_dir.go - 目录列表工具
-// 功能：列出目录内容，支持递归；返回文件/目录名、路径、大小
-// 主要类型：ListDirInput, ListDirOutput, FileInfo
-// 导出函数：NewListDirTool
-//
-// ============================================================
-// 工具描述（供人类审阅）
-// ============================================================
-// Tool: list_dir
-// Desc: 列出目录内容，返回文件/目录的名称、路径、类型、大小。
-//
-//	支持递归模式。read_only 工具。
-//
-// Input Parameters:
-//   - path       (string, optional) : 目录路径，默认当前目录
-//   - recursive  (bool,   optional) : 是否递归列出子目录，默认 false
-//
-// Error Scenarios (LLM Hints):
-//   - path not found              → 目录不存在；确认路径是否正确
-//   - path is not a directory      → 指定路径是文件而非目录；用 read_file 读取
-//   - permission denied           → 无读取权限
-//   - empty directory              → 目录为空（正常情况，非错误）
-//
-// Tips:
-//   - 非递归模式适合快速浏览当前目录结构
-//   - recursive=true 会列出所有子目录内容，适合了解项目全貌
-//
-// ============================================================
 package tools
 
 import (
@@ -47,21 +19,15 @@ const (
 - path: optional directory path. Default current workspace. Must be a directory, not a file.
 - recursive: optional boolean. Default false. Use true only when you need a full tree.
 Example: {"path":"internal/tools","recursive":false}`
-	listDirToolErrors = `path not found: 目录不存在；确认路径是否正确
-path is not a directory: 指定路径是文件而非目录；用 read_file 读取
-permission denied: 无读取权限
-empty directory: 目录为空（正常情况，非错误）`
-	listDirToolTips = `非递归模式适合快速浏览当前目录结构
-recursive=true 会列出所有子目录内容，适合了解项目全貌`
 )
 
-// ListDirInput defines the input parameters for list_dir tool
+// ListDirInput 描述 list_dir 工具的输入参数
 type ListDirInput struct {
 	Path      string `json:"path,omitempty" jsonschema:"description=Optional directory path to list. Default: current workspace. Must be a directory."`
 	Recursive bool   `json:"recursive,omitempty" jsonschema:"description=Optional. List subdirectories recursively. Default: false."`
 }
 
-// FileInfo represents information about a file or directory
+// FileInfo 描述文件或目录信息
 type FileInfo struct {
 	Name  string `json:"name"`
 	Path  string `json:"path"`
@@ -69,13 +35,13 @@ type FileInfo struct {
 	Size  int64  `json:"size"`
 }
 
-// ListDirOutput defines the output structure for list_dir tool
+// ListDirOutput 描述 list_dir 工具的输出结构
 type ListDirOutput struct {
 	Files []FileInfo `json:"files"`
 	Count int        `json:"count"`
 }
 
-// NewListDirTool creates a new list_dir tool for listing directory contents
+// NewListDirTool 创建用于列出目录内容的 list_dir 工具
 func NewListDirTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
 	root := ""
 	if len(workspaceRoot) > 0 {
@@ -85,6 +51,7 @@ func NewListDirTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error)
 		listDirToolName,
 		listDirToolDesc,
 		func(ctx context.Context, input ListDirInput) (*schema.ToolResult, error) {
+			// 模型输入在这里进入文件系统信任边界；resolvePath 只拼接相对路径。
 			input.Path = resolvePath(root, input.Path)
 
 			info, err := os.Stat(input.Path)

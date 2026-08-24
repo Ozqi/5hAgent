@@ -1,8 +1,11 @@
 # TUI
 
+> 由 Claude Fable 5 于 2026-08-23 阅读 `cmd/walle/*.go`、`internal/tui/*.go`、`internal/runtime/daemon_session.go` 与 `internal/systemd/control.go` 后更新。
+> 覆盖范围：默认 TUI、daemon attach、slash command 与状态渲染。
+
 ## 职责
 
-`internal/tui` 是独立 Bubble Tea 客户端包，只负责输入、渲染和事件转发。它既可连接当前进程的 Runtime，也可通过 Unix Socket attach daemon Agent；daemon 不依赖具体 TUI 实现。
+`internal/tui` 是独立 Bubble Tea 客户端包，只负责输入、渲染和事件转发。默认 `walle` 自动启动或复用 daemon，再通过 Unix Socket attach 其交互 Agent；daemon 不依赖具体 TUI 实现。
 
 ## 关键文件
 
@@ -21,7 +24,7 @@ history viewport
 runtime status       # model/state/turn/tools
 slash hints          # 只在输入 / 时出现
 input bar
-footer metadata      # path/tasks/msg count，固定存在
+footer metadata      # path/git/msg count，固定存在
 bottom spacer        # 空白占位，不显示 busy spinner
 ```
 
@@ -29,14 +32,16 @@ bottom spacer        # 空白占位，不显示 busy spinner
 
 | 命令 | 行为 |
 | --- | --- |
-| `/task` | 调 `commands.HandleTask` |
-| `/skill list|get` | 调 `commands.HandleSkill` |
-| `/compress` | 调 `commands.HandleCompress`，当前不接收参数 |
+| `/provider [name]` | 选择 Provider 或完成认证 |
+| `/model [provider/model]` | 查看或切换当前模型 |
+| `/skill list|get|reload` | 调 `commands.HandleSkill` |
+| `/compress` | 调 `commands.HandleCompress` |
 | `/mcp` | 管理 MCP 配置 |
-| `/session` | new/list/切换到指定 session id |
-| `/run` | 执行 task.md 中可运行任务 |
-| `/model` | 切换 provider/model |
-| `/stop` | cancel 当前 Agent run |
+| `/session` | 查看当前 session；本地嵌入模式还可 new/list/切换 |
+| `/stop` | 取消当前 Agent run |
+| `/detach` | 退出 attached TUI，不停止 Agent |
+
+任务管理命令不固定进 Runtime；需要时由 Skill、MCP 或外置动态工具提供。
 
 ## 运行状态
 
@@ -59,14 +64,8 @@ ToolEvent(error)  -> 原地更新为 error
 
 ## 历史恢复
 
-`loadHistoryEntries` 会把 assistant `tool_calls` 与后续 `schema.Tool` 结果合并成压缩工具提示，避免 `5hagent -c` 展开完整工具输出。
+`loadHistoryEntries` 会把 assistant `tool_calls` 与后续 `schema.Tool` 结果合并成压缩工具提示，避免 `walle -c` 展开完整工具输出。
 
 ## 验证
 
-TUI 视觉改动以真实 tmux 画面为准。不要每个小改动都启动/重启；一组相关改动完成后，再用当前 `5hagent debug` 或临时 tmux session 验收。
-
-单测只在阶段收尾、准备提交或风险明显时补充使用：
-
-```bash
-go test ./internal/tui
-```
+TUI 视觉改动以真实 tmux 画面为准。不要每个小改动都启动/重启；一组相关改动完成后，再用当前 `walle debug` 或临时 tmux session 验收。

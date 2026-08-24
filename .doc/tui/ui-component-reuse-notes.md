@@ -1,10 +1,10 @@
-# 5hAgent UI 组件复用笔记
+# walle UI 组件复用笔记
 
-本文不是通用前端教程，而是给当前 `internal/cli/tui.go` 演进时做边界判断用的工作笔记。重点是：在 Bubble Tea + Lip Gloss 这套终端 UI 里，哪些内容值得复用，应该以什么粒度复用，避免为了“像前端组件化”而把 TUI 代码拆得更难维护。
+本文是当前 TUI 演进时做边界判断用的工作笔记。重点是：在 Bubble Tea + Lip Gloss 里确认值得复用的内容和合适粒度，避免把 TUI 代码拆得更难维护。
 
 ## 1. 当前 UI 结构
 
-当前主文件：[internal/cli/tui.go](/Users/bytedance/Proj/5hAgent/internal/cli/tui.go)
+当前主文件：[internal/tui/app.go](/Users/bytedance/Proj/walle/internal/tui/app.go)
 
 当前代码里已经存在的天然分层：
 
@@ -26,7 +26,7 @@
   - `renderToolCompactEntry`
   - `renderToolUnknownEntry`
 
-这说明当前代码已经不是“一坨逻辑”，而是处在“函数级组件化”阶段。左右栏已经删除，状态数据通过 `statusSnapshot` 汇总后显示在输入框上方/下方。
+当前代码已经进入“函数级组件化”阶段。左右栏已经删除，状态数据通过 `statusSnapshot` 汇总后显示在输入框上方/下方。
 
 ## 2. 适合复用的组件类型
 
@@ -90,7 +90,7 @@ TUI 和前端很像的一点是：渲染层不应该直接乱读 runtime 内部�
 建议继续沿这个方向：
 
 - 输入框附近的状态区优先消费 snapshot 或轻量 view model。
-- 不要让 `View` 或 `render*` 深入读取 `taskList`、`ctxManager`、`agent` 的复杂逻辑。
+- 不要让 `View` 或 `render*` 深入读取 `ctxManager`、`agent` 的复杂逻辑。
 - 如果某个面板需要很多派生字段，优先先造快照 struct，再考虑渲染。
 
 ## 3. 不要急着抽成“组件”的部分
@@ -141,7 +141,7 @@ sidebar 和右侧 status panel 已经移除，不要再围绕它们新增抽象�
 目标：
 
 - 把消息块、tool 块、状态行这类高复用区域收敛为稳定函数
-- 给这些函数补最小测试
+- 用真实 capture 固化这些函数的输入输出
 
 适合抽象的对象：
 
@@ -156,7 +156,7 @@ sidebar 和右侧 status panel 已经移除，不要再围绕它们新增抽象�
 
 - `tui.go` 的单一文件体积已经明显影响修改效率
 - 某一类 render 函数内部强相关，独立阅读更轻松
-- 测试和实现一起移动后边界更清楚
+- 实现与调用方一起移动后边界更清楚
 
 可选拆分方向：
 
@@ -171,7 +171,7 @@ sidebar 和右侧 status panel 已经移除，不要再围绕它们新增抽象�
 TUI 当前回到单主列结构：
 
 - 上方是对话和工具/thinking 流。
-- 输入框上方显示当前 Agent 状态、模型、token、速度、最近工具和任务焦点。
+- 输入框上方显示当前 Agent 状态、模型、token、速度和最近工具。
 - 输入框使用偏亮灰色背景，和深色对话区拉开层级。
 - 输入框下方放低频状态，例如 session、enabled skills、快捷键和 slash hint。
 - 不保留左侧 sidebar 和右侧 status panel。
@@ -203,7 +203,7 @@ TUI 当前回到单主列结构：
 
 1. 这是样式复用、渲染复用，还是状态复用？
 2. 这个抽象是否减少重复，还是只是换了个名字包一层？
-3. 它是否能形成稳定输入输出，适合写测试？
+3. 它是否能形成稳定输入输出，便于真实画面验收？
 4. 它会不会让 `Update -> refreshView -> render*` 这条主链更难追？
 5. 这个复用是否只服务当前一个页面？如果是，保留在 `tui.go` 往往更稳。
 
@@ -230,9 +230,9 @@ TUI 当前回到单主列结构：
 - ANSI 样式会影响宽度计算
 - 中文、emoji、代码块、表格更容易出现 wrap 偏差
 - 鼠标滚轮需要真实终端 mouse escape 才能验证；用 `tmux send-keys Escape '[<64;10;10M'` / `'[<65;10;10M'`，不要把 `WheelUpPane` 当输入发给 TUI。
-- 很多问题不是“组件没复用”，而是“宽度和文本测量不稳定”
+- 很多问题来自宽度和文本测量不稳定
 
-所以在 5hAgent 里，UI 复用的优先级通常是：
+所以在 walle 里，UI 复用的优先级通常是：
 
 1. 宽度与布局规则稳定
 2. 渲染块稳定

@@ -1,5 +1,3 @@
-// read_md.go - Markdown 结构化读取工具
-// 功能：列出、读取、替换或删除指定 Markdown 标题下的 section。
 package tools
 
 import (
@@ -25,6 +23,7 @@ const (
 Use list_headings before a section action when unsure about the exact heading.`
 )
 
+// ReadMDInput 描述结构化 Markdown 操作及其参数。
 type ReadMDInput struct {
 	Action  string `json:"action" jsonschema:"required,description=Action to run: list_headings, read_section, replace_section, or delete_section."`
 	Path    string `json:"path" jsonschema:"required,description=Required Markdown file path."`
@@ -32,12 +31,14 @@ type ReadMDInput struct {
 	Content string `json:"content,omitempty" jsonschema:"description=Required for replace_section. Full replacement section including its heading line."`
 }
 
+// MarkdownHeading 记录标题层级、文本和一基行号。
 type MarkdownHeading struct {
 	Level int    `json:"level"`
 	Title string `json:"title"`
 	Line  int    `json:"line"`
 }
 
+// ReadMDOutput 返回标题列表、section 范围或写入结果。
 type ReadMDOutput struct {
 	Success    bool              `json:"success,omitempty"`
 	Path       string            `json:"path"`
@@ -52,6 +53,7 @@ type ReadMDOutput struct {
 
 var markdownHeadingPattern = regexp.MustCompile(`^(#{1,6})\s+(.+?)\s*#*\s*$`)
 
+// NewReadMDTool 创建支持 Markdown section 读写的 Eino 工具。
 func NewReadMDTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
 	root := ""
 	if len(workspaceRoot) > 0 {
@@ -61,6 +63,7 @@ func NewReadMDTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) 
 		readMDToolName,
 		readMDToolDesc,
 		func(ctx context.Context, input ReadMDInput) (*schema.ToolResult, error) {
+			// 模型输入在这里进入文件系统信任边界；路径解析不提供 workspace confinement。
 			if input.Path == "" {
 				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'path' is required")
 			}
@@ -175,6 +178,7 @@ func markdownSectionRange(path string, lines []string, headings []MarkdownHeadin
 }
 
 func writeMarkdownSection(path string, lines []string, headings []MarkdownHeading, input ReadMDInput) (*schema.ToolResult, error) {
+	// 先在内存中重建完整文件，再沿用原权限覆盖；写入不是原子替换。
 	start, end, err := markdownSectionRange(path, lines, headings, input.Heading)
 	if err != nil {
 		return nil, err

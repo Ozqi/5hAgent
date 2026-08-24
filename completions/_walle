@@ -1,0 +1,26 @@
+#compdef walle
+
+# _walle 为 zsh 提供 walle 子命令和 attach 目标补全。
+_walle() {
+  if (( CURRENT == 2 )); then
+    local -a commands=(
+      'attach:Follow a running Agent process'
+      'daemon:Host the attachable interactive Agent'
+      'ps:List running Agent processes'
+    )
+    _describe command commands
+    return
+  fi
+
+  if [[ ${words[2]} == attach && CURRENT == 3 ]]; then
+    local line
+    local -a processes
+    for line in "${(@f)$(walle __complete attach "$PREFIX" 2>/dev/null)}"; do
+      [[ $line == :* ]] && continue
+      processes+=("${line//$'\t'/:}")
+    done
+    _describe process processes
+  fi
+}
+
+compdef _walle walle

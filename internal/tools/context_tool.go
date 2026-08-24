@@ -1,6 +1,3 @@
-// context_tool.go - LLM 可调用的上下文管理工具
-// 功能：暴露 inspect/pin/edit/audit/compress，让模型通过 tool call 管理当前 message context。
-// 调用方：由 Registry.RegisterContextTool 注册；Agent.RunStream 通过 Go context 传入当前 Context。
 package tools
 
 import (
@@ -8,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 
+	agentctx "github.com/Ozqi/walle/internal/context"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	agentctx "github.com/lzq/5hAgent/internal/context"
 )
 
 const (
@@ -25,6 +22,7 @@ Actions:
 - compress: reduce context. mode=lm summarizes old history; mode=truncate keeps recent messages only.`
 )
 
+// ContextTool 将当前运行时上下文管理能力暴露为 Eino 工具。
 type ContextTool struct {
 	llm       model.ToolCallingChatModel
 	promptDir string
@@ -40,10 +38,12 @@ type contextToolInput struct {
 	Mode    string `json:"mode"`
 }
 
+// NewContextTool 创建绑定压缩模型和 prompt 目录的上下文工具。
 func NewContextTool(llm model.ToolCallingChatModel, promptDir string) *ContextTool {
 	return &ContextTool{llm: llm, promptDir: promptDir}
 }
 
+// Info 返回 context.context 的模型可见名称、动作和参数约束。
 func (t *ContextTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
 		Name: contextToolName,
@@ -60,6 +60,7 @@ func (t *ContextTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	}, nil
 }
 
+// InvokableRun 从 Go context 取得当前消息运行时，并执行指定上下文动作。
 func (t *ContextTool) InvokableRun(ctx context.Context, args string, opts ...tool.Option) (string, error) {
 	var input contextToolInput
 	if err := json.Unmarshal([]byte(args), &input); err != nil {

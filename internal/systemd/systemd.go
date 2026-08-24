@@ -1,7 +1,4 @@
-// systemd.go - Agent Systemd 顶层调度骨架
-// 功能：定义 Agent 进程、启动提示词、退出条件、事件和最小 task supervisor 调度循环。
-// 调用方：由上层创建调度器，由 internal/runtime 作为 ProcessRunner 执行真实 Agent。
-// 全局变量：无。AgentSystemd 的状态应放在结构体实例内，避免多调度器互相污染。
+// Package systemd 管理本地 Agent 进程调度、事件队列和 Unix Socket 控制通道。
 package systemd
 
 import (
@@ -10,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -23,10 +21,14 @@ import (
 type ProcessState string
 
 const (
-	ProcessIdle    ProcessState = "idle"
+	// ProcessIdle 表示进程尚未执行。
+	ProcessIdle ProcessState = "idle"
+	// ProcessRunning 表示 runner 正在执行进程。
 	ProcessRunning ProcessState = "running"
-	ProcessExited  ProcessState = "exited"
-	ProcessFailed  ProcessState = "failed"
+	// ProcessExited 表示进程正常结束。
+	ProcessExited ProcessState = "exited"
+	// ProcessFailed 表示进程执行失败或被取消。
+	ProcessFailed ProcessState = "failed"
 )
 
 // ProcessSpec 是启动 AgentProcess 的唯一输入。
@@ -38,7 +40,7 @@ type ProcessSpec struct {
 // Event 是 Agent Systemd 调度循环处理的事实输入。
 type Event struct {
 	ID        string          `json:"id"`         // 事件 ID，用于去重
-	Type      string          `json:"type"`       // 事件类型，如 task.created/process.exited
+	Type      string          `json:"type"`       // 事件类型，如 process.start/process.exited
 	Source    string          `json:"source"`     // 事件来源
 	ProcessID string          `json:"process_id"` // 目标进程 ID，可为空表示广播事件
 	Payload   json.RawMessage `json:"payload"`    // 结构化负载
@@ -52,18 +54,9 @@ type FileEventPayload struct {
 	Size    int64     `json:"size"`     // 文件大小
 }
 
-// TaskCreatedPayload 是 task.created 事件的负载。
-type TaskCreatedPayload struct {
+// ProcessStartPayload 是 process.start 事件的严格负载。
+type ProcessStartPayload struct {
 	ProcessSpec ProcessSpec `json:"process_spec"` // 启动规格
-	TaskID      string      `json:"task_id"`      // 任务 ID
-	TaskTitle   string      `json:"task_title"`   // 任务标题
-}
-
-// SourceTask 记录 AgentProcess 来源任务，不进入 ProcessSpec。
-type SourceTask struct {
-	ID      string `json:"id"`       // task.md 中的任务 ID
-	Title   string `json:"title"`    // task.md 中的任务标题
-	EventID string `json:"event_id"` // 触发本进程的 task.created 事件 ID
 }
 
 // EventSource 是外部事件源的最小接口。
@@ -112,7 +105,6 @@ type AgentProcess struct {
 	Spec        ProcessSpec  // 启动提示词和退出条件
 	StartedAt   time.Time    // 启动时间
 	EndedAt     time.Time    // 结束时间
-	SourceTask  SourceTask   // 来源任务；为空表示非 task 事件启动
 	ReportPath  string       // 进程报告路径
 	WorkLogPath string       // 进程工作日志路径
 	cancel      context.CancelFunc
@@ -166,6 +158,7 @@ func New() *AgentSystemd {
 // 调用层级：外部入口 -> Run -> dispatch -> RunProcess。
 // 步骤：接收事件 -> 按事件类型调度 -> 等待下一事件。
 func (s *AgentSystemd) Run(ctx context.Context, runner ProcessRunner) error {
+	// 1. cond 无法直接等待 context；辅助 goroutine 在取消时唤醒阻塞的 nextEvent。
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -177,6 +170,7 @@ func (s *AgentSystemd) Run(ctx context.Context, runner ProcessRunner) error {
 		}
 	}()
 	defer close(done)
+	// 2. 主循环串行消费事件；process.start 只负责异步启动 runner，不阻塞后续事件。
 	for {
 		event, ok := s.nextEvent(ctx)
 		if !ok {
@@ -214,17 +208,19 @@ func (proc *AgentProcess) terminate(state ProcessState) {
 	}
 }
 
+// dispatch 将 process.start 异步交给 ProcessRunner，其他事件只更新调度状态。
 func (s *AgentSystemd) dispatch(ctx context.Context, runner ProcessRunner, event Event) error {
-	if event.Type == "task.created" {
+	if event.Type == "process.start" {
 		if runner == nil {
 			return fmt.Errorf("process runner is required")
 		}
-		spec, source, err := processStartFromEvent(event)
+		spec, err := processStartFromEvent(event)
 		if err != nil {
 			return fmt.Errorf("parse %s payload: %w", event.Type, err)
 		}
+		// runner 异步执行；若校验失败且尚未创建进程，补发无 ProcessID 的失败事实。
 		go func() {
-			proc, err := s.RunProcessWithSource(ctx, runner, spec, source)
+			proc, err := s.RunProcess(ctx, runner, spec)
 			if err == nil || proc != nil {
 				return
 			}
@@ -240,20 +236,31 @@ func (s *AgentSystemd) dispatch(ctx context.Context, runner ProcessRunner, event
 	return nil
 }
 
-func processStartFromEvent(event Event) (ProcessSpec, SourceTask, error) {
-	var payload TaskCreatedPayload
+// processStartFromEvent 严格解析 process.start 的启动规格。
+func processStartFromEvent(event Event) (ProcessSpec, error) {
+	var payload ProcessStartPayload
 	if err := decodeStrict(event.Payload, &payload); err != nil {
-		return ProcessSpec{}, SourceTask{}, err
+		return ProcessSpec{}, err
 	}
-	return payload.ProcessSpec, SourceTask{ID: payload.TaskID, Title: payload.TaskTitle, EventID: event.ID}, nil
+	return payload.ProcessSpec, nil
 }
 
 func decodeStrict(data []byte, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
-	return dec.Decode(v)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
+// nextEvent 通过 cond 等待事件并按 FIFO 取出；Run 的取消协程负责唤醒等待者。
 func (s *AgentSystemd) nextEvent(ctx context.Context) (Event, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -268,6 +275,7 @@ func (s *AgentSystemd) nextEvent(ctx context.Context) (Event, bool) {
 	return event, true
 }
 
+// applyEvent 只终结 ProcessID 匹配的进程；无 ProcessID 的结束事件仅作为失败事实保留。
 func (s *AgentSystemd) applyEvent(event Event) {
 	if (event.Type == "process.exited" || event.Type == "process.failed") && event.ProcessID == "" {
 		return
@@ -322,6 +330,7 @@ func (s *AgentSystemd) StartSource(ctx context.Context, source EventSource) {
 	if source == nil {
 		return
 	}
+	// 每个 source 使用独立 goroutine；可恢复文件错误立即重试，其他错误终止该 source。
 	go func() {
 		for {
 			event, err := source.Next(ctx)
@@ -408,20 +417,13 @@ func (w *FileEventSource) poll() (Event, bool, error) {
 // 调用层级：Agent Systemd 单进程调度 -> RunProcess -> runner.RunProcess。
 // 步骤：创建进程记录 -> 标记 running -> 调用 runner -> 按错误标记状态 -> 投递结束事件。
 func (s *AgentSystemd) RunProcess(ctx context.Context, runner ProcessRunner, spec ProcessSpec) (*AgentProcess, error) {
-	return s.RunProcessWithSource(ctx, runner, spec, SourceTask{})
-}
-
-// RunProcessWithSource 同步运行带来源追踪的 AgentProcess。
-// 参数：source 只记录调度来源，不参与进程启动 prompt。
-// 调用层级：dispatch(task.created) -> RunProcessWithSource -> runner.RunProcess。
-// 步骤：校验启动规格 -> 创建进程记录和 source trace -> 调 runner -> 投递结束事件。
-func (s *AgentSystemd) RunProcessWithSource(ctx context.Context, runner ProcessRunner, spec ProcessSpec, source SourceTask) (*AgentProcess, error) {
 	if runner == nil {
 		return nil, fmt.Errorf("process runner is required")
 	}
 	if err := validateSpec(spec); err != nil {
 		return nil, err
 	}
+	// 1. 在同一临界区检查单进程约束并发布 running 记录，避免并发启动穿透。
 	s.mu.Lock()
 	for _, existing := range s.processes {
 		if existing != nil && existing.State == ProcessRunning {
@@ -434,18 +436,19 @@ func (s *AgentSystemd) RunProcessWithSource(ctx context.Context, runner ProcessR
 	now := time.Now().UTC()
 	runCtx, cancel := context.WithCancel(ctx)
 	proc := &AgentProcess{
-		ID:         id,
-		Name:       id,
-		State:      ProcessRunning,
-		Spec:       spec,
-		StartedAt:  now,
-		SourceTask: source,
-		cancel:     cancel,
+		ID:        id,
+		Name:      id,
+		State:     ProcessRunning,
+		Spec:      spec,
+		StartedAt: now,
+		cancel:    cancel,
 	}
 	s.processes[id] = proc
 	s.mu.Unlock()
 
+	// 2. 锁外同步执行 runner，保证控制面仍可读取进程和请求取消。
 	err := runner.RunProcess(runCtx, proc)
+	// 3. 在锁内固定终态，再于锁外投递结束事件，避免 Emit 重入同一把锁。
 	s.mu.Lock()
 	eventType := "process.exited"
 	if err != nil {

@@ -1,4 +1,3 @@
-// models.go - 查询当前 ChatGPT 账号可用的 Codex 模型目录。
 package codex
 
 import (
@@ -10,12 +9,13 @@ import (
 	"sort"
 )
 
-// Models 返回账号目录中可见的模型 slug。
+// Models 返回账号目录中去重并排序后的模型标识，401 时强制刷新 token 后重试一次。
 func (s *Store) Models(ctx context.Context) ([]string, error) {
 	return s.models(ctx, true)
 }
 
 func (s *Store) models(ctx context.Context, retry bool) ([]string, error) {
+	// 1. 获取有效 token，并携带 account ID 请求模型目录。
 	accessToken, accountID, err := s.Token(ctx)
 	if err != nil {
 		return nil, err
@@ -26,7 +26,7 @@ func (s *Store) models(ctx context.Context, retry bool) ([]string, error) {
 	if accountID != "" {
 		request.Header.Set("ChatGPT-Account-ID", accountID)
 	}
-	request.Header.Set("Originator", "5hagent")
+	request.Header.Set("Originator", "walle")
 	response, err := s.client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("list Codex models: %w", err)
@@ -39,6 +39,7 @@ func (s *Store) models(ctx context.Context, retry bool) ([]string, error) {
 		}
 		return nil, fmt.Errorf("list Codex models: status %s", response.Status)
 	}
+	// 2. 兼容目录项的多个名称字段，按优先级选取首个非空值并去重排序。
 	var payload struct {
 		Models []struct {
 			Slug  string `json:"slug"`

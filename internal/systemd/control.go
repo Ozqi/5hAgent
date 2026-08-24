@@ -1,5 +1,3 @@
-// control.go - Agent Systemd 本地 Unix Socket 控制通道。
-// daemon 通过 NDJSON 暴露进程列表和可重连的交互 Agent；CLI 用同一协议实现 ps/attach。
 package systemd
 
 import (
@@ -21,14 +19,14 @@ const supervisorSocket = "supervisor.sock"
 // ProcessSnapshot 是跨进程查询使用的只读 AgentProcess 快照。
 type ProcessSnapshot struct {
 	ID          string       `json:"id"`
+	Name        string       `json:"name,omitempty"`
 	State       ProcessState `json:"state"`
-	TaskID      string       `json:"task_id,omitempty"`
-	TaskTitle   string       `json:"task_title,omitempty"`
 	StartedAt   time.Time    `json:"started_at"`
 	Workspace   string       `json:"workspace"`
 	WorkLogPath string       `json:"worklog_path,omitempty"`
 	Model       string       `json:"model,omitempty"`
 	SessionID   string       `json:"session_id,omitempty"`
+	Turn        int          `json:"turn,omitempty"`
 	Interactive bool         `json:"interactive,omitempty"`
 }
 
@@ -43,6 +41,7 @@ type ProcessEvent struct {
 	Result  string   `json:"result,omitempty"`
 	Error   string   `json:"error,omitempty"`
 	Busy    bool     `json:"busy,omitempty"`
+	Turn    int      `json:"turn,omitempty"`
 	Options []string `json:"options,omitempty"`
 }
 
@@ -54,6 +53,7 @@ type InteractiveProcess interface {
 	Stop() error
 }
 
+// controlMessage 是 Unix Socket 上的一帧 NDJSON；ID 只关联 input/stop 请求与对应结果。
 type controlMessage struct {
 	Type      string            `json:"type"`
 	ID        uint64            `json:"id,omitempty"`
@@ -78,7 +78,7 @@ func (s *AgentSystemd) Processes(workspace string) []ProcessSnapshot {
 			continue
 		}
 		processes = append(processes, ProcessSnapshot{
-			ID: proc.ID, State: proc.State, TaskID: proc.SourceTask.ID, TaskTitle: proc.SourceTask.Title,
+			ID: proc.ID, Name: proc.Name, State: proc.State,
 			StartedAt: proc.StartedAt, Workspace: workspace, WorkLogPath: proc.workLogPath(),
 		})
 	}
@@ -95,6 +95,7 @@ type ControlServer struct {
 
 // StartControlServer 在 controlDir 创建用户级唯一 supervisor socket。
 func StartControlServer(ctx context.Context, controlDir string, sys *AgentSystemd, workspace string, interactive ...InteractiveProcess) (*ControlServer, error) {
+	// 1. 清理旧版 socket，并探测固定 supervisor socket 是否已有活跃 daemon。
 	if err := os.MkdirAll(controlDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create daemon control dir: %w", err)
 	}
@@ -116,6 +117,7 @@ func StartControlServer(ctx context.Context, controlDir string, sys *AgentSystem
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("stat supervisor socket %s: %w", path, err)
 	}
+	// 2. 创建仅当前用户可访问的 Unix Socket；ctx 取消后 serve 会关闭并删除它。
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		return nil, fmt.Errorf("listen daemon control socket: %w", err)
@@ -137,6 +139,8 @@ func (s *ControlServer) serve(ctx context.Context, sys *AgentSystemd, workspace 
 	}
 }
 
+// handleControlConn 处理 list 短连接或 attach 长连接。
+// attach 按 attached -> history events -> ready -> live events 的顺序建立双向通道。
 func handleControlConn(conn net.Conn, sys *AgentSystemd, workspace string, interactive []InteractiveProcess) {
 	defer conn.Close()
 	dec, enc := json.NewDecoder(conn), json.NewEncoder(conn)
@@ -144,6 +148,7 @@ func handleControlConn(conn net.Conn, sys *AgentSystemd, workspace string, inter
 	if err := dec.Decode(&first); err != nil {
 		return
 	}
+	// 1. 首帧决定短连接 list 或长连接 attach，其他请求不会进入双向循环。
 	if first.Type == "list" {
 		processes := sys.Processes(workspace)
 		for _, proc := range interactive {
@@ -167,6 +172,7 @@ func handleControlConn(conn net.Conn, sys *AgentSystemd, workspace string, inter
 		_ = enc.Encode(controlMessage{Type: "error", Error: "interactive process not found"})
 		return
 	}
+	// 2. 先发送快照和完整历史，再以 ready 标记实时流边界。
 	history, events, detach := target.Attach()
 	defer detach()
 	snapshot := target.Snapshot()
@@ -181,6 +187,7 @@ func handleControlConn(conn net.Conn, sys *AgentSystemd, workspace string, inter
 	if err := enc.Encode(controlMessage{Type: "ready"}); err != nil {
 		return
 	}
+	// 3. 独立 goroutine 解码客户端请求，主循环串行编码事件和请求响应。
 	requests := make(chan controlMessage)
 	done := make(chan struct{})
 	defer close(done)
@@ -205,6 +212,7 @@ func handleControlConn(conn net.Conn, sys *AgentSystemd, workspace string, inter
 				return
 			}
 		case request, ok := <-requests:
+			// detach 或连接 EOF 只解除当前订阅，不停止 daemon 中的 Agent。
 			if !ok || request.Type == "detach" {
 				return
 			}
@@ -283,6 +291,7 @@ type ProcessClient struct {
 
 // AttachProcess 连接 target 对应的 daemon 并订阅交互 Agent 事件。
 func AttachProcess(controlDir string, target string) (*ProcessClient, error) {
+	// 1. 建立连接并完成 attached 握手；握手阶段设置总期限，避免无响应 daemon 卡住。
 	conn, err := net.DialTimeout("unix", filepath.Join(controlDir, supervisorSocket), time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", target, err)
@@ -305,6 +314,7 @@ func AttachProcess(controlDir string, target string) (*ProcessClient, error) {
 	}
 	client.snapshot = *response.Process
 	client.snapshot.ID = target
+	// 2. 同步收齐 ready 之前的历史事件，随后清除 deadline 并启动实时读取协程。
 	var replay []ProcessEvent
 	for {
 		if err := dec.Decode(&response); err != nil {
@@ -327,7 +337,9 @@ func AttachProcess(controlDir string, target string) (*ProcessClient, error) {
 	return client, nil
 }
 
+// read 转发实时事件，并按响应 ID 唤醒等待中的 input/stop 请求。
 func (c *ProcessClient) read(dec *json.Decoder) {
+	// 连接结束时唤醒全部 pending 请求并关闭事件流，避免调用方永久等待。
 	defer func() {
 		c.mu.Lock()
 		for id, result := range c.pending {
@@ -388,7 +400,10 @@ func (c *ProcessClient) Stop() error {
 	return c.sendControl("stop", "")
 }
 
+// sendControl 先注册递增 ID 对应的等待项，再写请求帧并等待同 ID 响应。
+// 写入失败、超时或连接关闭都会清理 pending，避免泄漏等待者。
 func (c *ProcessClient) sendControl(kind string, text string) error {
+	// 编码器写入和 pending 注册共用一把锁，确保响应到达时一定能找到等待者。
 	c.mu.Lock()
 	c.nextID++
 	id := c.nextID

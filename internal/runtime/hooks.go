@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/lzq/5hAgent/internal/toolevent"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
 
-	"github.com/lzq/5hAgent/internal/logger"
+	"github.com/Ozqi/walle/internal/logger"
+	"github.com/Ozqi/walle/internal/toolevent"
 )
 
 const defaultHookTimeout = 5 * time.Second
@@ -26,6 +26,7 @@ type hookSpec struct {
 	Timeout string   `json:"timeout,omitempty"`
 }
 
+// HookManager 保存项目 hook 配置，并按工具事件异步执行匹配命令。
 type HookManager struct {
 	workspace string
 	sessionID string
@@ -64,6 +65,7 @@ func loadHookManager(projectDir string, sessionID string) *HookManager {
 	return manager
 }
 
+// Run 根据工具事件类型异步触发所有匹配 hook；命令失败只记录日志。
 func (m *HookManager) Run(event toolevent.ToolEvent) {
 	if m == nil || len(m.hooks) == 0 {
 		return
@@ -82,6 +84,7 @@ func (m *HookManager) Run(event toolevent.ToolEvent) {
 		SessionID:     m.sessionID,
 		Time:          time.Now().UTC().Format(time.RFC3339),
 	}
+	// 每个匹配 hook 独立执行；调用方不等待结果，失败只写日志。
 	for _, hook := range m.hooks {
 		if hook.Event != name {
 			continue
@@ -92,6 +95,7 @@ func (m *HookManager) Run(event toolevent.ToolEvent) {
 }
 
 func (m *HookManager) runHook(spec hookSpec, payload hookPayload) {
+	// 1. 解析单 hook 超时；无效值回退到默认上限，避免命令无限驻留。
 	timeout := defaultHookTimeout
 	if spec.Timeout != "" {
 		if parsed, err := time.ParseDuration(spec.Timeout); err == nil && parsed > 0 {
@@ -105,6 +109,7 @@ func (m *HookManager) runHook(spec hookSpec, payload hookPayload) {
 		logger.WarnTag("HOOK", "marshal hook payload: %v", err)
 		return
 	}
+	// 2. 在项目工作区运行命令，并通过 stdin 发送单行 JSON；不继承输出流。
 	cmd := exec.CommandContext(ctx, spec.Command[0], spec.Command[1:]...)
 	cmd.Dir = m.workspace
 	cmd.Stdin = bytes.NewReader(append(data, '\n'))

@@ -10,6 +10,12 @@
 # Hidden workspace directories
 /.*/
 !/.git/
+!/.doc/
+!/.doc/**
+!/.TODO/
+!/.TODO/**
+!/.spec/
+!/.spec/**
 
 # Python (legacy)
 __pycache__/
@@ -19,11 +25,10 @@ __pycache__/
 *.egg-info/
 
 # Go
-5hagent
-!cmd/5hagent/
-!cmd/5hagent/**
+walle
+!cmd/walle/
+!cmd/walle/**
 *.exe
-*.test
 *.out
 
 # Claude Code
@@ -34,17 +39,14 @@ workspace/
 .worktrees/
 .traces/
 compact/
-testspace/*
-!testspace/.gitignore
-!testspace/md_mcp/
 !testspace/md_mcp/**
 !testspace/md_mcp_data/
 !testspace/md_mcp_data/**
 testspace/swebench_pro/repos/
 testspace/*.txt
 
-# 5hAgent runtime data
-.5hagent/
+# walle runtime data
+.walle/
 
 # Local handoff notes
 TODO.message.md

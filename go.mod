@@ -1,4 +1,4 @@
-module github.com/lzq/5hAgent
+module github.com/Ozqi/walle
 
 go 1.24.2
 

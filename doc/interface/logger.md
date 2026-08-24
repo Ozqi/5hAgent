@@ -1,21 +1,24 @@
 # Logger / Worklog
 
+> 由 Claude Fable 5 于 2026-08-23 阅读 `internal/logger/*.go`、`internal/toolevent/toolprint.go` 与 `internal/runtime/worklog.go` 后更新。
+> 覆盖范围：日志、工具事件与通用 process worklog。
+
 ## 职责
 
-`internal/logger` 只负责文件日志、ANSI 颜色和 `TruncateString`；`internal/toolevent` 负责工具事件格式化和 sink；`runtime/headlessWorkLog` 负责把 headless/process 执行流写入项目 `.5hagent`。
+`internal/logger` 只负责文件日志、ANSI 颜色和 `TruncateString`；`internal/toolevent` 负责工具事件结构与格式化；`runtime/processWorkLog` 负责把通用 process 执行流写入项目 `.walle`。
 
 ## 文件
 
 | 文件 | 作用 |
 | --- | --- |
 | [logger.go](../../internal/logger/logger.go) | 带标签日志、普通 log 文件 |
-| [toolprint.go](../../internal/toolevent/toolprint.go) | 工具调用/结果/错误文本格式与 sink |
+| [toolprint.go](../../internal/toolevent/toolprint.go) | 工具调用/结果/错误事件与文本格式 |
 | [color.go](../../internal/logger/color.go) | ANSI 颜色 |
-| [worklog.go](../../internal/runtime/worklog.go) | headless/process 工作日志 |
+| [worklog.go](../../internal/runtime/worklog.go) | 通用 process 工作日志 |
 
 ## ToolEvent
 
-TUI 和 worklog 都消费 `toolevent.ToolEvent`；sink 通过 `toolevent.SetToolEventSink` / `toolevent.PushToolEventSink` 管理：
+TUI 和 worklog 都消费 `toolevent.ToolEvent`；事件接收器由每个 `Agent` 的 `SetToolEventSink` 管理：
 
 ```text
 Kind: call/result/error
@@ -30,12 +33,12 @@ Text: formatted display text
 位置：
 
 ```text
-<project>/.5hagent/agents/<agent>/logs/<timestamp>-<task>.md
+<project>/.walle/agents/<process>/logs/<timestamp>-<process>.md
 ```
 
 段落：
 
-- `# Headless Work Log`
+- `# Process Work Log`
 - `## Assistant <RFC3339>`
 - `## Tool Event <RFC3339>`
 - `## Status <RFC3339>`

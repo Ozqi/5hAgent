@@ -1,10 +1,4 @@
-// logger.go - 日志输出
-// 功能：带标签的 DEBUG/INFO/WARN/ERROR 日志，支持颜色输出
-//
-//	启动时写入独立日志文件 ~/.5hAgent/logs/，不污染 TUI
-//
-// 主要类型：Logger, Level
-// 导出函数：SetLevel, InitLog, CloseLog, DebugTag, InfoTag, WarnTag, ErrorTag, TruncateString
+// Package logger 提供带标签的进程级文件日志、日志轮转和终端颜色辅助能力。
 package logger
 
 import (
@@ -18,24 +12,28 @@ import (
 	"time"
 )
 
-// Level 日志级别
+// Level 表示日志过滤级别。
 type Level int
 
 const (
+	// DEBUG 是最低的调试日志级别。
 	DEBUG Level = iota
+	// INFO 是普通运行信息级别。
 	INFO
+	// WARN 是可恢复异常级别。
 	WARN
+	// ERROR 是错误日志级别。
 	ERROR
 )
 
 const (
 	maxLogFiles   = 30
 	logDirName    = "logs"
-	logFilePrefix = "5hagent-"
-	oldLogPrefix  = "5hagent-debug-"
+	logFilePrefix = "walle-"
+	oldLogPrefix  = "walle-debug-"
 )
 
-// Logger 日志记录器
+// Logger 持有日志级别、当前写入器和文件，并用互斥锁保护它们的生命周期。
 type Logger struct {
 	level  Level
 	output io.Writer // 实际写入器，已封装 color
@@ -47,6 +45,7 @@ type colorStripWriter struct {
 	w io.Writer
 }
 
+// Write 去除 ANSI 颜色后写入底层日志，并保持 io.Writer 的原始字节计数语义。
 func (w colorStripWriter) Write(p []byte) (int, error) {
 	clean := stripANSIColors(string(p))
 	_, err := w.w.Write([]byte(clean))
@@ -61,16 +60,16 @@ var std = &Logger{
 	output: io.Discard,
 }
 
-// SetLevel 设置全局日志级别
+// SetLevel 在持锁状态下设置进程级日志过滤级别。
 func SetLevel(level Level) {
 	std.mu.Lock()
 	defer std.mu.Unlock()
 	std.level = level
 }
 
-// InitLog 初始化日志文件，写入 ~/.5hAgent/logs/
-// 每次启动新建一个带时间戳的日志文件，并清理超过 maxLogFiles 个旧文件。
-// logger 只写文件，不写 stdout/stderr，避免污染 TUI。
+// InitLog 在 ~/.walle/logs/ 新建带时间戳的日志文件，并返回路径。
+// 阶段：持有 std.mu，创建目录并清理旧文件，打开新文件，关闭旧文件后切换写入器，再执行一次保留上限清理。
+// 副作用：替换进程级日志文件；只写文件而不写 stdout/stderr，避免污染 TUI。
 func InitLog() (string, error) {
 	std.mu.Lock()
 	defer std.mu.Unlock()
@@ -79,7 +78,7 @@ func InitLog() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to get home dir: %w", err)
 	}
-	logDir := filepath.Join(configDir, ".5hAgent", logDirName)
+	logDir := filepath.Join(configDir, ".walle", logDirName)
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create log dir: %w", err)
 	}
@@ -103,7 +102,7 @@ func InitLog() (string, error) {
 	return logFile, nil
 }
 
-// CloseLog 关闭日志文件，恢复静默输出。
+// CloseLog 在持锁状态下关闭当前日志文件，并将进程级输出恢复为静默丢弃。
 func CloseLog() {
 	std.mu.Lock()
 	defer std.mu.Unlock()
@@ -143,7 +142,7 @@ func cleanOldLogs(logDir string) {
 	}
 }
 
-// log 内部日志输出函数
+// log 过滤级别后持锁完成整条格式化写入，避免并发日志内容交错或与 CloseLog 竞争。
 func (l *Logger) log(level Level, tag string, format string, args ...interface{}) {
 	if level < l.level {
 		return
@@ -165,29 +164,27 @@ func (l *Logger) log(level Level, tag string, format string, args ...interface{}
 	}
 }
 
-// DebugTag 输出带标签的 DEBUG 日志
+// DebugTag 输出带标签的 DEBUG 日志。
 func DebugTag(tag string, format string, args ...interface{}) {
 	std.log(DEBUG, tag, format, args...)
 }
 
-// InfoTag 输出带标签的 INFO 日志
+// InfoTag 输出带标签的 INFO 日志。
 func InfoTag(tag string, format string, args ...interface{}) {
 	std.log(INFO, tag, format, args...)
 }
 
-// WarnTag 输出带标签的 WARN 日志
+// WarnTag 输出带标签的 WARN 日志。
 func WarnTag(tag string, format string, args ...interface{}) {
 	std.log(WARN, tag, format, args...)
 }
 
-// ErrorTag 输出带标签的 ERROR 日志
+// ErrorTag 输出带标签的 ERROR 日志。
 func ErrorTag(tag string, format string, args ...interface{}) {
 	std.log(ERROR, tag, format, args...)
 }
 
-// TruncateString 截断字符串，显示前后部分
-// maxLen: 最大显示长度（rune数量）
-// 返回: "前面...后面" 或原字符串
+// TruncateString 按 rune 数截断字符串，返回“前段...后段”或原字符串。
 func TruncateString(s string, maxLen int) string {
 	runes := []rune(s)
 	if len(runes) <= maxLen {

@@ -1,32 +1,3 @@
-// grep.go - 代码搜索工具
-// 功能：调用 ripgrep（或 fallback grep）搜索，支持正则和文件类型过滤
-// 主要类型：GrepInput, GrepOutput, GrepMatch
-// 导出函数：NewGrepTool, parseRipgrepJSON, grepFallback
-//
-// ============================================================
-// 工具描述（供人类审阅）
-// ============================================================
-// Tool: grep
-// Desc: 在文件或目录中搜索正则表达式模式，返回匹配行（带文件路径、行号、列号、内容）。
-//
-//	优先使用 ripgrep (rg)，ripgrep 不可用时 fallback 到 grep。read_only 工具。
-//
-// Input Parameters:
-//   - pattern (string, required)  : 正则表达式搜索模式
-//   - path     (string, optional) : 搜索目录或文件，默认当前目录
-//   - type     (string, optional) : 按文件类型过滤，如 'go'、'py'、'js'
-//
-// Error Scenarios (LLM Hints):
-//   - pattern invalid             → 正则表达式语法错误；简化模式或转义特殊字符
-//   - path not found              → 搜索路径不存在；确认目录/文件名
-//   - no matches                  → 无匹配结果（正常情况，非错误）；尝试更宽松的模式
-//   - rg not found (fallback)    → 系统未安装 ripgrep，自动使用 grep（功能受限）
-//
-// Tips:
-//   - 正则特殊字符需要转义：. * + ? [ ] ( ) { } | \
-//   - 按类型过滤：`type: go` 只搜索 .go 文件
-//
-// ============================================================
 package tools
 
 import (
@@ -51,14 +22,14 @@ const (
 Examples: {"pattern":"func NewAgent","path":"internal","type":"go"}; {"pattern":"claude-context","path":"doc"}`
 )
 
-// GrepInput defines the input parameters for grep tool
+// GrepInput 描述 grep 工具的输入参数
 type GrepInput struct {
 	Pattern string `json:"pattern" jsonschema:"required,description=Required regex pattern to search for. Escape metacharacters for literal text."`
 	Path    string `json:"path,omitempty" jsonschema:"description=Optional directory or file to search in. Default: current workspace."`
 	Type    string `json:"type,omitempty" jsonschema:"description=Optional ripgrep file type filter, e.g. go, py, js, md."`
 }
 
-// GrepMatch represents a single match result
+// GrepMatch 描述一条搜索匹配结果
 type GrepMatch struct {
 	File   string `json:"file"`
 	Line   int    `json:"line"`
@@ -66,13 +37,13 @@ type GrepMatch struct {
 	Text   string `json:"text"`
 }
 
-// GrepOutput defines the output structure for grep tool
+// GrepOutput 描述 grep 工具的输出结构
 type GrepOutput struct {
 	Matches []GrepMatch `json:"matches"`
 	Count   int         `json:"count"`
 }
 
-// NewGrepTool creates a new grep tool for code searching
+// NewGrepTool 创建用于代码搜索的 grep 工具
 func NewGrepTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
 	root := ""
 	if len(workspaceRoot) > 0 {
@@ -82,6 +53,7 @@ func NewGrepTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
 		grepToolName,
 		grepToolDesc,
 		func(ctx context.Context, input GrepInput) (*schema.ToolResult, error) {
+			// pattern、type 和 path 均来自模型；通过 argv 调用外部程序，不经过 shell 展开。
 			if _, err := exec.LookPath("rg"); err != nil {
 				return grepFallback(ctx, input, root)
 			}
@@ -117,7 +89,7 @@ func NewGrepTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
 	)
 }
 
-// parseRipgrepJSON parses ripgrep's JSON output
+// parseRipgrepJSON 解析 ripgrep 的 JSON 输出
 func parseRipgrepJSON(output string) []GrepMatch {
 	var matches []GrepMatch
 
@@ -168,8 +140,9 @@ func parseRipgrepJSON(output string) []GrepMatch {
 	return matches
 }
 
-// grepFallback uses standard grep when ripgrep is not available
+// grepFallback 在 ripgrep 不可用时使用标准 grep
 func grepFallback(ctx context.Context, input GrepInput, root string) (*schema.ToolResult, error) {
+	// fallback 同样使用 argv 传参；resolvePath 不限制搜索范围必须位于 workspace 内。
 	path := resolvePath(root, input.Path)
 
 	args := []string{

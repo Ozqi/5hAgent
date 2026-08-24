@@ -1,26 +1,3 @@
-// skill_tool.go - 技能管理工具
-//
-// ============================================================
-// 工具描述（供人类审阅）
-// ============================================================
-// Tool: skill
-// Desc: 查看当前 Agent 启动时加载的 skill（技能模块）。
-//
-//	Skill 是预定义的 Agent 能力扩展，通过 skill 文件定义。
-//
-// Input Parameters:
-//   - action (string, optional)  : 操作类型：list（默认）/ get
-//   - skill  (string, optional)  : get 时使用的技能名称
-//
-// Error Scenarios (LLM Hints):
-//   - MISSING 'skill'             → get 时必须提供技能名称
-//   - skill not found             → 技能名称不存在；检查技能列表
-//   - unknown action              → action 必须是 list 或 get
-//
-// Tips:
-//   - skill 集合在 Agent 启动时固定，运行期不支持启用或禁用
-//
-// ============================================================
 package tools
 
 import (
@@ -28,26 +5,24 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/Ozqi/walle/internal/skill"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/lzq/5hAgent/internal/skill"
 )
 
 // --- LLM 描述常量 ---
 const (
 	skillToolName = "skill.skill"
-	skillToolDesc = `Inspect skills loaded for this Agent process. Skills are fixed at startup from global and project directories.
+	skillToolDesc = `Inspect the current skill snapshot for this Agent process. Skills load from global and project directories and may be explicitly refreshed with /skill reload.
 - action: optional, one of list or get; defaults to list
 - skill: required only for action=get, exact skill name
 Example: {"action":"list"} or {"action":"get","skill":"systematic-debugging"}`
-	skillToolErrors = `MISSING 'skill': get 时必须提供技能名称
-skill not found: 技能名称不存在；检查技能列表
-unknown action: action 必须是 list 或 get`
-	skillToolTips = `skill 集合在 Agent 启动时固定，运行期不支持启用或禁用`
 )
 
+// SkillTool 将 skill 快照查询适配为 Eino 工具。
 type SkillTool struct{ mgr *skill.Manager }
 
+// Info 返回 skill.skill 的模型可见名称、说明和参数约束。
 func (t *SkillTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
 		Name: skillToolName,
@@ -59,6 +34,7 @@ func (t *SkillTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	}, nil
 }
 
+// InvokableRun 校验查询动作，并将已加载 skill 的元数据或正文返回给模型。
 func (t *SkillTool) InvokableRun(ctx context.Context, args string, opts ...tool.Option) (string, error) {
 	var input struct {
 		Skill  string `json:"skill"`
@@ -86,6 +62,7 @@ func (t *SkillTool) InvokableRun(ctx context.Context, args string, opts ...tool.
 		if input.Skill == "" {
 			return "", fmt.Errorf("MISSING REQUIRED PARAMETER: 'skill' is required for action=get.")
 		}
+		// skill 正文会进入后续模型上下文；这里只允许按当前快照中的精确名称读取。
 		skill, ok := t.mgr.GetSkill(input.Skill)
 		if !ok {
 			return "", fmt.Errorf("skill not found: %s", input.Skill)

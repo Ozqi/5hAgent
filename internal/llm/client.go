@@ -1,7 +1,4 @@
-// client.go - LLM 客户端封装
-// 功能：按 provider 创建 Eino ToolCallingChatModel，并屏蔽 Claude/OpenAI 风格接口的初始化差异。
-// 调用方：internal/runtime/runtime.go 负责加载配置、绑定工具并注入 Agent。
-// 全局状态：无；LLMClient 只持有一次运行时使用的模型实例和配置快照。
+// Package llm 按配置创建 Eino ToolCallingChatModel，并屏蔽不同供应商的初始化差异。
 package llm
 
 import (
@@ -13,16 +10,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Ozqi/walle/internal/codex"
 	"github.com/cloudwego/eino-ext/components/model/claude"
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
-	"github.com/lzq/5hAgent/internal/codex"
 )
 
 const (
+	// ProviderClaude 表示 Anthropic Claude 接口协议。
 	ProviderClaude = "claude"
+	// ProviderOpenAI 表示 OpenAI-compatible 接口协议。
 	ProviderOpenAI = "openai"
-	ProviderCodex  = "codex"
+	// ProviderCodex 表示基于 ChatGPT OAuth 的 Codex Responses 接口协议。
+	ProviderCodex = "codex"
 )
 
 // Config 描述一次 LLM provider 初始化所需配置。
@@ -37,18 +37,19 @@ type Config struct {
 	ThinkingBudgetTokens int    // Claude extended thinking 预算；OpenAI 忽略；0 表示关闭
 }
 
-// Client LLM 客户端封装
+// LLMClient 封装一次运行期使用的模型实例和配置快照。
 type LLMClient struct {
 	config *Config
 	model  model.ToolCallingChatModel
 }
 
-// GetModel 获取底层的 Eino ToolCallingChatModel
+// GetModel 返回底层的 Eino ToolCallingChatModel。
 func (c *LLMClient) GetModel() model.ToolCallingChatModel {
 	return c.model
 }
 
-// ContextWindow 返回本地 Ollama 当前已加载模型的实际上下文窗口。
+// ContextWindow 通过 Ollama /api/ps 返回当前已加载模型的实际上下文窗口。
+// 网络、状态码或解析失败均降级返回 0，不影响主模型调用。
 func (c *LLMClient) ContextWindow(ctx context.Context) int {
 	if c == nil || c.config == nil {
 		return 0
@@ -93,7 +94,8 @@ func (c *LLMClient) ContextWindow(ctx context.Context) int {
 }
 
 // NewClient 根据 Config.Provider 创建 LLM 客户端。
-// 步骤：规范化 provider -> 选择 provider -> 构造 Eino ToolCallingChatModel。
+// 阶段：规范化 provider 和默认 token 上限，再选择 Claude、OpenAI 或 Codex 适配器。
+// 副作用：会原地规范化传入 Config 的 Provider 和 MaxTokens 字段。
 func NewClient(ctx context.Context, config *Config) (*LLMClient, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")

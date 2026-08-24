@@ -1,0 +1,24 @@
+%% 事实源: .doc/walle-architecture-topology.json view_agent_turn
+sequenceDiagram
+  participant U as User or Client
+  participant R as Runtime
+  participant C as Context Manager
+  participant A as Agent ReAct loop
+  participant M as LLM Adapter
+  participant T as Tools Registry
+  participant E as Tool Event Sink
+  participant S as Session Store
+
+  U->>R: input text
+  R->>A: RunStream(messageCtx, input)
+  A->>C: add user message
+  A->>C: get messages
+  A->>M: stream with bound tools
+  M-->>A: assistant delta / tool calls
+  A->>T: execute tool calls
+  T-->>A: tool result / error
+  A->>E: emit tool event
+  A->>C: append assistant + tool messages
+  C->>S: append / replace messages
+  A-->>R: final answer or error
+  R-->>U: stream tokens / done

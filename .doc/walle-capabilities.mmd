@@ -1,0 +1,22 @@
+%% 事实源: .doc/walle-architecture-topology.json view_capabilities
+flowchart LR
+  runtime["Runtime"]
+  registry["tools.Registry\nRuntime scoped"]
+
+  subgraph Fixed["fixed tools, startup bound"]
+    base["base.*\nfile / grep / shell"]
+    skill["skill.skill"]
+    ctx["context.context"]
+  end
+
+  subgraph Optional["optional / planned capabilities"]
+    mcp["mcp.*\nexplicit connection"]
+    external["external dynamic tools\nmay provide task management"]
+  end
+
+  runtime --> registry
+  registry --> base
+  registry --> skill
+  registry --> ctx
+  registry -. explicit register .-> mcp
+  registry -. planned mount .-> external

@@ -1,5 +1,3 @@
-// helper.go - 工具辅助函数
-// 功能：通用的 JSON 输出和错误处理
 package tools
 
 import (
@@ -11,6 +9,7 @@ import (
 )
 
 func resolvePath(root string, path string) string {
+	// 这里只提供路径解析便利，不校验结果是否仍位于 root 内，也不解析符号链接。
 	if path == "" {
 		path = "."
 	}

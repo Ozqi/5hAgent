@@ -1,33 +1,3 @@
-// read_file.go - 文件读取工具
-// 功能：按行读取文件，支持 offset/limit 范围指定
-// 主要类型：ReadFileInput, ReadFileOutput
-// 导出函数：NewReadFileTool
-//
-// ============================================================
-// 工具描述（供人类审阅）
-// ============================================================
-// Tool: read_file
-// Desc: 按行读取文件，支持 offset/limit 指定行范围，返回带行号的内容和总行数。
-//
-//	read_only 工具，不会产生副作用。
-//
-// Input Parameters:
-//   - path     (string, required)  : 文件绝对路径
-//   - offset   (int,    optional)  : 从第几行开始读，默认 1
-//   - limit    (int,    optional)  : 最多读多少行，默认 100
-//
-// Error Scenarios (LLM Hints):
-//   - MISSING 'path'              → 必须提供文件绝对路径，不能为空
-//   - offset < 1                  → offset 必须 >= 1
-//   - file not found / no permission
-//     → 路径可能错误，确认文件存在；或换用 list_dir/glob 确认路径
-//   - read error                  → 文件可能被占用或损坏；检查 limit 是否过大
-//
-// Tips:
-//   - 先用 glob/list_dir 确认文件路径，再调用 read_file
-//   - 大文件请用 offset+limit 分段读取
-//
-// ============================================================
 package tools
 
 import (
@@ -51,28 +21,22 @@ const (
 - Default output is only a prefix chunk, not the whole file. For functions, grep the symbol first and read a small offset range.
 - Do not use a partial read to count whole-file occurrences. For counts, use base.grep or base.exec_shell with an exact command.
 Example: {"path":"/home/user/project/main.go","offset":1,"limit":120}`
-	readFileToolErrors = `MISSING 'path': 必须提供文件绝对路径，不能为空
-offset < 1: offset 必须 >= 1
-file not found / permission denied: 路径可能错误，确认文件存在；或换用 list_dir/glob 确认路径
-read error: 文件可能被占用或损坏；检查 limit 是否过大`
-	readFileToolTips = `先用 glob/list_dir 确认文件路径，再调用 read_file
-大文件请用 offset+limit 分段读取`
 )
 
-// ReadFileInput defines the input parameters for read_file tool
+// ReadFileInput 描述 read_file 工具的输入参数
 type ReadFileInput struct {
 	Path   string `json:"path" jsonschema:"required,description=Required absolute path to the file to read. Use glob/list_dir first if unsure."`
 	Offset int    `json:"offset,omitempty" jsonschema:"description=Optional 1-based line number to start reading from. Default: 1."`
 	Limit  int    `json:"limit,omitempty" jsonschema:"description=Optional number of lines to read. Default: 100. Use 100-200 for large files."`
 }
 
-// ReadFileOutput defines the output structure for read_file tool
+// ReadFileOutput 描述 read_file 工具的输出结构
 type ReadFileOutput struct {
 	Content    string `json:"content"`
 	TotalLines int    `json:"total_lines"`
 }
 
-// NewReadFileTool creates a new read_file tool using Eino's InferEnhancedTool
+// NewReadFileTool 使用 Eino InferEnhancedTool 创建 read_file 工具
 func NewReadFileTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
 	root := ""
 	if len(workspaceRoot) > 0 {
@@ -82,6 +46,7 @@ func NewReadFileTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error
 		readFileToolName,
 		readFileToolDesc,
 		func(ctx context.Context, input ReadFileInput) (*schema.ToolResult, error) {
+			// 模型输入在这里进入文件系统信任边界；路径解析不限制绝对路径或 .. 跳转。
 			if input.Path == "" {
 				return nil, fmt.Errorf("MISSING REQUIRED PARAMETER: 'path' is required. You must provide the file path to read")
 			}

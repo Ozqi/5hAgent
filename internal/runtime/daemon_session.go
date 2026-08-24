@@ -1,20 +1,19 @@
-// daemon_session.go - daemon 持有的长驻交互 Agent 会话。
-// 控制层只通过 systemd.InteractiveProcess 接口提交输入和订阅事件，不接触 Runtime 内部对象。
 package runtime
 
 import (
 	"context"
 	"fmt"
-	"github.com/lzq/5hAgent/internal/toolevent"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/lzq/5hAgent/internal/commands"
-	"github.com/lzq/5hAgent/internal/systemd"
+	"github.com/Ozqi/walle/internal/commands"
+	"github.com/Ozqi/walle/internal/systemd"
+	"github.com/Ozqi/walle/internal/toolevent"
 )
 
 // DaemonSession 串行执行用户输入，并缓存 daemon 生命周期内的结构化输出供重连回放。
+// 事件历史只保存在内存中，daemon 退出后丢失。
 type DaemonSession struct {
 	mu        sync.Mutex
 	ctx       context.Context
@@ -43,13 +42,15 @@ func (s *DaemonSession) Snapshot() systemd.ProcessSnapshot {
 		state = systemd.ProcessRunning
 	}
 	return systemd.ProcessSnapshot{
-		ID: "interactive", State: state, TaskTitle: "interactive", StartedAt: s.started,
-		Workspace: s.runtime.ProjectDir, Model: s.runtime.ModelRef, SessionID: s.runtime.SessionID, Interactive: true,
+		ID: "interactive", Name: "interactive", State: state, StartedAt: s.started,
+		Workspace: s.runtime.ProjectDir, Model: s.runtime.ModelRef, SessionID: s.runtime.SessionID,
+		Turn: s.runtime.Agent.CurrentTurn(), Interactive: true,
 	}
 }
 
 // Attach 原子返回历史事件并注册实时订阅者。
 func (s *DaemonSession) Attach() ([]systemd.ProcessEvent, <-chan systemd.ProcessEvent, func()) {
+	// 在同一临界区复制历史并注册订阅者，避免 history 与实时流之间出现事件缺口。
 	s.mu.Lock()
 	history := append([]systemd.ProcessEvent(nil), s.events...)
 	ch := make(chan systemd.ProcessEvent, 256)
@@ -65,7 +66,8 @@ func (s *DaemonSession) Attach() ([]systemd.ProcessEvent, <-chan systemd.Process
 	}
 }
 
-// Submit 在会话空闲时启动一轮 Agent；socket 断开不会取消这轮执行。
+// Submit 处理 slash command，或在会话空闲时异步启动一轮 Agent。
+// socket 断开只解除事件订阅，不会取消已经启动的执行。
 func (s *DaemonSession) Submit(text string) error {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -82,6 +84,7 @@ func (s *DaemonSession) Submit(text string) error {
 		s.publish(systemd.ProcessEvent{Type: "system", Text: s.handleSlash(text)})
 		return nil
 	}
+	// 普通输入只允许单轮执行；取消函数与 busy 在启动 goroutine 前一起发布。
 	s.mu.Lock()
 	if s.busy {
 		s.mu.Unlock()
@@ -115,6 +118,8 @@ func (s *DaemonSession) stop() error {
 	return nil
 }
 
+// handlePickerSlash 处理 /provider 和 /model 的 picker、登录和异步模型切换。
+// 该路径只在 Agent 空闲时运行；真正的模型切换由 Runtime.SwitchModel 串行化。
 func (s *DaemonSession) handlePickerSlash(text string) bool {
 	fields := strings.Fields(text)
 	if len(fields) == 0 || (fields[0] != "/provider" && fields[0] != "/model") {
@@ -128,6 +133,7 @@ func (s *DaemonSession) handlePickerSlash(text string) bool {
 		return true
 	}
 	if fields[0] == "/provider" {
+		// provider 无参数时只返回候选列表；有参数时切换当前 provider 并按需触发登录。
 		if len(fields) == 1 {
 			providers := s.runtime.Providers()
 			options := make([]string, 0, len(providers))
@@ -169,6 +175,7 @@ func (s *DaemonSession) handlePickerSlash(text string) bool {
 		go s.publishModels(provider)
 		return true
 	}
+	// model 无参数时返回当前 provider 的模型列表；有参数时异步切换目标模型。
 	if len(fields) == 1 {
 		go s.publishModels(s.currentProvider())
 		return true
@@ -186,6 +193,7 @@ func (s *DaemonSession) handlePickerSlash(text string) bool {
 }
 
 func (s *DaemonSession) switchModel(modelRef string) {
+	// handlePickerSlash 已在启动 goroutine 前检查 busy；SwitchModel 自身只串行化多个切换请求。
 	result, err := s.runtime.SwitchModel(s.ctx, modelRef)
 	if err != nil {
 		s.publish(systemd.ProcessEvent{Type: "system", Text: err.Error()})
@@ -228,14 +236,10 @@ func (s *DaemonSession) handleSlash(text string) string {
 	switch fields[0] {
 	case "/skill":
 		result, err = commands.HandleSkill(text, s.runtime.Agent.GetSkillManager())
-	case "/task":
-		result, err = commands.HandleTask(text, s.runtime.TaskList)
 	case "/mcp":
 		result, err = commands.HandleMCP(text)
 	case "/compress":
 		result, err = commands.HandleCompress(s.ctx, text, s.runtime.CtxManager, s.runtime.MessageCtx, s.runtime.Agent.GetModel(), s.runtime.PromptDir, "compact")
-	case "/run":
-		return "/run is not available in attached daemon mode yet"
 	case "/stop":
 		if err := s.stop(); err != nil {
 			return err.Error()
@@ -253,6 +257,7 @@ func (s *DaemonSession) handleSlash(text string) string {
 }
 
 func (s *DaemonSession) run(runCtx context.Context, text string) {
+	// 1. 当前轮临时接管 Agent 工具事件 sink，并把 token/tool 事件转成 daemon 事件。
 	prev := s.runtime.Agent.SetToolEventSink(func(event toolevent.ToolEvent) {
 		s.runtime.RecordToolEvent(event)
 		s.publish(systemd.ProcessEvent{
@@ -260,11 +265,12 @@ func (s *DaemonSession) run(runCtx context.Context, text string) {
 			Text: event.Text, Result: event.Result, Error: event.Error,
 		})
 	})
+	defer s.runtime.Agent.SetToolEventSink(prev)
 	_, err := s.runtime.Agent.RunStream(runCtx, s.runtime.MessageCtx, text,
 		func(token string) { s.publish(systemd.ProcessEvent{Type: "assistant", Text: token}) },
 		func(token string) { s.publish(systemd.ProcessEvent{Type: "thinking", Text: token}) },
 	)
-	s.runtime.Agent.SetToolEventSink(prev)
+	// 2. 在锁内发布终态并清理运行状态，避免新 Submit 观察到半完成状态。
 	s.mu.Lock()
 	if runCtx.Err() != nil {
 		s.publishLocked(systemd.ProcessEvent{Type: "system", Text: "stopped current run"})
@@ -286,6 +292,11 @@ func (s *DaemonSession) publish(event systemd.ProcessEvent) {
 }
 
 func (s *DaemonSession) publishLocked(event systemd.ProcessEvent) {
+	if event.Turn == 0 && s.runtime != nil && s.runtime.Agent != nil {
+		event.Turn = s.runtime.Agent.CurrentTurn()
+	}
+	// 调用方必须持有 s.mu，保证 seq、历史和订阅者集合在同一临界区更新。
+	// 连续 token 在历史中合并以限制重放体积，实时订阅仍收到原始增量事件。
 	s.seq++
 	event.Seq = s.seq
 	if len(s.events) > 0 && (event.Type == "assistant" || event.Type == "thinking") && s.events[len(s.events)-1].Type == event.Type {
@@ -295,6 +306,7 @@ func (s *DaemonSession) publishLocked(event systemd.ProcessEvent) {
 		s.events = append(s.events, event)
 	}
 	for ch := range s.subs {
+		// 慢订阅者不会阻塞 Agent；缓冲区满时直接断开，由客户端重新 attach 获取历史。
 		select {
 		case ch <- event:
 		default:

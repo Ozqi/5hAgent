@@ -1,184 +1,263 @@
-# 5hAgent
+<p align="center">
+  <img src="doc/brand/walle-social-preview.png" alt="walle - lightweight Go agent runtime" width="900" />
+</p>
 
-5hAgent 是一个用 Go 和 Eino 实现的轻量 Agent runtime。核心 runtime 排除 TUI、测试、注释和空行后不到一万行 Go 代码，适合直接阅读、调试和改造。
+<h1 align="center">walle</h1>
 
-这套小体量实现完整串起了 ReAct 循环、流式工具调用、上下文与会话、文件任务、Skill 和 MCP 扩展边界，并同时支持交互式 TUI、无头任务和 daemon。Go 带来了单二进制部署、较少的运行依赖，以及适合流式处理和并发控制的运行时基础。
+<p align="center">
+  <strong>一个用 Go 写的轻量 Agent Runtime。</strong><br />
+  会使用工具、能修补自己，并把每一步运行在你看得见的终端里。
+</p>
 
-## 功能
+<p align="center">
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.24%2B-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.24+" /></a>
+  <a href="https://github.com/cloudwego/eino"><img src="https://img.shields.io/badge/Powered_by-Eino-5B5BD6?style=flat-square" alt="Powered by Eino" /></a>
+  <img src="https://img.shields.io/badge/MCP-supported-BF5B3D?style=flat-square" alt="MCP supported" />
+  <img src="https://img.shields.io/badge/UI-Bubble_Tea-EE6F9E?style=flat-square" alt="Bubble Tea TUI" />
+</p>
 
-- ReAct 多轮执行：模型生成、工具调用、结果回灌
-- 内置文件、搜索、Shell、任务和上下文工具
-- TUI 会话与可分离的后台 Agent
-- 基于 `.5hagent/task.md` 的无头任务和 Markdown 报告
-- 用户级与项目级 Skill
-- MCP 配置管理
-- OpenAI-compatible、Claude 和本地 Ollama 接口
+<p align="center">
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#为什么是-walle">为什么是 walle</a> ·
+  <a href="#运行方式">运行方式</a> ·
+  <a href="#扩展能力">扩展能力</a> ·
+  <a href="doc/0README.md">完整文档</a>
+</p>
 
-## 安装
+---
 
-需要 Go 1.24.2 或更高版本。Node.js 只在使用部分 MCP server 时需要。
+## 为什么是 walle
 
-在仓库内安装当前代码：
+`walle` 是一个小而完整的 Agent 运行时。它不把自己包装成庞大的平台，而是像一个小维修机器人：观察现场、选择工具、打补丁、继续验证。
+
+它适合放在真实项目目录里工作：连接模型，维护会话，控制上下文，执行工具，并通过可分离的 TUI / daemon 让一次任务可以持续运行。
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <strong>🪶 小核心</strong><br />
+      Go 实现，运行链路清楚，适合阅读、调试和二次开发。
+    </td>
+    <td width="33%" valign="top">
+      <strong>🛠️ 工具优先</strong><br />
+      内置文件、搜索、Shell、上下文工具，并支持多轮工具调用。
+    </td>
+    <td width="33%" valign="top">
+      <strong>🧰 可分离运行</strong><br />
+      后台 daemon 托管 Agent，终端 TUI 可以随时 attach / detach。
+    </td>
+  </tr>
+  <tr>
+    <td width="33%" valign="top">
+      <strong>🧠 可控上下文</strong><br />
+      管理 session、历史消息和自动压缩，减少无关内容进入模型。
+    </td>
+    <td width="33%" valign="top">
+      <strong>🔌 可扩展</strong><br />
+      支持用户级 / 项目级 Skill，也可以接入 MCP Server。
+    </td>
+    <td width="33%" valign="top">
+      <strong>🔧 可修补</strong><br />
+      Agent 可以检查源码、精确编辑文件，并主动运行命令验证结果。
+    </td>
+  </tr>
+</table>
+
+## 工作方式
+
+```text
+用户输入
+   │
+   ▼
+Agent Runtime ──► LLM
+   ▲              │
+   │              ▼
+工具执行结果 ◄── Tool Call
+   │
+   └── 继续推理，直到完成或停止
+```
+
+在代码项目里，`walle` 的理想闭环是：
+
+```text
+Inspect  →  Patch  →  Run
+  检查       修改      验证
+```
+
+这不是不可控的“自我进化”。它只是把工程师熟悉的步骤变成一个透明的工具调用过程：能看到输入，能看到工具，能看到结果，也能随时停下。
+
+## 快速开始
+
+### 1. 安装
+
+需要 **Go 1.24.2+**。Node.js 仅在部分 MCP Server 需要时安装。
 
 ```bash
+git clone https://github.com/Ozqi/walle.git
+cd walle
 bash install.sh
 ```
 
-安装 `master` 版本：
+安装脚本会把二进制安装到 `~/.local/bin/walle`，首次创建 `~/.walle/.env`。
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Ozqi/5hAgent/master/install.sh | bash
-```
-
-脚本会将二进制安装到 `~/.local/bin/5hagent`，并在首次安装时创建 `~/.5hAgent/.env`。如果命令不可用，请将安装目录加入 `PATH`：
+如果终端找不到命令：
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-## 配置
-
-模型使用 `provider/model` 格式。`provider` 对应一组 `LLM_<PROVIDER>_*` 配置，`model` 原样传给上游接口。
-
-编辑 `~/.5hAgent/.env`：
-
-```env
-LLM_MODEL=mira/claude-opus-4-6
-
-LLM_MIRA_FORMAT=claude
-LLM_MIRA_API_KEY=local
-LLM_MIRA_BASE_URL=http://127.0.0.1:8787
-LLM_MIRA_MAX_TOKENS=4096
-LLM_MIRA_STREAM=true
-
-AGENT_NAME=5hAgent
-AGENT_CONTEXT_AUTO_COMPRESS=true
-```
-
-`FORMAT` 表示接口协议，目前支持 `openai` 和 `claude`。完整配置项见 [.env.example](.env.example) 和 [LLM 配置](doc/config/llm.md)。
-
-也可以只为本次运行切换模型：
+<details>
+<summary>使用远程安装脚本</summary>
 
 ```bash
-5hagent --model openrouter/openrouter/owl-alpha
-5hagent --model openrouter/openrouter/owl-alpha run
+curl -fsSL https://raw.githubusercontent.com/Ozqi/walle/master/install.sh | bash
 ```
 
-### 本地 Ollama
+建议在执行前先查看脚本内容。
 
-先拉取并启动模型：
+</details>
+
+### 2. 配置模型
+
+模型名统一使用 `provider/model` 格式。下面以本地 Ollama 为例：
 
 ```bash
 ollama pull qwen3:14b
 ollama serve
 ```
 
-然后在 `~/.5hAgent/.env` 中配置：
+编辑 `~/.walle/.env`：
 
 ```env
 LLM_MODEL=ollama/qwen3:14b
 LLM_OLLAMA_FORMAT=openai
 LLM_OLLAMA_BASE_URL=http://localhost:11434/v1
 LLM_OLLAMA_API_KEY=dummy
+LLM_OLLAMA_MAX_TOKENS=4096
+LLM_OLLAMA_STREAM=true
+
+AGENT_NAME=walle
+AGENT_CONTEXT_AUTO_COMPRESS=true
 ```
 
-Ollama 通过 OpenAI-compatible `/v1` 接口接入。本地服务不校验 API key 时可使用 `dummy`。
-
-### ChatGPT OAuth
-
-在 TUI 中输入 `/provider openai`，按提示完成浏览器登录，再用 `/model` 选择当前账号可用的模型。OAuth 凭据保存在 `~/.5hAgent/auth/codex.json`，不会写入项目目录、session 或 report。
-
-## 使用
-
-### 交互模式
-
-在项目目录执行：
+也可以在单次启动时临时切换模型：
 
 ```bash
-5hagent
+walle --model openrouter/openrouter/owl-alpha
 ```
 
-默认入口会连接当前 workspace 的交互 Agent；不存在时自动在后台启动。退出 TUI 后，Agent 可以继续运行。
+完整配置见 [.env.example](.env.example) 和 [LLM 配置文档](doc/config/llm.md)。
+
+### 3. 启动
+
+在任意项目目录执行：
 
 ```bash
-5hagent ps
-5hagent attach interactive
+walle
 ```
 
-`ps` 列出当前可连接的 Agent，`attach` 重新进入指定实例。`attach` 的进程 ID 支持 zsh Tab 补全。
+进入 TUI 后直接描述任务即可。输入 `/` 查看命令，按 `Tab` 补全。
 
-### 文件任务
+## 运行方式
 
-任务保存在项目目录的 `.5hagent/task.md`。可以在 TUI 中创建任务：
-
-```text
-/task create baseline-demo 整理项目 阅读项目并输出一份整理建议
-```
-
-无头模式每次执行一个 `in_progress` 或 `pending` 任务：
+### 交互式 TUI
 
 ```bash
-5hagent run
-5hagent run --task baseline-demo
-5hagent run --quiet
+walle
 ```
 
-报告和工作日志分别写入：
-
-```text
-.5hagent/reports/<task-id>.md
-.5hagent/agents/<agent-name>/logs/<timestamp>-<task-id>.md
-```
-
-TUI 中的 `/run` 会连续执行任务，直到没有可运行任务。
-
-### Daemon
-
-daemon 持续监听 `.5hagent/task.md`，并将新增或变更的任务作为 Agent process 执行：
+默认入口会连接当前 workspace 的交互 Agent；如果不存在，则自动在后台创建。离开 TUI 后仍可保留 Agent，并在稍后重新进入：
 
 ```bash
-5hagent daemon
-5hagent daemon --poll 2s
+walle ps
+walle attach interactive
 ```
 
-任务结束后会更新源任务状态。daemon 生成的报告带有 task、process 和时间戳，避免覆盖历史结果：
+### 后台 daemon
 
-```text
-.5hagent/reports/<task-id>.<process-id>.<timestamp>.md
+`walle daemon` 托管一个可 attach 的交互 Agent，并通过本机 Unix Socket 提供控制面：
+
+```bash
+walle daemon
+walle ps
+walle attach interactive
 ```
 
-## TUI 命令
+默认执行 `walle` 时无需手动启动 daemon：CLI 会优先复用已有实例，不存在时自动启动。`ps`、`attach` 和运行中的停止操作通过 `~/.walle/run/supervisor.sock` 完成。
 
-| 命令 | 作用 |
+## 常用 TUI 命令
+
+| 命令 | 用途 |
 | --- | --- |
-| `/provider [name]` | 选择 provider 或进行认证 |
+| `/provider [name]` | 选择 Provider 或完成认证 |
 | `/model <provider/model>` | 查看或切换当前模型 |
-| `/session <new\|list\|id>` | 管理会话 |
-| `/task <list\|create\|update\|...>` | 管理项目任务 |
-| `/run` / `/stop` | 执行或停止文件任务 |
+| `/session <new\|list\|id>` | 新建、查看或切换会话 |
+| `/stop` | 停止当前 Agent 执行 |
 | `/skill <list\|get\|reload>` | 查看或重新加载 Skill |
 | `/mcp <list\|add\|remove\|...>` | 管理 MCP 配置 |
 | `/compress` | 手动压缩当前上下文 |
-| `/detach` | 退出 TUI，保留后台 Agent |
+| `/detach` | 退出 TUI，但保留后台 Agent |
 
-输入 `/` 可以查看命令提示；输入命令前缀后按 Tab 可补全。
+### ChatGPT OAuth
+
+在 TUI 中输入 `/provider openai`，按提示完成浏览器登录，再用 `/model` 选择当前账号可用的模型。凭据保存在 `~/.walle/auth/codex.json`，不会写入项目目录、session 或 report。
+
+## 扩展能力
+
+### Skill
+
+Skill 可以放在用户目录或项目目录中，用来补充特定工作流和工具说明：
+
+```text
+~/.walle/skills/              用户级 Skill
+<workspace>/.walle/skills/    项目级 Skill
+```
+
+详情见 [Skill 文档](doc/core/skill.md)。
+
+### MCP
+
+`walle` 支持管理并连接 MCP Server，把外部服务注册为 Agent 可调用的工具：
+
+```text
+/mcp list
+/mcp add ...
+/mcp remove ...
+```
+
+详情见 [MCP 文档](doc/integrations/mcp.md)。
 
 ## 项目结构
 
 ```text
-cmd/5hagent/       CLI 入口
+cmd/walle/        CLI 入口
 internal/
-├── runtime/       TUI、headless 和 daemon 的共享装配层
-├── agent/         ReAct 循环与工具调度
-├── llm/           LLM 客户端
-├── tools/         内置工具与注册表
-├── task/          文件任务与状态流转
-├── context/       上下文和 session
-├── skill/         Skill 加载
-├── systemd/       Agent process 调度与控制面
-└── tui/           Bubble Tea 客户端
-doc/               模块文档
+├── runtime/      daemon 托管的交互 Agent 装配层
+├── agent/        ReAct 循环与工具调度
+├── llm/          模型客户端与协议适配
+├── tools/        内置工具与注册表
+├── context/      上下文与 session
+├── skill/        Skill 加载
+├── mcp/          MCP 客户端
+├── systemd/      Agent process 调度与控制面
+└── tui/          Bubble Tea 客户端
+doc/              设计与模块文档
+prompt/           Runtime 提示词
 ```
+
+## 开发
+
+```bash
+go build ./cmd/walle
+go test ./...
+```
+
+建议从以下文件开始阅读：
+
+1. [`cmd/walle/main.go`](cmd/walle/main.go)：CLI 入口
+2. [`internal/runtime/runtime.go`](internal/runtime/runtime.go)：Runtime 装配
+3. [`internal/agent/agent.go`](internal/agent/agent.go)：Agent 主循环
+4. [`internal/tools/registry.go`](internal/tools/registry.go)：工具注册
 
 ## 文档
 
@@ -186,8 +265,23 @@ doc/               模块文档
 - [Runtime](doc/runtime/runtime.md)
 - [Agent 主循环](doc/core/agent.md)
 - [Context 与 Session](doc/core/context.md)
-- [Task](doc/core/task.md)
 - [Skill](doc/core/skill.md)
 - [Tools](doc/integrations/tools.md)
-- [TUI](doc/interface/cli.md)
+- [MCP](doc/integrations/mcp.md)
+- [TUI / CLI](doc/interface/cli.md)
 - [LLM 配置](doc/config/llm.md)
+
+<details>
+<summary>终端里的 walle</summary>
+
+```text
+ ╭───╮ ╭───╮
+╱  ● ╲_╱ ●  ╲
+╲____╱ ╲____╱
+     ║╬║
+╭██╮╭─╨─╮╭██╮
+│██├┤▪▦▪├┤██│
+╰██╯╰───╯╰██╯
+```
+
+</details>

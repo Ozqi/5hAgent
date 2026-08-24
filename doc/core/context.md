@@ -9,7 +9,7 @@
 | 文件 | 作用 |
 | --- | --- |
 | [ctx.go](../../internal/context/ctx.go) | `Context`、`Manager`、压缩、inspect/pin/audit |
-| [session.go](../../internal/context/session.go) | `~/.5hAgent/sessions/*.jsonl` 读写 |
+| [session.go](../../internal/context/session.go) | `~/.walle/sessions/*.jsonl` 读写 |
 | [context_tool.go](../../internal/tools/context_tool.go) | LLM 可调用的 `context.context` |
 
 ## 消息生命周期

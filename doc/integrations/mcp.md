@@ -15,10 +15,10 @@
 
 ## 当前状态
 
-- `/mcp` 只管理 `~/.5hAgent/mcp.json` 配置。
+- `/mcp` 只管理 `~/.walle/mcp.json` 配置。
 - 默认工具列表没有 `mcp.*`。
 - `RegisterMCPTools` 保留，但默认启动链路不调用。
-- 未来应做 lazy 启动或显式连接，避免坏 MCP 配置阻塞 TUI/headless。
+- 需要执行 MCP 工具时，应显式连接并注册，避免坏 MCP 配置阻塞默认 TUI/daemon 启动。
 
 ## Stdio client
 

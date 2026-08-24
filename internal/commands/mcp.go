@@ -1,7 +1,3 @@
-// mcp.go - /mcp 命令处理
-// 功能：解析 /mcp 命令（list/add/remove/enable/disable），管理 MCP 服务器配置
-// 配置文件：~/.5hAgent/mcp.json
-// 导出函数：HandleMCP
 package commands
 
 import (
@@ -12,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lzq/5hAgent/internal/mcp"
+	"github.com/Ozqi/walle/internal/mcp"
 )
 
 type mcpServerEntry struct {
@@ -28,7 +24,7 @@ type mcpConfigFile struct {
 	Servers []mcpServerEntry `json:"servers"`
 }
 
-// HandleMCP 处理 /mcp 命令
+// HandleMCP 校验并分派 /mcp 子命令；修改类命令会覆盖用户级 mcp.json。
 func HandleMCP(cmd string) (string, error) {
 	parts := strings.Fields(cmd)
 	if len(parts) < 2 {
@@ -239,6 +235,7 @@ func loadMCPConfig() (*mcpConfigFile, error) {
 }
 
 func saveMCPConfig(cfg *mcpConfigFile) error {
+	// 配置按“创建目录 -> 序列化完整快照 -> 覆盖文件”的顺序写入，不修改运行中的 MCP 客户端。
 	configPath, err := mcpConfigPath()
 	if err != nil {
 		return err
@@ -262,5 +259,5 @@ func mcpConfigPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
-	return filepath.Join(home, ".5hAgent", "mcp.json"), nil
+	return filepath.Join(home, ".walle", "mcp.json"), nil
 }

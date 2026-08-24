@@ -16,7 +16,7 @@
 1. 本地 Milvus 可启动。
 2. claude-context MCP server 可启动。
 3. `tools/list` 能返回目标工具。
-4. 当前 5hAgent 仓库可索引。
+4. 当前 walle 仓库可索引。
 5. `search_code` 返回可用代码片段。
 
 ## 接入边界

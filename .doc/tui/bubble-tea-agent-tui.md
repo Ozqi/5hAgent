@@ -1,12 +1,12 @@
 # Bubble Tea Agent TUI 开发参考
 
-本文记录 5hAgent 后续 TUI 开发可复用的 Bubble Tea 生态知识。它不是新模板生成任务，而是给当前 `internal/cli/tui.go` 继续演进时查阅的参考。
+本文记录 walle 后续 TUI 开发可复用的 Bubble Tea 生态知识，用作当前 TUI 演进参考。
 
 ## 当前入口
 
-- 主界面：[internal/cli/tui.go](/Users/bytedance/Proj/5hAgent/internal/cli/tui.go)
-- Markdown 渲染：[internal/cli/markdown_stream.go](/Users/bytedance/Proj/5hAgent/internal/cli/markdown_stream.go)
-- 模块说明：[doc/cli.md](/Users/bytedance/Proj/5hAgent/doc/cli.md)
+- 主界面：[internal/tui/app.go](/Users/bytedance/Proj/walle/internal/tui/app.go)
+- Markdown 渲染：[internal/tui/markdown.go](/Users/bytedance/Proj/walle/internal/tui/markdown.go)
+- 模块说明：[doc/interface/cli.md](/Users/bytedance/Proj/walle/doc/interface/cli.md)
 
 当前实现已经使用：
 
@@ -17,7 +17,7 @@
 
 ## 推荐生态组合
 
-| 包 | 用途 | 在 5hAgent 中的建议 |
+| 包 | 用途 | 在 walle 中的建议 |
 | --- | --- | --- |
 | Bubble Tea | TUI 主框架，Elm 架构 | 保持 `AppModel.Update` 只处理消息和状态迁移，避免直接做阻塞 I/O |
 | Lip Gloss | 样式和布局 | 继续集中维护颜色和 style 变量，减少散落的字符串拼接样式 |
@@ -57,7 +57,7 @@ func (m Model) View() string {
 }
 ```
 
-5hAgent 的当前 `AppModel` 已经比这个骨架更完整：它持有 `Agent`、`TaskList`、`SkillManager`、`Context`、session id、tool event 和流式 token 消息。后续开发应优先在这个模型内增量演进，不另起一套 TUI 框架。
+walle 的当前 `AppModel` 已经比这个骨架更完整：它持有 `Agent`、`SkillManager`、`Context`、session id、tool event 和流式 token 消息。后续开发应优先在这个模型内增量演进，不另起一套 TUI 框架。
 
 ## 设计原则
 
@@ -70,7 +70,7 @@ func (m Model) View() string {
 
 ## Slash 命令提示
 
-当前 slash 命令提示是在输入框附近渲染浅色提示，相关函数位于 `internal/cli/tui.go`：
+当前 slash 命令提示是在输入框附近渲染浅色提示，相关函数位于 `internal/tui/app.go`：
 
 - `slashCommandHints`
 - `slashHintMatches`
@@ -78,7 +78,6 @@ func (m Model) View() string {
 
 已覆盖的命令：
 
-- `/task <list|create|update|get|delete|archive|reopen>`
 - `/skill <list|enable|disable|show>`
 - `/compress [compact|truncate]`
 - `/mcp <list|add|remove|enable|disable>`
@@ -93,13 +92,13 @@ func (m Model) View() string {
 
 ## Markdown 渲染
 
-当前项目有自定义流式 Markdown 渲染：[internal/cli/markdown_stream.go](/Users/bytedance/Proj/5hAgent/internal/cli/markdown_stream.go)。
+当前项目有自定义流式 Markdown 渲染：[internal/tui/markdown.go](/Users/bytedance/Proj/walle/internal/tui/markdown.go)。
 
 适合继续保留自定义渲染的场景：
 
 - 只需要标题、列表、代码块、表格等有限格式。
 - 需要对流式 token 做稳定增量显示。
-- 希望测试输出更可控。
+- 希望渲染输出更可控。
 
 适合评估 Glamour 的场景：
 
@@ -118,20 +117,20 @@ func (m Model) View() string {
 TUI 问题建议分三层排查：
 
 1. 纯文本结构：使用 `tmux capture-pane` 查看实际内容是否存在。
-2. ANSI 宽度：用 `lipgloss.Width`、现有 wrap 测试验证中文、颜色和表格没有超宽。
+2. ANSI 宽度：用 `lipgloss.Width` 和真实 capture 验证中文、颜色和表格没有超宽。
 3. 真实视觉：用终端截图确认浅色提示、边框、光标、输入框背景和状态栏对比度。
 
 可用方法：
 
 - 用户直接发截图，适合判断颜色、层级、遮挡、对齐。
-- 本地运行 `5hagent` 后用 `tmux capture-pane` 捕获文本，适合判断渲染内容是否出现。
+- 本地运行 `walle` 后用 `tmux capture-pane` 捕获文本，适合判断渲染内容是否出现。
 - 鼠标滚轮可用 SGR mouse escape 验证：`tmux send-keys -t <session> Escape '[<64;10;10M'` 上滚，`'[<65;10;10M'` 下滚；不要发送字面量 `WheelUpPane`。
 - 在 macOS 上用 `screencapture` 截图，但可能受屏幕录制权限影响。
-- 固定视图逻辑优先通过人工 TUI 操作和 capture 验证，必要时再补小范围单测。
+- 固定视图逻辑通过人工 TUI 操作和 capture 验证。
 
-调试时不要只依赖截图：截图能发现视觉问题，但命令状态、焦点状态和消息顺序仍要回到 `Update` 事件流和测试里确认。
+调试时不要只依赖截图：截图能发现视觉问题，命令状态、焦点状态和消息顺序还要回到 `Update` 事件流确认。
 
-## 适合 5hAgent 的增量路线
+## 适合 walle 的增量路线
 
 短期优先级：
 
@@ -151,8 +150,7 @@ TUI 问题建议分三层排查：
 
 改 TUI 代码后至少检查：
 
-- `go test ./internal/cli`
-- 相关 render 函数有不含 ANSI 的断言。
+- 通过 `tmux capture-pane` 检查纯文本结构。
 - 中文、英文长词、ANSI 彩色字符串不会撑爆固定宽度。
 - slash 命令、工具事件、assistant token、thinking token 的 entry 顺序正确。
 - PgUp/PgDown 与 SGR mouse wheel 上下滚动历史记录时，`scroll xx%` 状态应随之变化。
@@ -165,7 +163,7 @@ TUI 问题建议分三层排查：
 - 本地可用 `5HAGENT_TUI_DEBUG=1` 启动后输入 `/debug tool-running`，验证工具 running 态和完成态。
 - 未知 slash command 应显示为 `◆ Command /unknown` 错误，不进入 LLM，不增加 context messages。
 - slash hint 区域保持固定高度，输入 `/` 前后输入条、session/footer、底栏不能跳动。
-- 如果改启动 wiring，再运行 `go build -o 5hagent cmd/5hagent/main.go`。
+- 如果改启动 wiring，再运行 `go build -o walle ./cmd/walle`。
 - 视觉改动尽量补一张真实终端截图或 tmux capture 记录。
 
 ## tmux 验证矩阵
@@ -185,7 +183,7 @@ TUI 问题建议分三层排查：
 | 长历史 | 100x30 | 多轮历史 session | PgUp/PgDown、`scroll xx%` |
 | 鼠标滚轮 | 100x30 | SGR wheel escape | wheel up/down 后 `scroll xx%` 改变 |
 | Markdown | 100x32 / 60x24 | 标题、列表、代码块、表格 | 不撑破输入区，diff 行有红/绿背景 |
-| slash 长输出 | 100x30 | `/session list`、`/task list` | `◆ Command` 标题，长输出省略 |
+| slash 长输出 | 100x30 | `/session list`、`/skill list` | `◆ Command` 标题，长输出省略 |
 
 `/session list` 捕获必须先于矩阵脚本创建临时 sample session，避免 `tui-capture-*` 污染列表；`audit.txt` 会检查这一点。
 
@@ -196,12 +194,12 @@ TUI 问题建议分三层排查：
 # 生成 .traces/tui/<timestamp>/，并写 audit.txt 与 ansi-backgrounds.txt。
 # 默认自动检查 replacement char、重复空 prompt、明显超长裸行、旧亮色输入背景和黑色背景块。
 
-tmux new-session -d -s 5hagent-tui-check -x 100 -y 28 -c /Users/bytedance/Proj/5hWorkSpace '/Users/bytedance/Proj/5hAgent/5hagent'
-tmux capture-pane -t 5hagent-tui-check -p -S -80
-tmux send-keys -t 5hagent-tui-check '/'
-tmux send-keys -t 5hagent-tui-check Escape '[<64;10;10M'
-tmux send-keys -t 5hagent-tui-check Escape '[<65;10;10M'
-tmux kill-session -t 5hagent-tui-check 2>/dev/null || true
+tmux new-session -d -s walle-tui-check -x 100 -y 28 -c /Users/bytedance/Proj/5hWorkSpace '/Users/bytedance/Proj/walle/walle'
+tmux capture-pane -t walle-tui-check -p -S -80
+tmux send-keys -t walle-tui-check '/'
+tmux send-keys -t walle-tui-check Escape '[<64;10;10M'
+tmux send-keys -t walle-tui-check Escape '[<65;10;10M'
+tmux kill-session -t walle-tui-check 2>/dev/null || true
 ```
 
 ## 参考代码路径

@@ -1,22 +1,18 @@
-// tool_use.go - 工具调用解析与执行
-// 功能：流式 ToolCall 收集、单工具执行、结果格式化
-// 主要类型：toolCollector, execResult, toolRequest
 package agent
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/lzq/5hAgent/internal/toolevent"
 	"strings"
-	"sync"
 
+	agentctx "github.com/Ozqi/walle/internal/context"
+	"github.com/Ozqi/walle/internal/logger"
+	"github.com/Ozqi/walle/internal/toolevent"
+	"github.com/Ozqi/walle/internal/tools"
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	agentctx "github.com/lzq/5hAgent/internal/context"
-	"github.com/lzq/5hAgent/internal/logger"
-	"github.com/lzq/5hAgent/internal/tools"
 )
 
 // toolCallState 工具调用收集状态
@@ -29,14 +25,12 @@ type toolCallState struct {
 // 合并 LLM 分片返回的 ToolCall
 type toolCollector struct {
 	states map[int]*toolCallState // index -> state
-	byID   map[string]int         // id -> index
 }
 
 // newToolCollector 创建收集器
 func newToolCollector() *toolCollector {
 	return &toolCollector{
 		states: make(map[int]*toolCallState),
-		byID:   make(map[string]int),
 	}
 }
 
@@ -53,8 +47,8 @@ func (c *toolCollector) Add(chunks []schema.ToolCall) []schema.ToolCall {
 	return c.extractReady()
 }
 
-// PendingRunnableCalls returns complete calls that were not dispatched while streaming.
-// Empty arguments are normalized to {} for no-argument tools after the stream ends.
+// PendingRunnableCalls 返回流式阶段尚未派发的完整工具调用。
+// 流结束后，无参数工具的空参数会归一化为 {}。
 func (c *toolCollector) PendingRunnableCalls() []schema.ToolCall {
 	return c.runnableCalls(false, true)
 }
@@ -83,14 +77,10 @@ func (c *toolCollector) merge(tc schema.ToolCall) {
 		state.tc.Function.Arguments += tc.Function.Arguments
 	}
 
-	// 记录 ID 映射
-	if tc.ID != "" {
-		c.byID[tc.ID] = idx
-	}
-	state.tc = ensureToolCallID(state.tc, idx)
+	state.tc = synthesizeToolCallID(state.tc, idx)
 }
 
-func ensureToolCallID(tc schema.ToolCall, idx int) schema.ToolCall {
+func synthesizeToolCallID(tc schema.ToolCall, idx int) schema.ToolCall {
 	if tc.ID == "" && tc.Function.Name != "" {
 		tc.ID = fmt.Sprintf("call_local_%d", idx)
 	}
@@ -103,6 +93,7 @@ func (c *toolCollector) extractReady() []schema.ToolCall {
 }
 
 func (c *toolCollector) runnableCalls(includeDispatched bool, allowEmptyArguments bool) []schema.ToolCall {
+	// states 是 map，返回顺序不承诺等同模型 Index；主循环按本次派发顺序保存并回填结果。
 	var ready []schema.ToolCall
 	for idx := range c.states {
 		state := c.states[idx]
@@ -110,7 +101,7 @@ func (c *toolCollector) runnableCalls(includeDispatched bool, allowEmptyArgument
 			continue
 		}
 		tc := state.tc
-		// Streaming cannot distinguish "no arguments" from "arguments not arrived yet" until EOF.
+		// 流式阶段要等 EOF 才能区分“无参数”和“参数还没到”。
 		if allowEmptyArguments && tc.Function.Arguments == "" {
 			tc.Function.Arguments = "{}"
 			state.tc.Function.Arguments = tc.Function.Arguments
@@ -147,15 +138,14 @@ func (a *Agent) executeToolWithRepeatGuard(ctx context.Context, repeatGuard *too
 			return execResult{idx: req.idx, tc: req.tc, err: err}
 		}
 	}
-	result, execErr := a.exeToolCall(ctx, req.tc, req.idx, req.idx+1, false)
+	result, execErr := a.exeToolCall(ctx, req.tc, false)
 	return execResult{idx: req.idx, tc: req.tc, result: result, err: execErr}
 }
 
-func (a *Agent) runToolWorker(ctx context.Context, repeatGuard *toolRepeatGuard, toolQueue <-chan toolRequest, toolResultCh chan<- execResult) *sync.WaitGroup {
-	var wg sync.WaitGroup
-	wg.Add(1)
+func (a *Agent) runToolWorker(ctx context.Context, repeatGuard *toolRepeatGuard, toolQueue <-chan toolRequest, toolResultCh chan<- execResult) {
+	// 模型流读取可与该 worker 重叠，但工具队列只有一个消费者，工具副作用之间不并发。
+	// worker 退出时关闭结果通道，通知主循环所有已派发调用均已收尾。
 	go func() {
-		defer wg.Done()
 		defer close(toolResultCh)
 		for req := range toolQueue {
 			result := a.executeToolWithRepeatGuard(ctx, repeatGuard, req)
@@ -166,17 +156,16 @@ func (a *Agent) runToolWorker(ctx context.Context, repeatGuard *toolRepeatGuard,
 			}
 		}
 	}()
-	return &wg
 }
 
 // exeToolCall 执行单个工具调用
-func (a *Agent) exeToolCall(ctx context.Context, tc schema.ToolCall, idx, total int, concurrent bool) (string, error) {
+func (a *Agent) exeToolCall(ctx context.Context, tc schema.ToolCall, concurrent bool) (string, error) {
 	if tc.Function.Name == "" {
 		logger.WarnTag("TOOL", "Skipping tool call with empty name, id=%s", tc.ID)
 		return "", nil
 	}
 
-	// 记录工具调用
+	// 1. 发出开始回调和可见事件，再从 Agent 工具索引解析实例。
 	runInfo := &callbacks.RunInfo{Name: tc.Function.Name}
 	if a.callbacks != nil {
 		a.callbacks.OnToolStart(ctx, runInfo, &tool.CallbackInput{
@@ -192,9 +181,10 @@ func (a *Agent) exeToolCall(ctx context.Context, tc schema.ToolCall, idx, total 
 		return "", fmt.Errorf("tool not found: %s", tc.Function.Name)
 	}
 
+	// 2. 调用工具可能产生文件、进程或网络副作用，错误原样交给上层写入 tool message。
 	result, err := a.invokeTool(ctx, t, tc)
 
-	// 记录结果
+	// 3. 结束回调只负责统计和日志，不改变工具返回值。
 	if a.callbacks != nil {
 		if err != nil {
 			a.callbacks.OnToolError(ctx, runInfo, err)
@@ -224,7 +214,8 @@ func (a *Agent) invokeTool(ctx context.Context, t tool.BaseTool, tc schema.ToolC
 	return "", fmt.Errorf("tool %s is not invokable", tc.Function.Name)
 }
 
-// addToolResult 将工具执行结果写入消息上下文
+// addToolResult 将工具执行结果写入消息上下文。
+// 执行错误会转成带参数和修正提示的 ToolMessage 继续交给模型；返回 error 仅表示消息写入失败。
 func (a *Agent) addToolResult(messageCtx *agentctx.Context, tc schema.ToolCall, result string, execErr error) error {
 	if execErr != nil {
 		logger.ErrorTag("TOOL", "Failed: %s, err=%v", tc.Function.Name, execErr)
@@ -289,9 +280,6 @@ func toolHint(tc schema.ToolCall) string {
 	if strings.HasPrefix(display, "base.") {
 		display = strings.TrimPrefix(display, "base.")
 	}
-	if strings.HasPrefix(display, "task.") {
-		display = strings.TrimPrefix(display, "task.")
-	}
 	if strings.HasPrefix(display, "skill.") {
 		display = strings.TrimPrefix(display, "skill.")
 	}
@@ -301,12 +289,6 @@ func toolHint(tc schema.ToolCall) string {
 		return "check the tool arguments and retry with an absolute path under the workspace"
 	case "exec_shell":
 		return "check the shell command, quote paths with spaces, prefer commands inside workspace"
-	case "delete", "create", "update", "get", "list", "archive", "reopen":
-		if strings.HasPrefix(name, "task.") {
-			return fmt.Sprintf("there is no %s tool. Use tool name task.task with arguments {\"action\":\"%s\",\"id\":\"...\"}", name, display)
-		}
-	case "task":
-		return "use exact task action values only: create/update/get/list/delete/archive/reopen. To finish a task use {\"action\":\"update\",\"id\":\"...\",\"status\":\"completed\"}; create requires id/title/description"
 	case "skill":
 		return "use action=list or action=get with an existing skill name"
 	}
@@ -319,7 +301,8 @@ func toolHint(tc schema.ToolCall) string {
 	return "review the tool schema and retry with corrected arguments"
 }
 
-// formatToolResult 将 schema.ToolResult 格式化为字符串
+// formatToolResult 将 schema.ToolResult 扁平化为模型和 UI 可消费的文本。
+// 非文本 part 只保留类型占位符，二进制内容不会写入消息上下文。
 func formatToolResult(toolResult *schema.ToolResult) string {
 	if toolResult == nil || len(toolResult.Parts) == 0 {
 		return ""
@@ -344,7 +327,7 @@ func formatToolResult(toolResult *schema.ToolResult) string {
 	return strings.Join(parts, "\n")
 }
 
-func mergeMessageExtra(current map[string]any, incoming map[string]any) map[string]any {
+func mergeStreamingMessageExtra(current map[string]any, incoming map[string]any) map[string]any {
 	if len(incoming) == 0 {
 		return current
 	}

@@ -1,6 +1,4 @@
-// 功能：格式化工具调用、结果和错误，并将其输出到终端或转发给 ToolEvent sink。
-// 调用方：Agent 工具执行路径调用 PrintTool*；TUI、daemon 和 worklog 通过 sink 接管展示或记录。
-// 共享状态：defaultToolPrinter 是只读默认格式器；toolEventSink 是进程级单槽 sink，由 toolEventSinkMu 保护替换和读取。
+// Package toolevent 格式化工具调用、结果和错误事件，供终端和 TUI 展示。
 package toolevent
 
 import (
@@ -9,15 +7,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 
-	"github.com/lzq/5hAgent/internal/logger"
+	"github.com/Ozqi/walle/internal/logger"
 )
 
-// ToolPrinter 使用固定缩进格式化工具调用事件。
-type ToolPrinter struct {
-	indent string
-}
+const toolIndent = "  "
 
 type toolCallSummary struct {
 	Title  string
@@ -42,50 +36,6 @@ type ToolEvent struct {
 	Concurrent bool
 }
 
-var (
-	toolEventSink   func(ToolEvent)
-	toolEventSinkMu sync.RWMutex
-)
-
-// SetToolEventSink 原子替换进程级工具事件 sink；传入 nil 恢复直接终端输出。
-// 副作用：影响之后所有使用包级 ToolPrinter 的工具事件。
-func SetToolEventSink(sink func(ToolEvent)) {
-	toolEventSinkMu.Lock()
-	defer toolEventSinkMu.Unlock()
-	toolEventSink = sink
-}
-
-// PushToolEventSink 暂存当前 sink 后安装新 sink，并返回恢复函数。
-// 调用方必须在作用域结束时调用恢复函数；替换和恢复由锁保护，但 sink 回调在锁外执行。
-func PushToolEventSink(sink func(ToolEvent)) func() {
-	toolEventSinkMu.Lock()
-	prev := toolEventSink
-	toolEventSink = sink
-	toolEventSinkMu.Unlock()
-	return func() {
-		toolEventSinkMu.Lock()
-		toolEventSink = prev
-		toolEventSinkMu.Unlock()
-	}
-}
-
-func currentToolEventSink() func(ToolEvent) {
-	toolEventSinkMu.RLock()
-	defer toolEventSinkMu.RUnlock()
-	return toolEventSink
-}
-
-// PrintToolCall 将工具调用转发给当前 sink；无 sink 时直接打印到 stdout。
-// 展示格式为“● ToolName(args...)”。
-func (p *ToolPrinter) PrintToolCall(name string, args string, concurrent bool) {
-	text := formatToolCall(p.indent, name, args, concurrent)
-	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "call", Name: name, Text: text, Args: args, Concurrent: concurrent})
-		return
-	}
-	fmt.Print(text)
-}
-
 func formatToolCall(indent string, name string, args string, concurrent bool) string {
 	mode := ""
 	if concurrent {
@@ -104,16 +54,6 @@ func formatToolCall(indent string, name string, args string, concurrent bool) st
 		b.WriteString("\n")
 	}
 	return b.String()
-}
-
-// PrintToolResult 将工具结果转发给当前 sink；无 sink 时直接打印摘要或内容到 stdout。
-func (p *ToolPrinter) PrintToolResult(name string, args string, result string) {
-	text := formatToolResultText(p.indent, name, args, result)
-	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "result", Name: name, Text: text, Args: args, Result: result})
-		return
-	}
-	fmt.Print(text)
 }
 
 func formatToolResultText(indent string, name string, args string, result string) string {
@@ -157,16 +97,6 @@ func formatToolResultText(indent string, name string, args string, result string
 		}
 	}
 	return b.String()
-}
-
-// PrintToolError 将工具错误转发给当前 sink；无 sink 时直接打印精简错误到 stdout。
-func (p *ToolPrinter) PrintToolError(name string, args string, err error) {
-	text, errText := formatToolErrorText(p.indent, name, args, err)
-	if sink := currentToolEventSink(); sink != nil {
-		sink(ToolEvent{Kind: "error", Name: name, Text: text, Args: args, Error: errText})
-		return
-	}
-	fmt.Print(text)
 }
 
 func formatToolErrorText(indent string, name string, args string, err error) (string, string) {
@@ -229,37 +159,35 @@ func summarizeToolError(name string, err error) string {
 	return fmt.Sprintf("%s failed: %s", displayName, logger.TruncateString(strings.TrimSpace(message), 180))
 }
 
-// defaultToolPrinter 是包级便捷函数共享的只读格式器。
-var defaultToolPrinter = &ToolPrinter{indent: "  "}
-
-// PrintToolCall 使用默认格式器输出工具调用。
+// PrintToolCall 将工具调用直接打印到 stdout。
 func PrintToolCall(name string, args string, concurrent bool) {
-	defaultToolPrinter.PrintToolCall(name, args, concurrent)
+	fmt.Print(FormatToolCall(name, args, concurrent))
 }
 
-// FormatToolCall 使用默认格式器生成工具调用文本，但不输出也不触发 sink。
+// FormatToolCall 生成工具调用文本。
 func FormatToolCall(name string, args string, concurrent bool) string {
-	return formatToolCall(defaultToolPrinter.indent, name, args, concurrent)
+	return formatToolCall(toolIndent, name, args, concurrent)
 }
 
-// PrintToolResult 使用默认格式器输出工具结果。
+// PrintToolResult 将工具结果直接打印到 stdout。
 func PrintToolResult(name string, args string, result string) {
-	defaultToolPrinter.PrintToolResult(name, args, result)
+	fmt.Print(FormatToolResult(name, args, result))
 }
 
-// FormatToolResult 使用默认格式器生成工具结果文本，但不输出也不触发 sink。
+// FormatToolResult 生成工具结果文本。
 func FormatToolResult(name string, args string, result string) string {
-	return formatToolResultText(defaultToolPrinter.indent, name, args, result)
+	return formatToolResultText(toolIndent, name, args, result)
 }
 
-// PrintToolError 使用默认格式器输出工具错误。
+// PrintToolError 将工具错误直接打印到 stdout。
 func PrintToolError(name string, args string, err error) {
-	defaultToolPrinter.PrintToolError(name, args, err)
+	text, _ := FormatToolError(name, args, err)
+	fmt.Print(text)
 }
 
-// FormatToolError 使用默认格式器生成展示文本和原始错误文本，但不输出也不触发 sink。
+// FormatToolError 生成展示文本和原始错误文本。
 func FormatToolError(name string, args string, err error) (string, string) {
-	return formatToolErrorText(defaultToolPrinter.indent, name, args, err)
+	return formatToolErrorText(toolIndent, name, args, err)
 }
 
 func summarizeToolCall(name string, args string) toolCallSummary {

@@ -1,16 +1,13 @@
-// skill.go - /skill 命令处理
-// 功能：解析 /skill 命令（list/get/reload），查看或刷新技能快照
-// 导出函数：HandleSkill, listSkills, getSkill
 package commands
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/lzq/5hAgent/internal/skill"
+	"github.com/Ozqi/walle/internal/skill"
 )
 
-// HandleSkill 处理 /skill 命令
+// HandleSkill 校验并分派 /skill 子命令，返回适合终端展示的技能信息。
 func HandleSkill(cmd string, mgr *skill.Manager) (string, error) {
 	parts := strings.Fields(cmd)
 	if len(parts) < 2 {

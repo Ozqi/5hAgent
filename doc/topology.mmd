@@ -1,87 +1,42 @@
-%%{init: {"theme":"neutral","themeVariables":{"primaryColor":"#f5f5f5","primaryTextColor":"#212121","primaryBorderColor":"#9e9e9e","edgeLabelBackground":"#e0e0e0","tertiaryColor":"#eeeeee","fontFamily":"Helvetica Neue, Arial, sans-serif","fontSize":"13px","lineColor":"#757575","background":"#ffffff"}}}%%
-graph TD
-    subgraph interface_layer["Interface layer"]
-        cmd_main["cmd/5hagent/main.go"]
-        cli_tui["internal/cli"]
-        commands["internal/commands"]
-    end
+%% 事实源: doc/topology.json；Claude Fable 5；2026-08-23
+flowchart LR
+  cli["cmd/walle"]
+  tui["internal/tui"]
+  daemon["walle daemon\ninteractive host"]
+  socket["supervisor.sock\nlist / attach / input / stop"]
+  runtime["internal/runtime"]
+  session["DaemonSession"]
+  systemd["internal/systemd\ngeneric process supervisor"]
+  agent["internal/agent"]
+  context["internal/context"]
+  llm["internal/llm + codex"]
+  registry["tools.Registry"]
+  base["base.*"]
+  skill["skill.skill"]
+  context_tool["context.context"]
+  mcp["mcp.*\nexplicit"]
+  sessions["sessions/*.jsonl"]
+  process_output["generic process\nreport / worklog"]
 
-    subgraph runtime_layer["Runtime and scheduling"]
-        runtime["internal/runtime"]
-        event_source_task["internal/runtime/event_source_task.go"]
-        systemd["internal/systemd"]
-        hooks["Runtime Hooks"]
-    end
-
-    subgraph core_layer["Agent core"]
-        agent["internal/agent"]
-        context["internal/context"]
-        llm["internal/llm"]
-        logger["internal/logger"]
-    end
-
-    subgraph tools_layer["Tool layer"]
-        tools_registry["internal/tools.Registry"]
-        base_tools["base.* tools"]
-        context_tool["context.context"]
-        task_tool["task.task"]
-        skill_tool["skill.skill"]
-        mcp_tools["mcp.* tools"]
-        task["internal/task"]
-        skill["internal/skill"]
-    end
-
-    subgraph persistence_layer["Persistence and config"]
-        config_env["~/.5hAgent/.env"]
-        prompt_files["~/.5hAgent/prompt/*.md"]
-        session_store["~/.5hAgent/sessions/*.jsonl"]
-        project_task_file["project .5hagent/task.md"]
-        reports["project .5hagent/reports/*.md"]
-        worklogs["project .5hagent/agents/*/logs/*.md"]
-    end
-
-    cmd_main -->|runtime.New / NewInMemory| runtime
-    cmd_main -->|LaunchTUI| cli_tui
-    cmd_main -->|daemon| systemd
-    runtime -->|LoadConfigWithOptions| config_env
-    runtime -->|LoadSystemPromptBase| prompt_files
-    runtime -->|task.NewTaskList| project_task_file
-    runtime -->|context.NewManager| session_store
-    runtime -->|llm.NewClient| llm
-    runtime -->|agent.NewAgent / SetModel / SetTools| agent
-    runtime -->|Registry.Init / RegisterContextTool / bindTools| tools_registry
-    runtime -->|loadHookManager / handleToolEvent| hooks
-    tools_registry -->|register base tools| base_tools
-    tools_registry -->|register task.task| task_tool
-    tools_registry -->|register skill.skill| skill_tool
-    tools_registry -->|register context.context| context_tool
-    tools_registry -->|RegisterMCPTools only when explicitly connected| mcp_tools
-    agent -->|model.Stream / model.Generate| llm
-    agent -->|GetMessages / AddMessage| context
-    agent -->|toolMap lookup / invoke tool| tools_registry
-    agent -->|inject enabled skills on empty context| skill
-    context -->|Store.Append / ReplaceMessages| session_store
-    context_tool -->|inspect / pin / edit / audit / compress| context
-    task_tool -->|ExecuteTaskAction| task
-    task -->|managed block| project_task_file
-    skill_tool -->|list/get current skill snapshot| skill
-    cli_tui -->|slash commands| commands
-    cli_tui -->|RunStream| agent
-    cli_tui -->|/run and /model callbacks| runtime
-    agent -->|ToolEvent call/result/error| logger
-    logger -->|toolEventMsg| cli_tui
-    logger -->|headless/process tool events| worklogs
-    hooks -->|consume stable tool events| logger
-    runtime -->|writeReport / writeProcessReport| reports
-    runtime -->|newHeadlessWorkLog| worklogs
-    event_source_task -->|poll mtime/size| project_task_file
-    event_source_task -->|task.created| systemd
-    systemd -->|ProcessRunner.RunProcess| runtime
-    systemd -->|process report path carried by AgentProcess| reports
-
-    classDef module fill:#f5f5f5,stroke:#9e9e9e,stroke-width:1px,color:#212121
-    classDef storage fill:#ffffff,stroke:#757575,stroke-width:1px,color:#212121
-    classDef external fill:#eeeeee,stroke:#757575,stroke-dasharray:4 3,color:#212121
-    class cmd_main,cli_tui,commands,runtime,event_source_task,systemd,hooks,agent,context,llm,logger,tools_registry,base_tools,context_tool,task_tool,skill_tool,task,skill module
-    class config_env,prompt_files,session_store,project_task_file,reports,worklogs storage
-    class mcp_tools external
+  cli -->|spawn when missing| daemon
+  cli -->|LaunchAttachedTUI| tui
+  cli -->|attach| socket
+  tui <-->|events / input / stop| socket
+  daemon -->|runtime.New| runtime
+  daemon -->|NewDaemonSession| session
+  daemon -->|systemd.New| systemd
+  systemd -->|serve| socket
+  socket -->|route interactive| session
+  systemd -->|ProcessRunner.RunProcess| runtime
+  runtime --> agent
+  runtime --> context
+  runtime --> llm
+  runtime --> registry
+  agent --> context
+  agent --> registry
+  registry --> base
+  registry --> skill
+  registry --> context_tool
+  registry -.-> mcp
+  context --> sessions
+  runtime --> process_output

@@ -37,7 +37,7 @@ RunStreamWithOptions
 | --- | --- |
 | `NewAgent` | 构建 `toolMap`，加载 skill manager，设置默认 `RepeatToolLimit=5`。 |
 | `RunStreamWithOptions` | 主循环；`DisableStream=true` 时走 `Generate` 兼容路径。 |
-| `ensureConversationSetup` | 仅在空 context 时注入 system prompt 和 enabled skills。 |
+| `ensureConversationSetup` | 仅在空 context 时注入 system prompt 和已加载 skills。 |
 | `toolRepeatGuard.Check` | 按 `tool name + normalized JSON args` 计数；当前超过阈值只记录 warn。 |
 | `toolCollector.Add` | 合并流式 ToolCall 分片；参数 JSON 完整后才可执行。 |
 | `exeToolCall` | 触发工具事件 sink，调用 Eino tool，保留参数和错误提示。 |
@@ -45,7 +45,7 @@ RunStreamWithOptions
 
 ## 状态边界
 
-- `Agent.state.CurrentTurn` 只反映最近一次 ReAct loop 轮次。
+- `Agent.currentTurn` 只反映最近一次 ReAct loop 轮次。
 - `Context` 持久化归 `internal/context.Manager`；Agent 不直接操作 session 文件。
 - 工具执行当前是单 worker 顺序执行；stream 读取和工具执行可以重叠。
 - `/skill reload` 可刷新 manager 快照，但不会替换当前 context 已注入的 skill message。

@@ -1,4 +1,4 @@
-// model.go - Codex Responses SSE 到 Eino ToolCallingChatModel 的薄适配。
+// Package codex 将 ChatGPT Codex OAuth 与 Responses HTTP/SSE 协议适配为 Eino 模型接口。
 package codex
 
 import (
@@ -16,7 +16,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// Model 使用 ChatGPT OAuth 调用 Codex Responses backend。
+// Model 使用 ChatGPT OAuth 调用 Codex Responses backend，并在 Eino 与远端工具名之间转换。
 type Model struct {
 	store      *Store
 	name       string
@@ -37,7 +37,7 @@ func NewModel(name string) (*Model, error) {
 	return &Model{store: store, name: name, client: store.client}, nil
 }
 
-// WithTools 返回绑定工具后的副本。
+// WithTools 返回绑定工具后的副本，并将工具名中的点转换为 Codex 可接受的双下划线别名。
 func (m *Model) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
 	clone := *m
 	clone.tools = append([]*schema.ToolInfo(nil), tools...)
@@ -75,7 +75,8 @@ func (m *Model) Generate(ctx context.Context, input []*schema.Message, opts ...m
 	return schema.ConcatMessages(chunks)
 }
 
-// Stream 请求 Codex backend，并将 SSE 事件转换成 Eino message chunks。
+// Stream 异步请求 Codex backend，并将 SSE 事件转换成 Eino message chunks。
+// 副作用：启动 goroutine；网络或解析错误通过 StreamWriter 传给消费方。
 func (m *Model) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	requestBody, err := m.buildRequest(input, opts...)
 	if err != nil {
@@ -92,6 +93,7 @@ func (m *Model) Stream(ctx context.Context, input []*schema.Message, opts ...mod
 }
 
 func (m *Model) buildRequest(messages []*schema.Message, opts ...model.Option) (map[string]any, error) {
+	// 1. 合并模型调用选项，并将 system message 汇总为 Responses instructions。
 	options := model.GetCommonOptions(&model.Options{Tools: m.tools}, opts...)
 	modelName := m.name
 	if options.Model != nil && *options.Model != "" {
@@ -129,6 +131,7 @@ func (m *Model) buildRequest(messages []*schema.Message, opts ...model.Option) (
 			input = append(input, map[string]any{"type": "function_call_output", "call_id": message.ToolCallID, "output": message.Content})
 		}
 	}
+	// 2. 转换普通消息、工具调用/结果和工具 schema，保留上轮 Codex 原始 output 供续写。
 	tools, err := m.responseTools(options.Tools)
 	if err != nil {
 		return nil, err
@@ -186,6 +189,7 @@ func (m *Model) stream(ctx context.Context, body map[string]any, writer *schema.
 }
 
 func (m *Model) streamWithRetry(ctx context.Context, body map[string]any, writer *schema.StreamWriter[*schema.Message], retry bool) error {
+	// 1. 获取或刷新 OAuth token，构造带账号标识的 Responses SSE 请求。
 	accessToken, accountID, err := m.store.Token(ctx)
 	if err != nil {
 		return err
@@ -204,12 +208,13 @@ func (m *Model) streamWithRetry(ctx context.Context, body map[string]any, writer
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "text/event-stream")
-	request.Header.Set("Originator", "5hagent")
+	request.Header.Set("Originator", "walle")
 	response, err := m.client.Do(request)
 	if err != nil {
 		return fmt.Errorf("call Codex: %w", err)
 	}
 	defer response.Body.Close()
+	// 2. 首次遇到 401 时强制刷新一次；其他非 2xx 响应读取有限长度错误正文。
 	if response.StatusCode/100 != 2 {
 		if response.StatusCode == http.StatusUnauthorized && retry {
 			_ = m.store.ForceRefresh(ctx)
@@ -218,10 +223,12 @@ func (m *Model) streamWithRetry(ctx context.Context, body map[string]any, writer
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 		return fmt.Errorf("Codex returned %s: %s", response.Status, strings.TrimSpace(string(message)))
 	}
+	// 3. 持续解析响应流，直到 completed 或错误事件。
 	return m.readSSE(response.Body, writer)
 }
 
 func (m *Model) readSSE(body io.Reader, writer *schema.StreamWriter[*schema.Message]) error {
+	// SSE data 可跨多行，空行表示一个事件结束；单个事件上限为 4 MiB。
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	var data strings.Builder
@@ -283,6 +290,7 @@ func (m *Model) readSSE(body io.Reader, writer *schema.StreamWriter[*schema.Mess
 				}
 			}
 		case "response.completed":
+			// 工具调用延迟到 completed 后统一发送，随后附带 usage 和可供下一轮复用的原始 output。
 			for _, call := range calls {
 				writer.Send(call, nil)
 			}

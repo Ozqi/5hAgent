@@ -3,13 +3,13 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/lzq/5hAgent/internal/toolevent"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/lzq/5hAgent/internal/logger"
-	"github.com/lzq/5hAgent/internal/utils"
+	"github.com/Ozqi/walle/internal/logger"
+	"github.com/Ozqi/walle/internal/toolevent"
+	"github.com/Ozqi/walle/internal/utils"
 )
 
 type toolFailureStat struct {
@@ -20,16 +20,15 @@ type toolFailureStat struct {
 	ArgumentsSummary string `json:"arguments_summary,omitempty"`
 	Error            string `json:"error"`
 	Workspace        string `json:"workspace,omitempty"`
-	TaskID           string `json:"task_id,omitempty"`
 	ProcessID        string `json:"process_id,omitempty"`
 }
 
-// RecordToolEvent records user-session tool failure events for later diagnosis.
+// RecordToolEvent 记录用户会话中的工具失败事件，方便后续诊断。
 func (r *Runtime) RecordToolEvent(event toolevent.ToolEvent) {
-	r.handleToolEvent(event, "", "")
+	r.handleToolEvent(event, "")
 }
 
-func (r *Runtime) recordToolFailure(event toolevent.ToolEvent, taskID string, processID string) {
+func (r *Runtime) recordToolFailure(event toolevent.ToolEvent, processID string) {
 	if event.Kind != "error" {
 		return
 	}
@@ -41,7 +40,6 @@ func (r *Runtime) recordToolFailure(event toolevent.ToolEvent, taskID string, pr
 		ArgumentsSummary: logger.TruncateString(event.Args, 240),
 		Error:            logger.TruncateString(event.Error, 500),
 		Workspace:        r.ProjectDir,
-		TaskID:           taskID,
 		ProcessID:        processID,
 	}
 	if stat.Error == "" {
@@ -53,12 +51,14 @@ func (r *Runtime) recordToolFailure(event toolevent.ToolEvent, taskID string, pr
 }
 
 func writeToolFailureStats(r *Runtime, stat toolFailureStat) error {
+	// 1. 单条记录编码为一行，避免错误文本破坏 JSONL 边界。
 	data, err := json.Marshal(stat)
 	if err != nil {
 		return fmt.Errorf("marshal failure stat: %w", err)
 	}
 	line := append(data, '\n')
 
+	// 2. 用户级日志始终写入；项目级日志仅在 Runtime 信息完整时追加。
 	configDir, err := utils.GetConfigDir()
 	if err != nil {
 		return err

@@ -1,6 +1,6 @@
 # Prompt 目录
 
-本目录存放运行时直接读取的 Markdown prompt 文件。安装后会复制到 `~/.5hAgent/prompt/`，运行时以用户目录为准。
+本目录存放运行时直接读取的 Markdown prompt 文件。安装后会复制到 `~/.walle/prompt/`，运行时以用户目录为准。
 
 ## 约定
 

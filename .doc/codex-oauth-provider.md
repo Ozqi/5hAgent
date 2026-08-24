@@ -60,7 +60,7 @@ sequenceDiagram
 - 使用 PKCE S256 和随机 `state`；回调必须校验 state。
 - 浏览器打不开不影响流程，TUI 始终保留可复制 URL。
 
-凭据原子写入 `~/.5hAgent/auth/codex.json`，权限 `0600`。token 不进入项目 `.5hagent/`、session、report 或 debug log。access token 即将过期时使用 refresh token 刷新；401 最多刷新并重试一次。
+凭据原子写入 `~/.walle/auth/codex.json`，权限 `0600`。token 不进入项目 `.walle/`、session、report 或 debug log。access token 即将过期时使用 refresh token 刷新；401 最多刷新并重试一次。
 
 ## 模型与请求
 
@@ -78,14 +78,14 @@ Codex model 直接实现 Eino `ToolCallingChatModel`：
 
 ## 持久化
 
-provider/model 非敏感选择写入 `~/.5hAgent/state.json`。启动优先级：
+provider/model 非敏感默认选择可配置在 `~/.walle/settings.json`。当前 `/model` 只切换本次 Runtime，不写配置文件。启动优先级：
 
 ```text
---model > saved provider/model > LLM_MODEL
+--model > settings.json default_model > LLM_MODEL
 ```
 
 ## 最小范围
 
 第一版包括浏览器 OAuth、刷新、模型目录、文本/推理流、工具调用和 TUI picker。不实现 logout、多账号轮换、额度仪表盘或外部 proxy。
 
-现有错误方向 `5hagent codex` 诊断子命令和 proxy 主方案在实现时移除。
+现有错误方向 `walle codex` 诊断子命令和 proxy 主方案在实现时移除。

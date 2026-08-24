@@ -1,4 +1,3 @@
-// provider.go - Runtime provider 登录和模型目录的最小入口。
 package runtime
 
 import (
@@ -11,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lzq/5hAgent/internal/codex"
-	"github.com/lzq/5hAgent/internal/utils"
+	"github.com/Ozqi/walle/internal/codex"
+	"github.com/Ozqi/walle/internal/utils"
 )
 
-// ProviderInfo 是 TUI provider picker 的只读数据。
+// ProviderInfo 是本地或 daemon provider picker 使用的只读数据。
 type ProviderInfo struct {
 	Name     string
 	LoggedIn bool
@@ -71,6 +70,7 @@ func (r *Runtime) ProviderModels(ctx context.Context, provider string) ([]string
 }
 
 func (r *Runtime) fetchProviderModels(ctx context.Context, provider string) ([]string, error) {
+	// 1. 复用 provider 配置构造模型目录地址，不改变当前 Runtime 的模型选择。
 	config, err := utils.LoadConfigWithOptions(utils.LoadConfigOptions{ModelRef: provider + "/__model_catalog__"})
 	if err != nil {
 		return nil, err
@@ -84,6 +84,7 @@ func (r *Runtime) fetchProviderModels(ctx context.Context, provider string) ([]s
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/models"
 	parsed.RawQuery = ""
+	// 2. 按上游协议附加认证头，并以独立短超时客户端发起只读请求。
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
 		return nil, err
@@ -104,6 +105,7 @@ func (r *Runtime) fetchProviderModels(ctx context.Context, provider string) ([]s
 	if response.StatusCode/100 != 2 {
 		return nil, fmt.Errorf("list %s models: status %s", provider, response.Status)
 	}
+	// 3. 兼容 data/models 两种响应字段，去重排序后返回稳定目录。
 	models, err := decodeModelCatalog(response)
 	if err != nil {
 		return nil, fmt.Errorf("list %s models: %w", provider, err)
