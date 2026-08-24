@@ -40,7 +40,8 @@ sequenceDiagram
 | `cmd/walle/main.go` | Cobra root、全局 flag、`daemon`、默认 TUI 入口。 |
 | `cmd/walle/interactive_command.go` | 启动/复用 daemon，转发全局 flag，等待 socket。 |
 | `cmd/walle/process_commands.go` | `ps`、`attach` 和 completion。 |
-| `internal/tui/app.go` | Bubble Tea 状态机、布局、按键。 |
+| `internal/tui/app.go` | Bubble Tea 状态机、消息分派和按键。 |
+| `internal/tui/app_view.go` | `AppModel` 视图、宽度处理、输入清洗和 slash hint。 |
 | `internal/tui/commands.go` | 本地命令分派；attached 模式只直接处理 `/detach`、`/stop`。 |
 | `internal/tui/remote.go` | `ProcessClient` 到 Bubble Tea msg 的适配。 |
 | `internal/tui/render.go`、`tool_render.go`、`markdown.go` | 终端渲染。 |
