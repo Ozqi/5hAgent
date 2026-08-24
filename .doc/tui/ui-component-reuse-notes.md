@@ -90,7 +90,7 @@ TUI 和前端很像的一点是：渲染层不应该直接乱读 runtime 内部�
 建议继续沿这个方向：
 
 - 输入框附近的状态区优先消费 snapshot 或轻量 view model。
-- 不要让 `View` 或 `render*` 深入读取 `ctxManager`、`agent` 的复杂逻辑。
+- 不要让 `View` 或 `render*` 深入读取 Runtime、Context Manager、Agent 这类 daemon/runtime 内部对象。
 - 如果某个面板需要很多派生字段，优先先造快照 struct，再考虑渲染。
 
 ## 3. 不要急着抽成“组件”的部分
@@ -111,15 +111,15 @@ TUI 和前端很像的一点是：渲染层不应该直接乱读 runtime 内部�
 
 - `Update`
 - `submit`
-- `runAgent`
-- session 切换
+- remote event 映射
+- picker 选择回传
 - tool event 进入 entries 的逻辑
 
 这些是控制流，不是展示组件。它们更适合通过“消息类型明确、状态转换清楚”来维护，而不是组件化。
 
 ### 3.3 已删除的布局结构
 
-sidebar 和右侧 status panel 已经移除，不要再围绕它们新增抽象。需要保留的是其中的数据：模型、状态、token、消息数、工具调用、技能和任务焦点。
+sidebar 和右侧 status panel 已经移除，不要再围绕它们新增抽象。TUI 只保留当前画面需要的数据：模型名、运行状态、turn、工具调用、路径、git 和滚动位置。
 
 ## 4. 适合本项目的组件化顺序
 
@@ -171,9 +171,9 @@ sidebar 和右侧 status panel 已经移除，不要再围绕它们新增抽象�
 TUI 当前回到单主列结构：
 
 - 上方是对话和工具/thinking 流。
-- 输入框上方显示当前 Agent 状态、模型、token、速度和最近工具。
+- 输入框上方显示当前 Agent 状态、模型、turn、工具调用数和最近工具。
 - 输入框使用偏亮灰色背景，和深色对话区拉开层级。
-- 输入框下方放低频状态，例如 session、enabled skills、快捷键和 slash hint。
+- 输入框下方放低频状态，例如路径、git、滚动位置、快捷键和 slash hint。
 - 不保留左侧 sidebar 和右侧 status panel。
 
 实现时优先复用 `statusSnapshot` 和现有 entry 渲染函数，不要把运行状态直接散落到 `View` 里。

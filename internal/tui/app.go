@@ -5,15 +5,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
+	"regexp"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
-	"github.com/Ozqi/walle/internal/agent"
-	agentctx "github.com/Ozqi/walle/internal/context"
-	"github.com/Ozqi/walle/internal/skill"
 	"github.com/Ozqi/walle/internal/systemd"
 	"github.com/Ozqi/walle/internal/toolevent"
 	"github.com/Ozqi/walle/internal/tools"
@@ -22,7 +18,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	ansi "github.com/charmbracelet/x/ansi"
-	"github.com/cloudwego/eino/schema"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -49,6 +44,11 @@ type conversationEntry struct {
 	ToolState   string
 	ToolOutput  string
 	SystemTitle string
+
+	renderCacheKey   string
+	renderCacheWidth int
+	renderCacheFrame int
+	renderCacheText  string
 }
 
 func entryNow(entry conversationEntry) conversationEntry {
@@ -59,25 +59,20 @@ func entryNow(entry conversationEntry) conversationEntry {
 }
 
 type statusSnapshot struct {
-	Runtime       runtimeMeta
-	EnabledSkills []string
+	Runtime runtimeMeta
 }
 
 type runtimeMeta struct {
-	Busy             bool
-	State            string
-	Turn             int
-	ContextTokens    int
-	ContextWindow    int
-	SessionTokens    int
-	ScrollPercent    int
-	ContextMessages  int
-	ContextSummaries int
-	ToolCallsTotal   int
-	LastToolName     string
-	SessionID        string
-	Workdir          string
-	Git              gitMeta
+	Busy           bool
+	State          string
+	Turn           int
+	ScrollPercent  int
+	ToolCallsTotal int
+	LastToolName   string
+	PendingInput   bool
+	SessionID      string
+	Workdir        string
+	Git            gitMeta
 }
 
 type gitMeta struct {
@@ -88,24 +83,16 @@ type gitMeta struct {
 	Shortstat string
 }
 
-// AppModel 保存 TUI 当前帧所需的全部状态。
-// 调用层级：LaunchTUI -> NewAppModel -> Bubble Tea Update/View。
-// 设计边界：UI 层只持有 runtime 对象引用和渲染快照，不在 View 中直接拼业务查询逻辑。
+// AppModel 保存 attached TUI 当前帧所需的全部状态。
+// 调用层级：LaunchAttachedTUI -> NewAppModel -> Bubble Tea Update/View。
+// 设计边界：UI 只持有 remote client 回调和渲染快照，不直接持有 Runtime 或 Agent。
 type AppModel struct {
 	program      *tea.Program
-	ag           *agent.Agent
 	modelName    string
-	agentName    string
 	sessionID    string
-	promptDir    string
-	skillMgr     *skill.Manager
-	ctxManager   *agentctx.Manager
-	messageCtx   *agentctx.Context
-	switchModel  SwitchModelFunc
 	remoteSubmit func(string) error
 	remoteStop   func() error
 	ctx          context.Context
-	runCancel    context.CancelFunc
 
 	width  int
 	height int
@@ -118,18 +105,22 @@ type AppModel struct {
 	toolCalls int
 	lastTool  string
 
-	currentAssistant int
-	currentStatus    string
-	remoteTurn       int
-	spinnerFrame     int
-	lastInput        string
-	escPending       bool
-	lastEscAt        time.Time
-	quitPending      bool
-	lastQuitAt       time.Time
-	autoScroll       bool
-	metaCache        cachedMeta
-	picker           *pickerState
+	currentAssistant   int
+	currentStatus      string
+	remoteTurn         int
+	spinnerFrame       int
+	spinnerPending     bool
+	renderPending      bool
+	remoteDisconnected bool
+	lastInput          string
+	pendingInput       string
+	escPending         bool
+	lastEscAt          time.Time
+	quitPending        bool
+	lastQuitAt         time.Time
+	autoScroll         bool
+	metaCache          cachedMeta
+	picker             *pickerState
 }
 
 type pickerState struct {
@@ -169,19 +160,23 @@ type remoteDisconnectedMsg struct{}
 
 type spinnerTickMsg struct{}
 
-type debugToolResultMsg struct {
-	event toolevent.ToolEvent
+type renderTickMsg struct{}
+
+type locationLoadedMsg struct {
+	workdir string
+	git     gitMeta
 }
 
-// SwitchModelFunc 是 TUI /model 命令切换当前 Runtime 模型的薄接口。
-type SwitchModelFunc func(context.Context, string) (string, error)
+type remoteSubmitResultMsg struct {
+	text string
+	err  error
+}
 
-// ToolEventFunc 接收 TUI 普通对话中的工具事件。
-type ToolEventFunc func(toolevent.ToolEvent)
+type remoteStopResultMsg struct {
+	err error
+}
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-
-var launchMu sync.Mutex
 
 var (
 	colorGreen   = lipgloss.Color("#9ece6a")
@@ -238,10 +233,10 @@ var modelHints = []string{
 	"mira/claude-opus-4-6",
 }
 
-// NewAppModel 创建本地 Agent TUI 的初始模型，并从消息上下文恢复历史条目。
-func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string, switchModel SwitchModelFunc) *AppModel {
+// NewAppModel 创建 attached TUI 的初始模型。
+func NewAppModel(ctx context.Context, modelName string, sessionID string) *AppModel {
 	vp := viewport.New(0, 0)
-	// viewport 自身支持滚轮，但还需要 LaunchTUI 开启 Bubble Tea mouse mode。
+	// viewport 自身支持滚轮，但还需要 LaunchAttachedTUI 开启 Bubble Tea mouse mode。
 	vp.MouseWheelEnabled = true
 	vp.MouseWheelDelta = 2
 
@@ -260,104 +255,20 @@ func NewAppModel(ctx context.Context, ag *agent.Agent, modelName string, promptD
 	input.BlurredStyle = input.FocusedStyle
 
 	return &AppModel{
-		ag:        ag,
-		modelName: modelName,
-		agentName: fallback(func() string {
-			if ag == nil {
-				return ""
-			}
-			return ag.Name()
-		}(), "Agent"),
+		modelName:        modelName,
 		sessionID:        sessionID,
-		promptDir:        promptDir,
-		skillMgr:         skillMgr,
-		ctxManager:       ctxManager,
-		messageCtx:       messageCtx,
-		switchModel:      switchModel,
 		ctx:              ctx,
 		viewport:         vp,
 		input:            input,
 		currentAssistant: -1,
 		currentStatus:    "idle",
 		autoScroll:       true,
-		entries:          loadHistoryEntries(ctxManager, messageCtx),
 	}
 }
 
-// loadHistoryEntries 将持久化消息恢复为 TUI 可渲染条目。
-// assistant 的 reasoning、tool call 和正文会拆成不同 entry；tool result 按 ToolCallID 回填到对应工具提示。
-func loadHistoryEntries(ctxManager *agentctx.Manager, messageCtx *agentctx.Context) []conversationEntry {
-	if ctxManager == nil || messageCtx == nil {
-		return nil
-	}
-
-	messages, err := ctxManager.GetMessages(messageCtx)
-	if err != nil || len(messages) == 0 {
-		return nil
-	}
-
-	entries := make([]conversationEntry, 0, len(messages))
-	toolEntries := make(map[string]int)
-	for _, msg := range messages {
-		var r string
-		switch msg.Role {
-		case schema.User:
-			r = roleUser
-		case schema.Assistant:
-			if msg.ReasoningContent != "" {
-				entries = append(entries, conversationEntry{Role: roleThinking, Content: msg.ReasoningContent, CreatedAt: messageCreatedAt(msg)})
-			}
-			for _, tc := range msg.ToolCalls {
-				name := fallback(tools.DisplayName(tc.Function.Name), tc.Function.Name)
-				entry := conversationEntry{
-					Role:       roleHint,
-					CreatedAt:  messageCreatedAt(msg),
-					ToolName:   name,
-					ToolIntent: toolIntent(tc.Function.Name, tc.Function.Arguments),
-					ToolArgs:   formatToolArgsSummary(tc.Function.Arguments),
-					ToolKey:    toolEventKey(tc.Function.Name, tc.Function.Arguments),
-					ToolState:  "done",
-				}
-				entries = append(entries, entry)
-				if tc.ID != "" {
-					toolEntries[tc.ID] = len(entries) - 1
-				}
-			}
-			if msg.Content == "" {
-				continue
-			}
-			r = roleAssistant
-		case schema.System:
-			r = roleSystem
-		case schema.Tool:
-			output := compactOutputLines(strings.Split(msg.Content, "\n"), 4)
-			if idx, ok := toolEntries[msg.ToolCallID]; ok {
-				entries[idx].ToolOutput = output
-				continue
-			}
-			entries = append(entries, conversationEntry{Role: roleHint, CreatedAt: messageCreatedAt(msg), ToolName: fallback(msg.ToolName, "tool"), ToolState: "done", ToolOutput: output})
-			continue
-		default:
-			continue
-		}
-		entries = append(entries, conversationEntry{Role: r, Content: msg.Content, CreatedAt: messageCreatedAt(msg)})
-	}
-	return entries
-}
-
-func messageCreatedAt(msg *schema.Message) string {
-	if msg == nil || msg.Extra == nil {
-		return ""
-	}
-	if v, ok := msg.Extra["created_at"].(string); ok {
-		return v
-	}
-	return ""
-}
-
-// Init 返回 Bubble Tea 启动时需要执行的光标闪烁命令。
+// Init 返回 Bubble Tea 启动时需要执行的光标闪烁和异步元信息加载命令。
 func (m *AppModel) Init() tea.Cmd {
-	return textarea.Blink
+	return tea.Batch(textarea.Blink, m.loadRuntimeLocationCmd())
 }
 
 // Update 处理 Bubble Tea 消息并更新 TUI 状态机。
@@ -372,7 +283,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshView()
 		return m, nil
 	case assistantTokenMsg:
-		// 本地 Agent 输出事件只追加 assistant/thinking/tool entry，再由 refreshView 重绘。
+		// 高频 token 只改状态并排队渲染，避免每个 chunk 全量重绘历史。
 		if !m.busy {
 			return m, nil
 		}
@@ -383,8 +294,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.entries[m.currentAssistant].Content += msg.token
 		}
 		m.currentStatus = "streaming"
-		m.refreshView()
-		return m, tickSpinner()
+		return m, tea.Batch(m.queueRender(), m.queueSpinner())
 	case assistantThinkingMsg:
 		if !m.busy {
 			return m, nil
@@ -396,21 +306,22 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.currentAssistant = -1
 		m.currentStatus = "thinking"
-		m.refreshView()
-		return m, tickSpinner()
+		return m, tea.Batch(m.queueRender(), m.queueSpinner())
 	case assistantDoneMsg:
 		m.busy = false
 		m.currentAssistant = -1
 		m.currentStatus = "idle"
+		m.renderPending = false
 		m.refreshView()
-		return m, nil
+		return m, tea.Batch(m.loadRuntimeLocationCmd(), m.submitPendingInputCmd())
 	case assistantErrorMsg:
 		m.busy = false
 		m.currentAssistant = -1
 		m.currentStatus = "error"
+		m.renderPending = false
 		m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: "agent error: " + msg.err.Error()})
 		m.refreshView()
-		return m, nil
+		return m, tea.Batch(m.loadRuntimeLocationCmd(), m.submitPendingInputCmd())
 	case remoteEventMsg:
 		// attached 模式把 daemon 协议事件翻译成本地 TUI 状态，不直接访问 Runtime。
 		event := msg.event
@@ -424,11 +335,14 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "state":
 			m.busy = event.Busy
-			if !event.Busy {
-				m.currentStatus = "idle"
+			if event.Busy {
+				m.currentStatus = "running"
+				m.refreshView()
+				return m, m.queueSpinner()
 			}
+			m.currentStatus = "idle"
 			m.refreshView()
-			return m, nil
+			return m, m.submitPendingInputCmd()
 		case "assistant":
 			return m.Update(assistantTokenMsg{token: event.Text})
 		case "thinking":
@@ -460,24 +374,56 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case remoteDisconnectedMsg:
+		if m.remoteDisconnected {
+			return m, nil
+		}
+		m.remoteDisconnected = true
 		m.busy = false
 		m.currentStatus = "disconnected"
 		m.remoteSubmit = func(string) error { return fmt.Errorf("daemon disconnected") }
-		m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: "daemon disconnected"})
+		m.remoteStop = func() error { return fmt.Errorf("daemon disconnected") }
+		if len(m.entries) == 0 || m.entries[len(m.entries)-1].Content != "daemon disconnected" {
+			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: "daemon disconnected"})
+		}
+		m.renderPending = false
 		m.refreshView()
 		return m, nil
 	case spinnerTickMsg:
-		// 工具事件和 spinner 事件只影响展示状态；实际执行仍在 Agent 或 daemon goroutine 中。
+		// spinner 只保留一个定时链，避免 token 密集时堆积大量 Tick。
+		m.spinnerPending = false
 		if m.busy {
 			m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
 			m.refreshView()
-			return m, tickSpinner()
+			return m, m.queueSpinner()
 		}
 		return m, nil
-	case debugToolResultMsg:
-		m.applyToolEvent(msg.event)
-		m.currentStatus = "idle"
+	case renderTickMsg:
+		m.renderPending = false
 		m.refreshView()
+		return m, nil
+	case locationLoadedMsg:
+		m.metaCache = cachedMeta{Workdir: msg.workdir, Git: msg.git, LoadedAt: time.Now()}
+		m.refreshView()
+		return m, nil
+	case remoteSubmitResultMsg:
+		if msg.err != nil {
+			m.busy = false
+			m.currentStatus = "error"
+			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: msg.err.Error()})
+			m.refreshView()
+			return m, nil
+		}
+		if strings.HasPrefix(strings.TrimSpace(msg.text), "/") {
+			m.currentStatus = "idle"
+			m.refreshView()
+		}
+		return m, nil
+	case remoteStopResultMsg:
+		if msg.err != nil {
+			m.currentStatus = "error"
+			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: msg.err.Error()})
+			m.refreshView()
+		}
 		return m, nil
 	case toolEventMsg:
 		if msg.event.Kind == "call" {
@@ -488,7 +434,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentAssistant = -1
 		m.refreshView()
 		if msg.event.Kind == "call" {
-			return m, tickSpinner()
+			return m, m.queueSpinner()
 		}
 		return m, nil
 	case tea.MouseMsg:
@@ -507,6 +453,19 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 避免 `[<65;...M` 之类的滚轮事件污染输入框。
 		if isMouseEscapeKey(msg.String()) {
 			return m, nil
+		}
+		switch msg.String() {
+		case "ctrl+c":
+			if confirm(&m.quitPending, &m.lastQuitAt, quitConfirmDelay) {
+				return m, tea.Quit
+			}
+			m.input.Reset()
+			m.picker = nil
+			m.currentStatus = "input cleared; ctrl+c again to quit"
+			m.refreshView()
+			return m, nil
+		case "ctrl+d":
+			return m, tea.Quit
 		}
 		if m.picker != nil {
 			// picker 是模态输入；存在时不让普通快捷键和 textarea 继续消费按键。
@@ -538,33 +497,18 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					command = "/model " + m.picker.Provider + "/" + value
 				}
 				m.picker = nil
-				if err := m.remoteSubmit(command); err != nil {
-					m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: err.Error()})
-					m.currentStatus = "error"
-					m.refreshView()
-					return m, nil
-				}
-				m.busy = true
-				m.currentStatus = "submitted"
+				m.currentStatus = "command"
 				m.refreshView()
-				return m, tickSpinner()
+				return m, remoteSubmitCmd(m.remoteSubmit, command)
 			}
 			return m, nil
 		}
 		switch msg.String() {
-		case "ctrl+c":
-			if confirm(&m.quitPending, &m.lastQuitAt, quitConfirmDelay) {
-				return m, tea.Quit
-			}
-			m.currentStatus = "ctrl+c again to quit"
-			m.refreshView()
-			return m, nil
 		case "ctrl+u":
 			m.input.Reset()
+			m.quitPending = false
 			m.refreshView()
 			return m, nil
-		case "ctrl+d":
-			return m, tea.Quit
 		case "esc":
 			if confirm(&m.escPending, &m.lastEscAt, quitConfirmDelay) {
 				return m, tea.Quit
@@ -648,14 +592,77 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(tea.KeyMsg); ok {
 		m.escPending = false
 		m.quitPending = false
+		if m.cleanInputValue() {
+			m.refreshView()
+		}
 	}
 	m.viewport, _ = m.viewport.Update(msg)
 	m.autoScroll = m.viewport.AtBottom()
 	return m, cmd
 }
 
+func (m *AppModel) submitPendingInputCmd() tea.Cmd {
+	if m.busy || m.remoteSubmit == nil || strings.TrimSpace(m.pendingInput) == "" {
+		return nil
+	}
+	text := m.pendingInput
+	m.pendingInput = ""
+	m.busy = true
+	m.currentStatus = "submitting queued"
+	m.refreshView()
+	return tea.Batch(remoteSubmitCmd(m.remoteSubmit, text), m.queueSpinner())
+}
+
+func (m *AppModel) queueSpinner() tea.Cmd {
+	if !m.busy || m.spinnerPending {
+		return nil
+	}
+	m.spinnerPending = true
+	return tickSpinner()
+}
+
+func (m *AppModel) queueRender() tea.Cmd {
+	if m.renderPending {
+		return nil
+	}
+	m.renderPending = true
+	return tea.Tick(33*time.Millisecond, func(time.Time) tea.Msg { return renderTickMsg{} })
+}
+
+func (m *AppModel) loadRuntimeLocationCmd() tea.Cmd {
+	workdir := m.metaCache.Workdir
+	if workdir == "" || workdir == "-" {
+		if cwd, err := os.Getwd(); err == nil {
+			workdir = cwd
+		}
+	}
+	if workdir == "" || workdir == "-" {
+		return nil
+	}
+	return func() tea.Msg {
+		return locationLoadedMsg{workdir: workdir, git: readGitMeta(workdir)}
+	}
+}
+
+var mouseEscapePattern = regexp.MustCompile(`(?:\x1b)?\[<[0-9;]*[mM]?`)
+
 func isMouseEscapeKey(text string) bool {
-	return strings.HasPrefix(text, "\x1b[<") || strings.HasPrefix(text, "[<")
+	return mouseEscapePattern.MatchString(text)
+}
+
+func stripMouseEscapeSequences(text string) string {
+	return mouseEscapePattern.ReplaceAllString(text, "")
+}
+
+func (m *AppModel) cleanInputValue() bool {
+	value := m.input.Value()
+	cleaned := stripMouseEscapeSequences(value)
+	if cleaned == value {
+		return false
+	}
+	m.input.SetValue(cleaned)
+	m.input.CursorEnd()
+	return true
 }
 
 // confirm 处理“短时间内二次按键确认”的通用状态。
@@ -703,7 +710,7 @@ func (m *AppModel) resize() {
 func (m *AppModel) reservedMainHeight(width int) int {
 	headerHeight := 1
 	inputHeight := renderedLineCount(renderInputBar(m.input.View(), width))
-	footerHeight := 1
+	footerHeight := renderedLineCount(renderInputFooter(m.snapshot(), m.sessionID, width))
 	slashHeight := renderedLineCount(m.renderSlashHint(max(12, width-4)))
 	return headerHeight + slashHeight + inputHeight + footerHeight
 }
@@ -725,8 +732,7 @@ func (m *AppModel) refreshView() {
 		if m.entries[i].CreatedAt == "" {
 			m.entries[i] = entryNow(m.entries[i])
 		}
-		entry := m.entries[i]
-		parts = append(parts, m.renderConversationEntry(entry, contentWidth))
+		parts = append(parts, m.renderConversationEntryCached(i, contentWidth))
 	}
 	if len(parts) == 0 {
 		parts = append(parts, renderEmptyState(contentWidth, m.viewport.Height))
@@ -807,59 +813,26 @@ func renderWallePixelIconCompact() string {
 
 // snapshot 汇总输入框附近状态区需要的数据。
 // 调用层级：View -> renderMainPane -> snapshot。
-// 主要步骤：读取 token、context 和 skill 的只读摘要；不在渲染函数里直接散落业务查询。
 func (m *AppModel) snapshot() statusSnapshot {
-	contextTokens, sessionTokens, contextWindow := 0, 0, 0
-	turn := 0
-	if m.ag != nil {
-		contextTokens, sessionTokens, contextWindow = m.ag.TokenUsage()
-		turn = m.ag.CurrentTurn()
-	} else {
-		turn = m.remoteTurn
-	}
 	snapshot := statusSnapshot{Runtime: runtimeMeta{
 		Busy:           m.busy,
 		State:          animatedStateLabel(m.busy, m.currentStatus, m.spinnerFrame),
-		Turn:           turn,
-		ContextTokens:  contextTokens,
-		ContextWindow:  contextWindow,
-		SessionTokens:  sessionTokens,
+		Turn:           m.remoteTurn,
 		ScrollPercent:  int(m.viewport.ScrollPercent() * 100),
 		ToolCallsTotal: m.toolCalls,
 		LastToolName:   m.lastTool,
+		PendingInput:   strings.TrimSpace(m.pendingInput) != "",
 		SessionID:      m.sessionID,
 	}}
-	snapshot.Runtime.Workdir, snapshot.Runtime.Git = m.loadRuntimeLocation()
-	if m.ctxManager != nil && m.messageCtx != nil {
-		if messages, err := m.ctxManager.GetMessages(m.messageCtx); err == nil {
-			snapshot.Runtime.ContextMessages = len(messages)
-			for _, msg := range messages {
-				if strings.HasPrefix(msg.Content, "[对话历史摘要]") {
-					snapshot.Runtime.ContextSummaries++
-				}
-			}
-		}
-	}
-	if m.skillMgr != nil {
-		for _, s := range m.skillMgr.ListSkills() {
-			snapshot.EnabledSkills = append(snapshot.EnabledSkills, s.Name)
-		}
-		sort.Strings(snapshot.EnabledSkills)
-	}
+	snapshot.Runtime.Workdir, snapshot.Runtime.Git = m.runtimeLocation()
 	return snapshot
 }
 
-func (m *AppModel) loadRuntimeLocation() (string, gitMeta) {
-	if time.Since(m.metaCache.LoadedAt) < 2*time.Second && m.metaCache.Workdir != "" {
+func (m *AppModel) runtimeLocation() (string, gitMeta) {
+	if m.metaCache.Workdir != "" {
 		return m.metaCache.Workdir, m.metaCache.Git
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = "-"
-	}
-	meta := readGitMeta(cwd)
-	m.metaCache = cachedMeta{Workdir: cwd, Git: meta, LoadedAt: time.Now()}
-	return cwd, meta
+	return "-", gitMeta{}
 }
 
 func renderState(state string, busy bool) string {
@@ -871,16 +844,6 @@ func renderState(state string, busy bool) string {
 		color = colorError
 	}
 	return lipgloss.NewStyle().Foreground(color).Render(state)
-}
-
-func skillSummary(skills []string) string {
-	if len(skills) == 0 {
-		return ""
-	}
-	if len(skills) == 1 {
-		return "skill " + truncateMiddle(skills[0], 24)
-	}
-	return fmt.Sprintf("skills %d (%s)", len(skills), truncateMiddle(skills[0], 18))
 }
 
 func (m *AppModel) renderSlashHint(width int) string {
@@ -989,6 +952,28 @@ func (m *AppModel) modelHintMatches(prefix string) []string {
 		add(hint)
 	}
 	return matches
+}
+
+func (m *AppModel) renderConversationEntryCached(index int, width int) string {
+	entry := m.entries[index]
+	frame := -1
+	if entry.Role == roleHint && entry.ToolState == "running" {
+		frame = m.spinnerFrame
+	}
+	key := entry.renderKey()
+	if entry.renderCacheText != "" && entry.renderCacheKey == key && entry.renderCacheWidth == width && entry.renderCacheFrame == frame {
+		return entry.renderCacheText
+	}
+	rendered := m.renderConversationEntry(entry, width)
+	m.entries[index].renderCacheKey = key
+	m.entries[index].renderCacheWidth = width
+	m.entries[index].renderCacheFrame = frame
+	m.entries[index].renderCacheText = rendered
+	return rendered
+}
+
+func (entry conversationEntry) renderKey() string {
+	return strings.Join([]string{entry.Role, entry.Content, entry.CreatedAt, entry.ToolName, entry.ToolIntent, entry.ToolArgs, entry.ToolKey, entry.ToolState, entry.ToolOutput, entry.SystemTitle}, "\x00")
 }
 
 func (m *AppModel) renderConversationEntry(entry conversationEntry, width int) string {
@@ -1244,26 +1229,7 @@ func animatedStateLabel(busy bool, state string, frame int) string {
 }
 
 func tickSpinner() tea.Cmd {
-	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg {
+	return tea.Tick(180*time.Millisecond, func(time.Time) tea.Msg {
 		return spinnerTickMsg{}
 	})
-}
-
-// LaunchTUI 启动本地 Agent TUI，并在退出时恢复 Agent 的工具事件 sink。
-func LaunchTUI(ctx context.Context, ag *agent.Agent, modelName string, promptDir string, skillMgr *skill.Manager, ctxManager *agentctx.Manager, messageCtx *agentctx.Context, sessionID string, switchModel SwitchModelFunc, onToolEvent ToolEventFunc) error {
-	launchMu.Lock()
-	defer launchMu.Unlock()
-	model := NewAppModel(ctx, ag, modelName, promptDir, skillMgr, ctxManager, messageCtx, sessionID, switchModel)
-	// WithMouseCellMotion 开启点击、释放和滚轮事件；viewport.Update 负责具体滚动。
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	model.program = p
-	prevSink := ag.SetToolEventSink(func(event toolevent.ToolEvent) {
-		if onToolEvent != nil {
-			onToolEvent(event)
-		}
-		p.Send(toolEventMsg{event: event})
-	})
-	defer ag.SetToolEventSink(prevSink)
-	_, err := p.Run()
-	return err
 }

@@ -1,0 +1,22 @@
+%% 事实源: .spec/diagrams/walle-architecture-topology.json view_interactive_runtime
+sequenceDiagram
+  participant User
+  participant CLI as cmd/walle
+  participant TUI as internal/tui
+  participant Socket as supervisor.sock
+  participant Daemon as walle daemon
+  participant Runtime as internal/runtime
+
+  User->>CLI: walle
+  CLI->>Socket: attach interactive
+  alt socket missing
+    CLI->>Daemon: spawn "walle daemon"
+    Daemon->>Runtime: New(PromptBase=tui)
+    CLI->>Socket: retry attach
+  end
+  Socket-->>CLI: attached + history + ready
+  CLI->>TUI: LaunchAttachedTUI
+  TUI->>Socket: input / stop / detach
+  Socket->>Runtime: DaemonSession routes request
+  Runtime-->>Socket: assistant / tool / state events
+  Socket-->>TUI: render

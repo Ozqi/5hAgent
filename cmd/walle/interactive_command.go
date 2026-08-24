@@ -45,8 +45,11 @@ func startInteractiveClient(ctx context.Context) (*systemd.ProcessClient, error)
 		logFile.Close()
 		return nil, fmt.Errorf("start interactive daemon: %w", err)
 	}
-	_ = process.Process.Release()
 	_ = logFile.Close()
+	exited := make(chan error, 1)
+	go func() {
+		exited <- process.Wait()
+	}()
 	target := "interactive"
 	deadline := time.NewTimer(30 * time.Second)
 	defer deadline.Stop()
@@ -59,6 +62,8 @@ func startInteractiveClient(ctx context.Context) (*systemd.ProcessClient, error)
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case err := <-exited:
+			return nil, fmt.Errorf("interactive daemon exited before ready: %w; see %s", err, filepath.Join(runDir, "interactive.log"))
 		case <-deadline.C:
 			return nil, fmt.Errorf("interactive daemon %s did not become ready; see %s", target, filepath.Join(runDir, "interactive.log"))
 		case <-time.After(100 * time.Millisecond):

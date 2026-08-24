@@ -1,95 +1,76 @@
 # Runtime Spec
 
-## 职责
+> 由 Claude Fable 5 于 2026-08-24 阅读 `internal/runtime/*.go`、`internal/agent/*.go`、`internal/tools/registry.go` 后重构。
+> 覆盖范围：Runtime 装配、模型切换、daemon session、通用 process report/worklog。
 
-`internal/runtime` 是装配层。它组合配置、Prompt、LLM、Agent、Context、Tools、Skill、hooks、通用 process report/worklog 和 daemon interactive session。
+## 职责边界
 
-Runtime 不内置 TaskList、任务命令、任务 watcher、任务状态或 task report。
+`internal/runtime` 是装配层和模型状态真源：创建配置、Prompt、LLM、Agent、Context、Tools、Skill、hooks，并把它们接到 daemon interactive session 或通用 process runner 上。模型/provider 切换只在这里落地，UI 只发送意图。
 
-## 覆盖文件
+```mermaid
+flowchart LR
+  Runtime[Runtime]
+  Runtime --> Agent[Agent]
+  Runtime --> Context[Context Manager]
+  Runtime --> LLM[LLMClient / Codex]
+  Runtime --> Tools[tools.Registry]
+  Runtime --> Skills[skill.Manager]
+  Runtime --> Hooks[hooks + tool stats]
+  Runtime --> Worklog[process worklog / report]
+  Agent --> Context
+  Agent --> Tools
+  Context --> Store[~/.walle/sessions/*.jsonl]
+```
 
-| 文件 | 职责 |
+总体关系见：[`diagrams/walle-overall-runtime.mmd`](diagrams/walle-overall-runtime.mmd)。
+
+## 关键文件
+
+| 文件 | 责任 |
 | --- | --- |
-| `runtime.go` | Runtime 初始化、模型切换、通用 ProcessRunner、process report。 |
-| `daemon_session.go` | daemon 长驻会话、slash command、事件回放。 |
-| `provider.go` | provider/model 列表、OAuth 与切换辅助。 |
+| `runtime.go` | `New`、`SwitchModel`、`RunProcess`、Runtime 字段。 |
+| `daemon_session.go` | daemon 长驻交互会话、slash command、事件历史和订阅者。 |
+| `provider.go` | provider/model 列表、Codex OAuth 登录入口。 |
 | `worklog.go` | 通用 process 工作日志。 |
-| `hooks.go`、`tool_stats.go` | 工具事件 hook 与失败统计。 |
+| `hooks.go`、`tool_stats.go` | 工具事件 hook 和失败统计。 |
 
-## Options 与字段
+## 初始化顺序
 
-`Options` 包含 `Debug`、`SessionID`、`ContinueLast`、`ProjectDir`、模型覆盖与 `PromptBase`。不存在 TaskList 或 MemoryContext 选项。
-
-`Runtime` 持有 `Agent`、`CtxManager`、`MessageCtx`、session/prompt/model/project 信息、私有 `ToolRegistry`、hooks 和模型切换锁。
-
-## 核心接口
-
-| 接口 | 行为 | 调用方 |
-| --- | --- | --- |
-| `New` | 创建 Runtime 并完成装配。 | daemon、嵌入调用方 |
-| `Close` | 关闭 logger。 | CLI defer |
-| `SwitchModel` | 重建模型、替换 ContextTool、重新绑定工具。 | TUI/daemon session |
-| `RunProcess` | 执行通用 `systemd.AgentProcess`。 | `AgentSystemd` |
-| `NewDaemonSession` | 创建可 attach 的长驻交互会话。 | `walle daemon` |
-| `Providers` / `ProviderModels` | provider/model picker 数据。 | `/provider`、`/model` |
-| `StartOpenAILogin` | 发起 ChatGPT OAuth。 | `/provider openai` |
-| `RecordToolEvent` | 记录交互工具失败和 hooks。 | daemon session |
-
-不存在 `RunTaskOnce`、`RunTasksUntilDone`、`TaskProcessSpec` 或 `EmitCurrentTask`。
-
-## 初始化流程
-
-1. 加载配置并初始化 logger。
-2. 确定 workspace 与项目数据目录。
-3. 创建 session-backed `context.Manager` 并打开 message context。
-4. 创建 LLM，加载 system prompt。
-5. 创建 Agent，注入 Context Manager、debug 信息和 context window。
-6. `tools.NewRegistry().Init(skillMgr)` 注册 base/skill 工具。
-7. 注册 `context.context`，再收集 `ToolInfos` 并调用 `WithTools`。
+1. 加载配置、logger、workspace 和项目数据目录。
+2. 创建 session-backed `context.Manager` 和当前 message context。
+3. 创建 LLM，加载 prompt base。
+4. 创建 Agent，注入 Context Manager、debug 信息、context window。
+5. `tools.NewRegistry().Init(skillMgr)` 注册 base/skill 工具。
+6. `RegisterContextTool` 注册 `context.context`。
+7. `ToolInfos` -> `WithTools` -> `Agent.SetModel/SetTools`。
 8. 加载 hooks，返回 Runtime。
+
+## 稳定接口
+
+| 接口 | 调用方 | 要点 |
+| --- | --- | --- |
+| `New` | daemon、通用 process runner | 完成所有装配。 |
+| `Close` | CLI defer | 关闭 logger。 |
+| `SwitchModel` | `DaemonSession` | 替换模型、替换 context tool、重新绑定工具；TUI 不直接调用。 |
+| `RunProcess` | `AgentSystemd` | 跑通用 `AgentProcess`，写 worklog/report。 |
+| `NewDaemonSession` | `walle daemon` | 创建 attachable interactive adapter。 |
+| `Providers` / `ProviderModels` / `StartOpenAILogin` | `/provider`、`/model` | 只暴露模型选择和登录能力。 |
+| `RecordToolEvent` | daemon session | hooks + tool failure stats。 |
 
 ## 运行模式
 
-| 模式 | Context | 产物 | 说明 |
-| --- | --- | --- | --- |
-| interactive daemon | 持久化 session | socket events、session JSONL | 默认 TUI 连接的长驻会话。 |
-| local TUI embed | 持久化 session | TUI 状态、session JSONL | 保留给直接嵌入场景。 |
-| generic process | 独立 session-backed context | process report、worklog | `AgentSystemd` 的通用 runner。 |
+- interactive daemon：默认模式，daemon 长驻持有 Runtime，TUI 通过 socket attach。
+- generic process：`AgentSystemd` 调用 `RunProcess`，写 `.walle/reports` 和 `.walle/agents/.../logs`。
 
-## AgentProcess 流程
+## 不要做
 
-1. 校验 `AgentProcess` 和 `ProcessSpec`。
-2. 创建独立内存 message context。
-3. 把 `ProcessSpec.SystemPrompt` 写为 system message。
-4. 创建 process worklog，回填 `WorkLogPath`。
-5. 接管工具事件 sink，调用 `Agent.RunStream`。
-6. 恢复旧 sink。
-7. 写 `<process-id>.<timestamp>.md` report，回填 `ReportPath`。
-8. 输出 process completed/failed。
+- 不在 Runtime 内置 TaskList、task watcher、任务状态或固定 `/task`。
+- 不让 Runtime 依赖 Bubble Tea 或 TUI 渲染细节。
+- 不绕过 `tools.Registry` 暴露工具。
+- 不在模型切换时只替换模型而忘记重绑 `context.context` 和完整工具集合。
 
-流程不读取任务文件，不回写任务状态，不要求任务 ID 或标题。
+## 验收
 
-## DaemonSession
-
-- daemon 固定创建一个 `DaemonSession`，没有 interactive 模式开关。
-- `Snapshot` 返回 `ProcessSnapshot{Name:"interactive"}`。
-- 普通输入启动一轮 `Agent.RunStream`；slash command 在 session 内处理。
-- 事件历史仅驻留内存，daemon 退出后丢失。
-
-## 状态与持久化
-
-| 状态 | 路径或字段 |
-| --- | --- |
-| Session | `~/.walle/sessions/*.jsonl` |
-| Process report | `<project>/.walle/reports/<process-id>.<timestamp>.md` |
-| Process worklog | `<project>/.walle/agents/<process-id>/logs/*.md` |
-| Tool stats | 用户级与项目级 `tool-failures.jsonl` |
-| Hooks | `<project>/.walle/hooks.json` |
-
-## 不变量
-
-- `RegisterContextTool` 必须发生在模型 `WithTools` 前。
-- `SwitchModel` 必须替换 ContextTool 模型引用并重绑完整工具集合。
-- hooks 失败不得阻塞 Agent 成功路径。
-- 默认启动不连接 MCP stdio server。
-- 任务管理由 Skill、MCP 或外置动态工具提供；不向 Runtime 增加固定 TaskList 接口。
+- 改初始化或模型切换：`go vet ./...`，再 `go build -o walle ./cmd/walle`。
+- 改 daemon session：补 attach 流程人工验收，检查 history replay、busy、stop、disconnect。
+- 改 process runner：检查 report/worklog 路径和 tool event sink 恢复。

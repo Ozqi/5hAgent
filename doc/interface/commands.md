@@ -5,7 +5,7 @@
 
 ## 职责
 
-`internal/commands` 保存可复用的命令处理；TUI 或 daemon session 决定何时调用它们。
+`internal/commands` 保存可复用的命令处理；当前由 daemon session 调用，TUI 只把 slash 文本转发到 daemon。
 
 ## 文件
 
@@ -15,7 +15,7 @@
 | [compress.go](../../internal/commands/compress.go) | `/compress` |
 | [mcp.go](../../internal/commands/mcp.go) | `/mcp` |
 
-## TUI / daemon session 内部命令
+## daemon session 内部命令
 
 这些不在 `internal/commands`：
 

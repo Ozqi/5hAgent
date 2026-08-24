@@ -52,7 +52,7 @@
 
 - LLM 当前模型只用 `LLM_MODEL=provider/model` 选择；`provider` 对应 `LLM_<PROVIDER>_*` 配置块，`model` 原样发送给上游 API。
 - `LLM_<PROVIDER>_FORMAT=claude|openai` 表示接口协议，不是 provider 名；API 地址、密钥、token、stream 都绑定在对应 provider 块。
-- 本地 Ollama 作为 provider `ollama` 配置，通过 `LLM_MODEL=ollama/<model>` + `LLM_OLLAMA_FORMAT=openai` + `LLM_OLLAMA_BASE_URL=http://localhost:11434/v1` 接入。
+- 本地 Ollama 作为 provider `ollama` 配置，通过 `LLM_MODEL=ollama/<model>` + `LLM_OLLAMA_FORMAT=openai` + `LLM_OLLAMA_BASE_URL=http://localhost:11434/v1` 接入；默认安装配置使用本机已验证的 `ollama/ornith:9b`。
 - CLI 可用 `--model provider/model` 临时切换完整模型引用；`--llm-format`、`--llm-model` 只临时覆盖当前 provider 的接口格式或模型名。
 - Agent 配置包括 `AGENT_NAME`、`AGENT_MAX_TOTAL_TOKENS`、`AGENT_REPEAT_TOOL_LIMIT`、`AGENT_CONTEXT_AUTO_COMPRESS`。
 - Prompts 从 `~/.walle/prompt/*.md` 加载；主 prompt 是 `main.md`，模型专用前缀是 `prefix.<provider>.<model-slug>.md`。
@@ -249,7 +249,7 @@ LLM 可见工具当前包括：
 - `doc/` 文档保持架构优先、短而准。
 - 模块文档优先放结构图、关键文件、关键函数、当前边界。
 - 不写和代码不匹配的历史叙述，除非它解释当前维护方式。
-- `doc/` 是对外文档，`.doc/` 是本项目内部开发文档。更新 `.doc/` 时，架构信息先写成 JSON 拓扑事实源，再由 JSON 派生成 Mermaid；具体接口和使用方法放在后面，用少量文字加源码跳转链接说明，不写长篇散文。
+- `doc/` 是对外文档，`.doc/` 是内部设计记录，`.spec/diagrams/` 放架构图和 JSON 拓扑事实源。更新架构图时先改 `.spec/diagrams/*.json` 事实源，再派生 Mermaid 或 draw.io；具体接口和使用方法放在对应 spec 后面，用少量文字加源码跳转链接说明，不写长篇散文。
 
 ## 验证策略
 

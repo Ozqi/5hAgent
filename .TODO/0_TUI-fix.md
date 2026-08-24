@@ -27,10 +27,10 @@ tmux send-keys -t 'walle:6.1' Escape '[<64;52;29M' Escape '[<65;52;30M'
 
 复现环境：`tmux` 会话 `walle`，窗口 `6:walle`，pane `walle:6.1`，尺寸 `215x48`，当前 attached daemon workspace 为 `/Users/bytedance/Proj/walle`。
 
-- [ ] P0：鼠标滚轮事件会漏进输入框，表现为输入框出现 `[<64;52;29M`、`[<65;52;30M` 等 SGR mouse escape 片段。复现：在 TUI 空输入状态滚动历史区，`tmux capture-pane -t 'walle:6.1' -p -S -40` 可见输入行从 `>` 变成 `> [<64;52;29M[<64;52;29M...`。修复目标：滚轮只滚动 viewport，不修改 textarea 内容；即使终端把 `Escape` 和后续字节拆成多条 `tea.KeyMsg`，也要完整吞掉该序列。
-- [ ] P0：TUI streaming/thinking 时 spinner 刷新频率过高，界面明显卡顿，尤其在长历史、长 tool 输出和大终端宽度下更明显。复现：提交普通问题后状态栏持续显示 `⠋/⠙/⠹ thinking`，历史区含大量工具输出时刷新压力很高。修复目标：降低 spinner tick 频率，或只在状态变化/新 token/tool event 时刷新；保持用户输入和滚动响应流畅。
-- [ ] P1：attached daemon 模式下输入 `/model` 后状态会变为 `submitted` / `thinking`，用户没有立即看到 model picker 或 usage，像普通 LLM 请求一样进入忙碌状态。复现：在 `walle:6.1` 输入 `/model` 后，状态栏短时间显示 `submitted`，随后仍进入 thinking/工具调用历史上下文。修复目标：远端 slash 命令应在本地保持 command 状态，picker/system 事件到达后恢复 idle；`/model`、`/provider` 等本地命令不应触发普通对话轮次的 busy 表现。
-- [ ] P1：attached TUI 底部 workspace/git 状态取的是客户端当前目录 `/Users/bytedance/Proj/walle`，而命令入口可能来自 `/Users/bytedance/Proj/5hWorkSpace`，`walle ps` 也按 workspace 过滤，容易让用户误判当前连到哪个项目。修复目标：attached 模式优先展示 daemon snapshot 的 `Workspace`，并明确本地 client cwd 与远端 runtime workspace 的关系。
+- [x] P0：鼠标滚轮事件会漏进输入框，表现为输入框出现 `[<64;52;29M`、`[<65;52;30M` 等 SGR mouse escape 片段。复现：在 TUI 空输入状态滚动历史区，`tmux capture-pane -t 'walle:6.1' -p -S -40` 可见输入行从 `>` 变成 `> [<64;52;29M[<64;52;29M...`。修复目标：滚轮只滚动 viewport，不修改 textarea 内容；即使终端把 `Escape` 和后续字节拆成多条 `tea.KeyMsg`，也要完整吞掉该序列。2026-08-24 已在 `Update` key 入口、textarea 更新后和 submit 前增加 SGR mouse escape 清理；`walle-ui-check` 实测发送 `[<64;10;10M` / `[<65;10;10M` 后输入框未出现 escape 串。
+- [x] P0：TUI streaming/thinking 时 spinner 刷新频率过高，界面明显卡顿，尤其在长历史、长 tool 输出和大终端宽度下更明显。复现：提交普通问题后状态栏持续显示 `⠋/⠙/⠹ thinking`，历史区含大量工具输出时刷新压力很高。修复目标：降低 spinner tick 频率，或只在状态变化/新 token/tool event 时刷新；保持用户输入和滚动响应流畅。2026-08-24 已增加 spinner 单定时链、token 渲染节流和 entry 渲染缓存，spinner 间隔从 120ms 降为 180ms。
+- [x] P1：attached daemon 模式下输入 `/model` 后状态会变为 `submitted` / `thinking`，用户没有立即看到 model picker 或 usage，像普通 LLM 请求一样进入忙碌状态。复现：在 `walle:6.1` 输入 `/model` 后，状态栏短时间显示 `submitted`，随后仍进入 thinking/工具调用历史上下文。修复目标：远端 slash 命令应在本地保持 command 状态，picker/system 事件到达后恢复 idle；`/model`、`/provider` 等本地命令不应触发普通对话轮次的 busy 表现。2026-08-24 已把 attached submit/stop 改成异步 Cmd，slash command 显示 command 状态且不设置 busy。
+- [x] P1：attached TUI 底部 workspace/git 状态取的是客户端当前目录 `/Users/bytedance/Proj/walle`，而命令入口可能来自 `/Users/bytedance/Proj/5hWorkSpace`，`walle ps` 也按 workspace 过滤，容易让用户误判当前连到哪个项目。修复目标：attached 模式优先展示 daemon snapshot 的 `Workspace`，并明确本地 client cwd 与远端 runtime workspace 的关系。2026-08-24 已让 attached TUI 以 daemon snapshot workspace 初始化 footer，并把 git 元信息加载移出 View 同步路径。
 
 ## 从旧记录收拢的 TUI 待修复
 

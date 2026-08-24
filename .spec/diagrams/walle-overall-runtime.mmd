@@ -1,0 +1,15 @@
+%% 事实源: .spec/diagrams/walle-architecture-topology.json view_overall_runtime
+flowchart LR
+  CLI["cmd/walle"] -->|start / ps / attach| Socket["supervisor.sock"]
+  CLI --> TUI["internal/tui"]
+  Daemon["walle daemon"] --> Runtime["internal/runtime"]
+  Daemon --> Session["DaemonSession"]
+  Daemon --> Systemd["internal/systemd"]
+  Socket <--> TUI
+  Socket --> Session
+  Session --> Runtime
+  Runtime --> Agent["internal/agent"]
+  Runtime --> Context["internal/context"]
+  Runtime --> LLM["internal/llm + codex"]
+  Runtime --> Tools["internal/tools"]
+  Context --> Store["~/.walle/sessions/*.jsonl"]

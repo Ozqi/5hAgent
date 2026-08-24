@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/Ozqi/walle/internal/systemd"
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,7 +22,7 @@ type RemoteClient interface {
 func LaunchAttachedTUI(ctx context.Context, client RemoteClient) error {
 	// 1. 用 attach 快照初始化界面，并把输入和停止操作绑定到远端客户端。
 	snapshot := client.Snapshot()
-	model := NewAppModel(ctx, nil, snapshot.Model, "", nil, nil, nil, snapshot.SessionID, nil)
+	model := NewAppModel(ctx, snapshot.Model, snapshot.SessionID)
 	model.remoteTurn = snapshot.Turn
 	model.remoteSubmit = client.Submit
 	model.remoteStop = client.Stop
@@ -29,7 +30,7 @@ func LaunchAttachedTUI(ctx context.Context, client RemoteClient) error {
 	if model.busy {
 		model.currentStatus = "attached"
 	}
-	model.metaCache.Workdir = snapshot.Workspace
+	model.metaCache = cachedMeta{Workdir: snapshot.Workspace, LoadedAt: time.Now()}
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	model.program = p
 	// 2. Events 已合并历史重放和实时流；流关闭时通知界面远端已断开。

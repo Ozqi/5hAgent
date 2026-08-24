@@ -1,80 +1,74 @@
-# Capability Spec
+# 主要外接能力 Spec
 
-## 职责
+> 由 Claude Fable 5 于 2026-08-24 阅读 `internal/tools/*.go`、`internal/commands/*.go`、`internal/mcp/*.go`、`internal/toolmeta`、`internal/toolevent` 后重构。
+> 覆盖范围：LLM tools、slash command handler、tool event、MCP 适配和 planned dynamic tools。
 
-能力层把模型或用户命令可调用的能力统一收口：本地 LLM tools、工具展示元数据、工具事件、MCP 适配和 slash commands。固定能力覆盖文件、shell、skill 和 context 操作。
+## 职责边界
 
-任务管理不是固定 Runtime 能力；需要时由 Skill、MCP 或外置动态工具提供。
+能力层负责“模型或用户命令能调用什么”。固定能力包括文件、grep/glob、shell、skill、context；MCP 和动态 terminal tools 是显式接入能力，不阻塞默认启动。
 
-## 覆盖范围
+```mermaid
+flowchart LR
+  Runtime --> Registry[tools.Registry]
+  Registry --> Base[base.*\nread/write/edit/glob/grep/list/exec]
+  Registry --> Skill[skill.skill]
+  Registry --> Ctx[context.context]
+  Registry -. explicit .-> MCP[mcp.<server>.<tool>]
+  Registry -. planned .-> Terminal[terminal.<name>.<action>]
+  Commands[/slash commands/] --> SkillCmd[/skill]
+  Commands --> MCPCmd[/mcp]
+  Commands --> Compress[/compress]
+```
 
-| 路径 | 职责 |
+工具图见：[`diagrams/walle-capabilities.mmd`](diagrams/walle-capabilities.mmd)。
+
+## 关键文件
+
+| 文件 | 责任 |
 | --- | --- |
-| `internal/tools/registry.go` | 每个 Runtime 独立的工具注册表和元数据。 |
-| `internal/tools/read_file.go`、`read_md.go` | 分段读取文件和 Markdown section 操作。 |
-| `internal/tools/write_file.go`、`edit.go` | 创建、覆盖与精确替换。 |
-| `internal/tools/glob.go`、`grep.go`、`list_dir.go` | 文件与文本检索。 |
-| `internal/tools/exec_shell.go` | 在 workspace root 下执行 shell。 |
-| `internal/tools/skill_tool.go` | 查询当前 skill snapshot。 |
-| `internal/tools/context_tool.go` | 暴露 `context.context`。 |
-| `internal/tools/mcp_tool.go`、`internal/mcp/*.go` | MCP 适配。 |
-| `internal/toolmeta`、`internal/toolevent` | 工具元数据与事件。 |
-| `internal/commands` | `/skill`、`/compress`、`/mcp` 的纯命令处理。 |
+| `internal/tools/registry.go` | Runtime-scoped 工具注册表。 |
+| `internal/tools/read_file.go`、`read_md.go` | 文件和 Markdown 读取/section 操作。 |
+| `internal/tools/write_file.go`、`edit.go` | 写文件和精确替换。 |
+| `internal/tools/glob.go`、`grep.go`、`list_dir.go`、`exec_shell.go` | 检索和 shell。 |
+| `internal/tools/context_tool.go`、`skill_tool.go`、`mcp_tool.go` | context、skill、MCP 工具适配。 |
+| `internal/commands/*.go` | 纯 slash command handler。 |
+| `internal/mcp/*.go` | MCP 配置类型和 stdio JSON-RPC client。 |
+| `internal/toolevent`、`internal/toolmeta` | 展示元数据和工具事件。 |
 
-## Registry 接口
+## Registry 契约
 
-| 接口 | 行为 | 稳定约束 |
-| --- | --- | --- |
-| `NewRegistry()` | 创建空注册表。 | 初始化 `meta` map。 |
-| `SetWorkspaceRoot(root)` | 设置相对路径解析根。 | 必须在 `Init` 前调用。 |
-| `Init(skillMgr)` | 清空并注册固定本地工具。 | 每次调用重置工具和元数据。 |
-| `All()` | 返回工具切片副本。 | 调用方不能修改内部切片。 |
-| `ToolInfos(ctx)` | 收集模型 schema。 | 必须在 `WithTools` 前调用。 |
-| `RegisterContextTool(llm,promptDir)` | 注册 `context.context`。 | 必须在模型绑定前执行。 |
-| `ReplaceContextTool(llm,promptDir)` | 切模型后替换 context tool。 | 替换后需要重新 `WithTools`。 |
-| `RegisterMCPTools(server,client,specs)` | 注册远端 MCP tools。 | 工具名用 `mcp.<server>.<tool>`。 |
-
-## 默认 LLM 可见工具
-
-| 工具 | 读写 | 行为 |
-| --- | --- | --- |
-| `base.read_file` | read-only | 按 offset/limit 返回带行号文本。 |
-| `base.read_md` | read/write | 按标题读写 Markdown section。 |
-| `base.write_file` | write | 创建父目录并覆盖写入。 |
-| `base.edit` | write | 精确字符串替换。 |
-| `base.glob` | read-only | 返回 glob 匹配路径。 |
-| `base.grep` | read-only | 返回正则文本匹配。 |
-| `base.list_dir` | read-only | 返回目录项。 |
-| `base.exec_shell` | side-effect | 在 workspace root 运行 shell。 |
-| `skill.skill` | read-only | 查询启动时 skill snapshot。 |
-| `context.context` | write | inspect/pin/edit/audit/compress 当前上下文。 |
-
-`mcp.<server>.<tool>` 只在显式连接并注册后可见。
+- `Init(skillMgr)` 每次清空并注册 base tools；`skillMgr != nil` 时追加 `skill.skill`。
+- `SetWorkspaceRoot` 必须在 `Init` 前设置，供本地路径工具解析相对路径。
+- `RegisterContextTool` 必须在 `ToolInfos` 和模型 `WithTools` 前调用。
+- `ReplaceContextTool` 用于模型切换后替换压缩用 LLM，然后 Runtime 重新 `WithTools`。
+- `RegisterMCPTools` 保留给显式 MCP 连接，工具名固定为 `mcp.<server>.<tool>`。
 
 ## Slash commands
 
 | 命令 | 处理函数 | 副作用 |
 | --- | --- | --- |
-| `/skill list/get/reload` | `commands.HandleSkill` | reload 整体替换 Manager snapshot。 |
+| `/skill list/get/reload` | `commands.HandleSkill` | reload 成功后整体替换 Skill snapshot。 |
 | `/compress` | `commands.HandleCompress` | 写 compact archive，替换消息上下文。 |
-| `/mcp list/add/remove/enable/disable` | `commands.HandleMCP` | 写 `~/.walle/mcp.json`。 |
+| `/mcp list/add/remove/enable/disable` | `commands.HandleMCP` | 读写 `~/.walle/mcp.json`，不启动 MCP server。 |
 
-`/provider`、`/model`、`/session`、`/stop`、`/detach` 由 TUI 或 daemon session 处理。不存在固定 `/task` 或 `/run`。
+`/provider`、`/model`、`/session`、`/stop`、`/detach` 属于 Entry/Runtime/DaemonSession，不在 `internal/commands` 扩散。
 
-## MCP 与动态能力边界
+## MCP 边界
 
-- 默认 Runtime 初始化不等待 MCP server。
-- MCP 工具完整名固定为 `mcp.<server>.<tool>`。
+- 默认 Runtime 初始化不连接 MCP server。
+- `NewStdioClient` 是可用但未接默认启动链路的显式能力。
 - MCP schema 和调用结果来自远端；本地只做命名隔离、参数透传和错误包装。
-- 任务管理可经 Skill 指导 Agent，或由 MCP/外置动态工具提供；本次没有新增接口。
+- 不要因为 `RegisterMCPTools` 当前少引用就删除，它是 planned/optional 接入点。
 
-## ToolEvent
+## 不要做
 
-工具执行 -> Agent `toolEventSink` -> Runtime/Daemon/TUI/worklog/logger。`toolmeta` 和 `toolevent` 不执行工具，也不保存业务状态。
+- 不绕过 Registry 私自暴露工具给 LLM。
+- 不在 commands 中启动 TUI、daemon、Runtime 或 LLM 主循环。
+- 不恢复固定 TaskList、`task.task`、`/task` 或隐式任务真源。
+- 不给 planned dynamic tools 新增持久化，除非先更新 `.TODO/10_动态终端工具.md`。
 
-## 禁止
+## 验收
 
-- 工具绕过 Registry 私自暴露给 LLM。
-- 默认启动时阻塞等待 MCP server。
-- 在 commands 中启动 TUI、daemon、Runtime 或 LLM 主循环。
-- 为已删除的 TaskList 恢复固定 `task.task`、`/task` 或隐式任务真源。
+- 改工具 schema：检查模型可见名称、参数必填项、错误提示是否能指导下一次调用。
+- 改 slash command：检查本地 TUI 和 daemon session 两条分派路径。
+- 改 MCP：确认默认启动不会等待外部进程。

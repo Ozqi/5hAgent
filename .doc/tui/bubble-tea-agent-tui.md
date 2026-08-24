@@ -39,7 +39,7 @@ type Model struct {
     messages []string
     input    textarea.Model
     viewport viewport.Model
-    agent    *Agent
+    submit   func(string) error
 }
 
 func (m Model) Init() tea.Cmd {
@@ -47,7 +47,7 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-    // 处理 key、窗口尺寸、agent token、tool event、错误和完成事件。
+    // 处理 key、窗口尺寸、daemon event、tool event、错误和完成事件。
     return m, nil
 }
 
@@ -57,12 +57,12 @@ func (m Model) View() string {
 }
 ```
 
-walle 的当前 `AppModel` 已经比这个骨架更完整：它持有 `Agent`、`SkillManager`、`Context`、session id、tool event 和流式 token 消息。后续开发应优先在这个模型内增量演进，不另起一套 TUI 框架。
+walle 的当前 `AppModel` 已经比这个骨架更完整：它持有 daemon submit/stop 回调、session id、tool event、picker 状态和流式 token 消息。它不持有 `Agent`、`SkillManager` 或 `Context`；后续开发应优先在这个模型内增量演进，不另起一套 TUI 框架。
 
 ## 设计原则
 
 1. `Update` 负责状态，不负责布局。布局尽量放在 `View` 和独立 render 函数中。
-2. LLM、工具和文件操作保持异步消息化，使用 `tea.Cmd` 或外部 goroutine 发送 `tea.Msg`。
+2. LLM、工具和文件操作留在 daemon/runtime 侧；TUI 只把 daemon 事件异步转成 `tea.Msg`。
 3. UI 不直接读写 agent 内部状态；需要展示的数据先汇总成 snapshot。
 4. 命令提示、模型选择、工具列表这类交互优先复用 Bubbles 组件，而不是手写完整选择器。
 5. 任何可能影响终端宽度的内容都要用 `lipgloss.Width` 或现有宽字符处理函数验证。
@@ -76,12 +76,17 @@ walle 的当前 `AppModel` 已经比这个骨架更完整：它持有 `Agent`、
 - `slashHintMatches`
 - `renderSlashHint`
 
-已覆盖的命令：
+已覆盖的提示命令：
 
-- `/skill <list|enable|disable|show>`
-- `/compress [compact|truncate]`
+- `/skill <list|get|reload>`
+- `/compress`
 - `/mcp <list|add|remove|enable|disable>`
-- `/session <new|list|switch|save|drop>`
+- `/session <new|list|id>`
+- `/model <provider/model>`
+- `/provider [name]`
+- `/stop`
+
+这些提示只负责补全和说明，执行仍由 daemon session 负责；`/detach` 是 TUI 本地退出命令。
 
 后续如果要做更接近 OpenCode 的体验，可以在保持最小改动的前提下升级为：
 
@@ -137,7 +142,7 @@ TUI 问题建议分三层排查：
 1. 继续打磨 slash 命令提示和匹配体验。
 2. 保持左侧 sidebar 和右侧 status panel 删除后的单列结构。
 3. 输入框保持参考 tmux 对话窗口的深灰低对比样式，对颜色和布局做截图验证。
-4. 模型切换先使用 CLI `--model/-m` 和配置；TUI 内模型选择等后续再接。
+4. 模型切换由 daemon/runtime 负责；TUI 只展示 `/model` picker 事件并回传选择。
 
 中期可考虑：
 
@@ -160,7 +165,7 @@ TUI 问题建议分三层排查：
 - 空态内容紧贴输入区状态行上方，避免在提示和输入条之间留下无意义空行；输入 `/` 后输入条不应产生明显跳动。
 - diff 代码块的 `+` / `-` 行应使用参考窗口的绿/红低对比背景，普通代码行用主文本色，fence 弱化。
 - 工具错误态应显示为 `◆ Failed <tool>`，错误内容逐行 `└` 缩进，不能退回旧的 `TOOL_EXEC` 盒子。
-- 本地可用 `5HAGENT_TUI_DEBUG=1` 启动后输入 `/debug tool-running`，验证工具 running 态和完成态。
+- 工具 running 态通过真实 daemon 工具调用验证，避免在 TUI 客户端保留本地 debug 执行路径。
 - 未知 slash command 应显示为 `◆ Command /unknown` 错误，不进入 LLM，不增加 context messages。
 - slash hint 区域保持固定高度，输入 `/` 前后输入条、session/footer、底栏不能跳动。
 - 如果改启动 wiring，再运行 `go build -o walle ./cmd/walle`。
@@ -177,7 +182,7 @@ TUI 问题建议分三层排查：
 | unknown slash | 80x24 | `/unknown` + Enter | 显示 command 错误，state 保持 idle |
 | 长输入 | 80x24 / 50x18 | 长中文不回车 | 输入框至少两行，footer 不被挤掉 |
 | 真实 tool call | 100x30 | 让模型调用 `base.read_file` | `◆ Ran`、结果缩进、最终回答 |
-| tool running | 100x30 | `5HAGENT_TUI_DEBUG=1` + `/debug tool-running` | running spinner、done 后回 idle |
+| tool running | 100x30 | 让 daemon 触发一次真实工具调用 | running spinner、done 后回 idle |
 | tool error | 100x30 | 真实错误工具调用 | `◆ Failed`、错误逐行 `└` |
 | thinking | 100x30 | 含 `reasoning_content` 的 session | `◆ thinking`、正文弱化 |
 | 长历史 | 100x30 | 多轮历史 session | PgUp/PgDown、`scroll xx%` |
@@ -211,4 +216,4 @@ tmux kill-session -t walle-tui-check 2>/dev/null || true
 - `View`：拼接 conversation、输入框上下状态区和底部状态条。
 - `renderConversationEntry`：渲染用户、assistant、thinking、tool hint。
 - `renderSlashHint`：slash 命令浅色提示。
-- `submit` / `runAgent`：把用户输入转成 agent 执行。
+- `submit`：把用户输入转成 daemon control 请求。

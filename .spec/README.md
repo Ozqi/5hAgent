@@ -1,6 +1,6 @@
 # walle Spec 总览
 
-Spec 是给后续开发者和 Agent 使用的代码描述与模块契约。它记录职责、入口、状态边界、协议、不变量、禁止事项和验收点，也可以包含待开发设计；待开发内容必须显式标注状态，并以 `.TODO/` 或 `.doc/` 中的设计事实为依据。
+Spec 是给后续开发者和 Agent 使用的代码描述、架构图与模块契约。它记录职责、入口、状态边界、协议、不变量、禁止事项和验收点，也可以包含待开发设计；待开发内容必须显式标注状态，并以 `.TODO/` 或 `.doc/` 中的设计事实为依据。
 
 本目录追求两件事：
 
@@ -43,6 +43,21 @@ Spec 长度不设固定上限，按模块代码复杂度和设计边界决定；
 | [daemon.md](daemon.md) | `internal/systemd`、daemon control 协议 | AgentProcess 调度和 Unix Socket 控制面。 |
 | [model-config.md](model-config.md) | `internal/llm`、`internal/codex`、`internal/utils`、`internal/logger` | provider/model 配置、prompt、Codex OAuth、模型 adapter 和进程日志。 |
 
+## 架构图
+
+架构图和拓扑事实源集中放在 `diagrams/`：
+
+| 文件 | 用途 |
+| --- | --- |
+| `diagrams/walle-architecture-topology.json` | walle 架构拓扑事实源，供 Mermaid/draw.io 分模块作图。 |
+| `diagrams/walle-overall-runtime.mmd` | walle 总览图 Mermaid。 |
+| `diagrams/walle-overall-runtime.drawio` | walle 总览图 draw.io 文件。 |
+| `diagrams/walle-daemon-control.mmd` | daemon 控制面图。 |
+| `diagrams/walle-interactive-runtime.mmd` | 默认 TUI、daemon、Runtime 交互时序图。 |
+| `diagrams/walle-agent-turn.mmd` | 单轮 ReAct 时序图。 |
+| `diagrams/walle-context-projection.mmd` | 上下文投影图。 |
+| `diagrams/walle-capabilities.mmd` | 能力挂载图。 |
+
 ## 全局边界
 
 - 默认交互入口是可分离 TUI：CLI 拉起或复用固定的 `daemon`，再通过 Unix Socket attach。
@@ -59,9 +74,9 @@ Spec 长度不设固定上限，按模块代码复杂度和设计边界决定；
 | --- | --- |
 | `README.md` | 用户安装、启动、常用命令。 |
 | `doc/` | 对外架构说明和模块导读。 |
-| `.doc/` | 内部设计草案、拓扑事实源、推演记录。 |
+| `.doc/` | 内部调研、决策记录、推演记录。 |
 | `.TODO/` | 待实现设计和计划。 |
-| `.spec/` | 代码描述、待开发设计和模块契约；待开发内容显式标注状态。 |
+| `.spec/` | 代码描述、架构图、拓扑事实源、待开发设计和模块契约；待开发内容显式标注状态。 |
 | `AGENTS.md` / `CLAUDE.md` | Agent 协作规则、项目事实、提交流程。 |
 
 ## 依赖方向

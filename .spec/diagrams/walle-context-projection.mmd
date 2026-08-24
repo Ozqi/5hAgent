@@ -1,0 +1,14 @@
+%% 事实源: .spec/diagrams/walle-architecture-topology.json view_context_projection
+flowchart TD
+  Full["Context messages\n当前模型可见历史"] --> Manager["Manager"]
+  Manager --> Store["Session Store\n~/.walle/sessions/*.jsonl"]
+  Manager --> Meta["ContextMeta\npin / audit"]
+  Tool["context.context"] --> Manager
+  Agent["Agent"] --> Manager
+  Compress["LMCompress / Compress"] --> Manager
+
+  subgraph Planned["planned: LM Projection"]
+    Full --> Projection["GetLMMessages"]
+    Meta --> Projection
+    Projection --> LLM["LLM input"]
+  end

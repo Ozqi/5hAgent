@@ -11,7 +11,7 @@ import (
 func renderMainPane(m *AppModel) string {
 	width := max(20, m.width)
 	snapshot := m.snapshot()
-	header := renderTopStatus(snapshot, m.modelName, m.agentName, width)
+	header := renderTopStatus(snapshot, m.modelName, width)
 	conversationHeight := max(1, m.viewport.Height)
 	conversation := lipgloss.NewStyle().Height(conversationHeight).Render(renderViewportPane(m.viewport, m.viewText))
 	inputBlock := renderInputBar(m.input.View(), width)
@@ -24,19 +24,19 @@ func renderMainPane(m *AppModel) string {
 	if slashHint != "" {
 		blocks = append(blocks, slashHint)
 	}
-	blocks = append(blocks, inputBlock, footer)
+	blocks = append(blocks, inputBlock)
+	if footer != "" {
+		blocks = append(blocks, footer)
+	}
 	content := lipgloss.JoinVertical(lipgloss.Left, blocks...)
 	return mainViewStyle.Width(width).Render(content)
 }
 
-// renderInputBar 使用参考 tmux 对话窗口的上下深灰线样式包住输入行。
+// renderInputBar 渲染单行输入条，避免宽屏下整行边框造成闪烁和视觉压迫。
 // 参数：inputView 是 textarea 当前输出；width 是终端主列宽度。
 func renderInputBar(inputView string, width int) string {
 	width = max(12, width)
-	line := lipgloss.NewStyle().Foreground(colorInputBg).Render(strings.Repeat("▄", width))
-	bottom := lipgloss.NewStyle().Foreground(colorInputBg).Render(strings.Repeat("▀", width))
-	body := inputShellStyle.Width(width).Render(compactInputView(inputView))
-	return strings.Join([]string{line, body, bottom}, "\n")
+	return inputShellStyle.Width(width).Render(compactInputView(inputView))
 }
 
 func compactInputView(inputView string) string {
@@ -53,8 +53,8 @@ func isEmptyInputPromptLine(line string) bool {
 }
 
 // renderTopStatus 渲染输入框上方的高频运行状态。
-// 参数：snapshot 为运行快照；modelName/agentName 来自 AppModel；width 为当前主列宽度。
-func renderTopStatus(snapshot statusSnapshot, modelName string, _ string, width int) string {
+// 参数：snapshot 为远端运行快照；modelName 为 attach 时或 model 事件更新的模型名。
+func renderTopStatus(snapshot statusSnapshot, modelName string, width int) string {
 	meta := snapshot.Runtime
 	if width < 72 {
 		parts := []string{
@@ -66,9 +66,6 @@ func renderTopStatus(snapshot statusSnapshot, modelName string, _ string, width 
 		}
 		if meta.ToolCallsTotal > 0 {
 			parts = append(parts, lipgloss.NewStyle().Foreground(colorYellow).Render(fmt.Sprintf("tools %d", meta.ToolCallsTotal)))
-		}
-		if meta.ContextTokens > 0 {
-			parts = append(parts, lipgloss.NewStyle().Foreground(colorMuted).Render(renderTokenStatus(meta)))
 		}
 		return strings.Join(parts, lipgloss.NewStyle().Faint(true).Render(" · "))
 	}
@@ -86,18 +83,7 @@ func renderTopStatus(snapshot statusSnapshot, modelName string, _ string, width 
 		last := truncateMiddle(fallback(tools.DisplayName(meta.LastToolName), meta.LastToolName), 24)
 		parts = append(parts, lipgloss.NewStyle().Foreground(colorYellow).Render("last "+last))
 	}
-	if meta.ContextTokens > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorMuted).Render(renderTokenStatus(meta)))
-	}
 	return strings.Join(parts, lipgloss.NewStyle().Faint(true).Render(" · "))
-}
-
-func renderTokenStatus(meta runtimeMeta) string {
-	context := fmt.Sprintf("ctx %d tokens", meta.ContextTokens)
-	if meta.ContextWindow > 0 {
-		context = fmt.Sprintf("ctx %d/%d tokens", meta.ContextTokens, meta.ContextWindow)
-	}
-	return fmt.Sprintf("%s · total %d tokens · spent $--", context, meta.SessionTokens)
 }
 
 // renderInputFooter 渲染输入框下方的低频上下文状态。
@@ -119,6 +105,9 @@ func renderInputFooter(snapshot statusSnapshot, _ string, width int) string {
 			} else {
 				parts = append(parts, lipgloss.NewStyle().Foreground(colorBlue).Render("git "+branch))
 			}
+		}
+		if meta.PendingInput {
+			parts = append(parts, lipgloss.NewStyle().Foreground(colorYellow).Render("queued"))
 		}
 		if meta.ScrollPercent < 100 {
 			parts = append(parts, lipgloss.NewStyle().Foreground(colorPurple).Render(fmt.Sprintf("scroll %d%%", meta.ScrollPercent)))
@@ -145,14 +134,8 @@ func renderInputFooter(snapshot statusSnapshot, _ string, width int) string {
 			parts = append(parts, lipgloss.NewStyle().Foreground(colorError).Render("diff "+truncateMiddle(meta.Git.Shortstat, 20)))
 		}
 	}
-	if meta.ContextMessages > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorMuted).Render(fmt.Sprintf("msgs %d", meta.ContextMessages)))
-	}
-	if meta.ContextSummaries > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorMuted).Render(fmt.Sprintf("sum %d", meta.ContextSummaries)))
-	}
-	if len(snapshot.EnabledSkills) > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(colorGreen).Render(skillSummary(snapshot.EnabledSkills)))
+	if meta.PendingInput {
+		parts = append(parts, lipgloss.NewStyle().Foreground(colorYellow).Render("queued"))
 	}
 	if meta.ScrollPercent < 100 {
 		parts = append(parts, lipgloss.NewStyle().Foreground(colorPurple).Render(fmt.Sprintf("scroll %d%%", meta.ScrollPercent)))

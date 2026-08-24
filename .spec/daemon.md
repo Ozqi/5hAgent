@@ -1,79 +1,78 @@
 # Daemon / Systemd Spec
 
-## 职责
+> 由 Claude Fable 5 于 2026-08-24 阅读 `internal/systemd/*.go`、`internal/runtime/daemon_session.go`、`cmd/walle/*.go` 后重构。
+> 覆盖范围：process 调度核心、supervisor socket、`DaemonSession` interactive adapter。
 
-`internal/systemd` 是标准库实现的通用本机 process 调度和控制核心。它管理 `AgentProcess`、事件队列、去重、进程快照和 Unix Socket NDJSON 控制通道。
+## 职责边界
 
-`walle daemon` 固定托管一个 `DaemonSession` 交互 Agent；不再内置 TaskList watcher，也没有 `--poll` 或 `--interactive` 分支。
+`internal/systemd` 是纯标准库的本机调度和 IPC 核心；`walle daemon` 在它旁边托管一个固定 `interactive` Runtime。systemd 不导入 Runtime，不理解 task。
 
-## 覆盖文件
+```mermaid
+flowchart LR
+  CLI[walle CLI] -->|spawn if missing| Daemon[walle daemon]
+  CLI -->|ps / attach| Socket[supervisor.sock]
+  TUI[attached TUI] <--> Socket
+  Daemon --> Runtime[Runtime]
+  Daemon --> Session[DaemonSession\ninteractive]
+  Daemon --> Systemd[AgentSystemd\ngeneric process table]
+  Systemd --> Socket
+  Socket -->|interactive route| Session
+  Systemd -->|RunProcess| Runtime
+  Runtime --> Output[.walle/reports + worklog]
+```
 
-| 文件 | 职责 |
+控制面图见：[`diagrams/walle-daemon-control.mmd`](diagrams/walle-daemon-control.mmd)。
+
+## 关键文件
+
+| 文件 | 责任 |
 | --- | --- |
-| `internal/systemd/systemd.go` | AgentProcess、ProcessSpec、事件、调度循环、通用 FileEventSource。 |
-| `internal/systemd/control.go` | supervisor socket、NDJSON 控制协议、ProcessClient。 |
-| `internal/runtime/daemon_session.go` | interactive process 的 Runtime 适配层。 |
+| `internal/systemd/systemd.go` | `AgentProcess`、`ProcessSpec`、事件队列、去重、调度循环。 |
+| `internal/systemd/control.go` | `supervisor.sock`、NDJSON 协议、`ProcessClient`。 |
+| `internal/runtime/daemon_session.go` | interactive process adapter、事件历史、订阅者、slash command。 |
+| `cmd/walle/main.go` | `daemon` 子命令创建 Runtime、DaemonSession 和 control server。 |
 
-## 数据契约
+## 数据和协议
 
-| 类型 | 关键字段 | 说明 |
-| --- | --- | --- |
-| `ProcessSpec` | `SystemPrompt`、`ExitCondition` | 启动 AgentProcess 的最小规格。 |
-| `Event` | `ID`、`Type`、`Source`、`ProcessID`、`Payload`、`CreatedAt` | 调度器事实输入。 |
-| `ProcessStartPayload` | `ProcessSpec` | `process.start` payload，严格解析。 |
-| `AgentProcess` | `ID`、`Name`、`State`、`Spec`、report/worklog path、cancel | 内存进程记录。 |
-| `ProcessSnapshot` | `ID`、`Name`、状态、workspace、model、session、turn | 跨进程只读快照。 |
-| `ProcessEvent` | `Seq`、`Type`、文本与工具/状态字段 | daemon 推给 attached TUI 的事件。 |
-
-不定义 `SourceTask`、`TaskID` 或 `TaskTitle`。
+- Socket：`~/.walle/run/supervisor.sock`。
+- 短连接：`list`。
+- 长连接：`attach`，之后可发送 `input`、`stop`、`detach`。
+- Attach 握手固定：`attached` -> history `event` -> `ready` -> live `event`。
+- `ProcessSpec` 只有 `SystemPrompt`、`ExitCondition`。
+- `ProcessSnapshot` 用 `Name` 展示；不定义 `SourceTask`、`TaskID`、`TaskTitle`。
 
 ## 调度流程
 
 ```text
-EventSource.Next -> AgentSystemd.Emit -> Run.nextEvent
-    -> dispatch(process.start) -> goroutine RunProcess
-    -> ProcessRunner.RunProcess
-    -> Emit(process.exited/process.failed)
-    -> applyEvent 更新进程终态
+EventSource.Next
+  -> AgentSystemd.Emit
+  -> Run.nextEvent
+  -> dispatch(process.start)
+  -> goroutine ProcessRunner.RunProcess
+  -> Emit(process.exited/process.failed)
+  -> applyEvent 更新状态
 ```
 
-- `process.start` 只负责启动进程，不阻塞后续事件消费。
-- `process.exited/process.failed` 按 `ProcessID` 更新进程。
-- 非空事件 ID 只入队一次。
-- `decodeStrict` 拒绝 payload 未声明字段。
-
-## 控制通道
-
-- Socket：`~/.walle/run/supervisor.sock`。
-- 协议：单连接 NDJSON。
-- 短连接：`list`。
-- 长连接：`attach` 后可发送 `input`、`stop`、`detach`。
-- Attach 握手：`attached` -> history `event` -> `ready` -> live `event`。
+`process.start` payload 使用 `ProcessStartPayload` 严格解析；非空事件 ID 会进入 seen 表去重。
 
 ## Interactive session
 
-- `Snapshot` 返回固定 ID/Name `interactive`、状态、workspace、model、session、turn。
-- `Attach` 原子复制历史并注册订阅者。
-- 普通输入要求 session 空闲，异步调用 `Agent.RunStream`。
-- `/model`、`/provider` 与其他 slash command 由 `DaemonSession` 处理。
-- socket 断开只解除订阅；`stop` 才取消当前 run。
+- `Snapshot` 返回固定 ID/Name `interactive`，并带上 workspace、model、session、turn、busy。
+- `Attach` 在锁内复制历史并注册订阅者，避免 replay/live event 缺口。
+- 普通输入要求 idle；run 期间临时接管 Agent tool event sink。
+- `/model`、`/provider`、`/skill`、`/mcp`、`/compress`、`/session` 在 daemon session 内分派。
+- provider/model picker、OAuth 登录、模型列表查询和 `Runtime.SwitchModel` 都由 daemon session 触发；TUI 只收发控制帧和事件。
+- socket 断开只是解除订阅；只有 `stop` 取消当前 run。
 
-## 状态边界
+## 不要做
 
-- 进程表、事件队列和 seen 去重表在 `AgentSystemd` 内存中。
-- interactive 历史在 `DaemonSession` 内存中。
-- 通用 process report/worklog 路径可保存在 `AgentProcess`，但不带 task 状态语义。
-- control server 固定使用 `supervisor.sock`。
+- 不在 `internal/systemd` 引入 Runtime、agentctx、skill、task 等业务包。
+- 不恢复 `.walle/task.md` watcher、`task.created` 或源任务状态回写。
+- 不恢复多个 `daemon-*.sock` 的发现式扫描。
+- 不把 `detach` 当成 `stop`。
 
-## 不变量
+## 验收
 
-- `internal/systemd` 只依赖标准库和本包类型。
-- `ProcessSpec` 只放启动 prompt 和退出条件。
-- `ProcessSnapshot` 用 `Name` 展示进程，不映射任务标题。
-- `detach` 是离开观察通道，`stop` 是取消执行。
-
-## 禁止
-
-- 在 `internal/systemd` 引入 `task` 或 Runtime 业务包。
-- 恢复 `.walle/task.md` watcher、`task.created` 或源任务状态回写。
-- 恢复多个 `daemon-*.sock` 的发现式扫描。
+- 改 control 协议：检查 list、attach、input、stop、detach。
+- 改 daemon session：检查 replay 顺序、并发订阅、busy 和 cancel。
+- 改通用 process：检查 `process.exited/process.failed` 和 report/worklog 路径。

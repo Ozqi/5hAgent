@@ -12,7 +12,7 @@
 | 文件 | 作用 |
 | --- | --- |
 | [app.go](../../internal/tui/app.go) | `AppModel`、viewport、事件渲染 |
-| [commands.go](../../internal/tui/commands.go) | 本地与 attached 输入处理 |
+| [commands.go](../../internal/tui/commands.go) | attached 输入处理，本地只截获 `/detach` 和 `/stop` |
 | [remote.go](../../internal/tui/remote.go) | daemon attach 客户端入口 |
 | [markdown.go](../../internal/tui/markdown.go) | Markdown 终端渲染 |
 | [ui.go](../../internal/cli/ui.go) | 非 TUI 错误输出 |
@@ -32,21 +32,28 @@ bottom spacer        # 空白占位，不显示 busy spinner
 
 | 命令 | 行为 |
 | --- | --- |
-| `/provider [name]` | 选择 Provider 或完成认证 |
-| `/model [provider/model]` | 查看或切换当前模型 |
-| `/skill list|get|reload` | 调 `commands.HandleSkill` |
-| `/compress` | 调 `commands.HandleCompress` |
-| `/mcp` | 管理 MCP 配置 |
-| `/session` | 查看当前 session；本地嵌入模式还可 new/list/切换 |
-| `/stop` | 取消当前 Agent run |
+| `/provider [name]` | 发给 daemon session；由 daemon 选择 Provider 或完成认证 |
+| `/model [provider/model]` | 发给 daemon session；由 Runtime 查看或切换当前模型 |
+| `/skill list|get|reload` | 发给 daemon session；由 daemon 调 `commands.HandleSkill` |
+| `/compress` | 发给 daemon session；由 daemon 调 `commands.HandleCompress` |
+| `/mcp` | 发给 daemon session；由 daemon 管理 MCP 配置 |
+| `/session` | 发给 daemon session 查看当前 session |
+| `/stop` | 通过 socket 取消当前 Agent run |
 | `/detach` | 退出 attached TUI，不停止 Agent |
 
-任务管理命令不固定进 Runtime；需要时由 Skill、MCP 或外置动态工具提供。
+TUI 本地只直接处理 `/detach` 和 `/stop`；其它 slash command 都作为输入转发给 daemon session。任务管理命令不固定进 Runtime；需要时由 Skill、MCP 或外置动态工具提供。
+
+## 快捷键
+
+- `Ctrl+C`：清空当前输入框；短时间内第二次 `Ctrl+C` 退出 attached TUI。
+- `Ctrl+D`：退出 attached TUI，不停止 daemon Agent。
+- `Ctrl+U`：清空当前输入框，不触发二次退出确认。
+- Agent 忙碌时按 Enter 会把当前输入排队；本轮输出结束后 TUI 自动提交下一轮。当前不做 ReAct 循环中途插入，避免破坏 tool call/result 消息顺序。
 
 ## 运行状态
 
 - `busy/currentStatus/spinnerFrame` 驱动顶部状态行。
-- `runCancel` 保存当前 run 的 cancel func；`/stop` 调用它。
+- TUI 的 `/stop` 只调用远端 `stop` 控制帧；真正的 run cancel func 保存在 daemon session。
 - 迟到 token 在 `busy=false` 后被忽略。
 - footer 显示路径但不显示 `dir` 字样。
 - git 主仓库显示 `git <branch>`；linked worktree 显示 `worktree <branch>`。
@@ -64,7 +71,7 @@ ToolEvent(error)  -> 原地更新为 error
 
 ## 历史恢复
 
-`loadHistoryEntries` 会把 assistant `tool_calls` 与后续 `schema.Tool` 结果合并成压缩工具提示，避免 `walle -c` 展开完整工具输出。
+attached TUI 不直接读取 session store；重连后的历史由 daemon attach 握手回放为 `ProcessEvent`，TUI 只按事件渲染。
 
 ## 验证
 

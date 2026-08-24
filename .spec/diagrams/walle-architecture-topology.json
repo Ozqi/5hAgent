@@ -1,0 +1,51 @@
+{
+  "name": "walle architecture topology",
+  "version": "2026-08-24",
+  "generated_by": "Claude Fable 5",
+  "scope": "Facts used by .spec Mermaid diagrams. Keep this small; detailed contracts live in .spec/*.md.",
+  "nodes": {
+    "cli": "cmd/walle: root command, daemon command, ps, attach, default TUI start",
+    "tui": "internal/tui: Bubble Tea render/input client",
+    "socket": "~/.walle/run/supervisor.sock: NDJSON list/attach/input/stop/detach",
+    "daemon": "walle daemon: long-running host for one interactive Runtime",
+    "daemon_session": "internal/runtime.DaemonSession: interactive adapter and event history",
+    "systemd": "internal/systemd.AgentSystemd: generic process table and scheduler",
+    "runtime": "internal/runtime: composition root",
+    "agent": "internal/agent: ReAct loop and tool execution",
+    "context": "internal/context.Manager: messages, session, compression metadata",
+    "llm": "internal/llm + internal/codex: provider/model adapters",
+    "tools": "internal/tools.Registry: base, skill, context and optional MCP tools",
+    "session_store": "~/.walle/sessions/*.jsonl",
+    "process_output": "<workspace>/.walle/reports and .walle/agents logs"
+  },
+  "implemented_edges": [
+    ["cli", "daemon", "spawn if supervisor socket is missing"],
+    ["cli", "socket", "ps / attach"],
+    ["cli", "tui", "launch attached UI"],
+    ["tui", "socket", "input / stop / detach / events"],
+    ["daemon", "runtime", "create once"],
+    ["daemon", "daemon_session", "create interactive process"],
+    ["daemon", "systemd", "create generic scheduler"],
+    ["systemd", "socket", "serve control protocol"],
+    ["socket", "daemon_session", "route interactive"],
+    ["daemon_session", "runtime", "RunStream and slash commands"],
+    ["systemd", "runtime", "ProcessRunner.RunProcess"],
+    ["runtime", "agent", "own"],
+    ["runtime", "context", "own"],
+    ["runtime", "llm", "create model"],
+    ["runtime", "tools", "register and bind"],
+    ["context", "session_store", "append / replace messages"],
+    ["runtime", "process_output", "write generic process reports and worklogs"]
+  ],
+  "optional_or_planned": [
+    "mcp.<server>.<tool> only appears after explicit MCP connection and RegisterMCPTools",
+    "terminal.<name>.<action> dynamic tools are planned in .TODO/10_动态终端工具.md",
+    "LM Projection mask/unmask/unpin is planned in .TODO/11_上下文掩盖与LLM投影.md"
+  ],
+  "forbidden": [
+    "no fixed TaskList, /task, task watcher, or .walle/task.md source of truth",
+    "no daemon --poll or daemon --interactive modes",
+    "internal/systemd must not import Runtime or task/business packages",
+    "TUI must not hold Runtime or Agent pointers in attached mode"
+  ]
+}

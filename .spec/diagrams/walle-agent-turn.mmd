@@ -1,0 +1,26 @@
+%% 事实源: .spec/diagrams/walle-architecture-topology.json view_agent_turn
+sequenceDiagram
+  participant Client
+  participant A as Agent
+  participant C as Context Manager
+  participant M as bound LLM
+  participant W as tool worker
+  participant T as tools
+  participant E as event sink
+
+  Client->>A: RunStream(input)
+  A->>C: ensure system + skills, add user
+  A->>C: GetMessages
+  A->>M: Stream or Generate
+  M-->>A: text / reasoning / tool call chunks
+  alt has tool calls
+    A->>C: add assistant tool-call message
+    A->>W: enqueue calls
+    W->>T: InvokableRun
+    W-->>E: call / result / error
+    W->>C: add tool result messages
+    A->>M: next ReAct turn
+  else final text
+    A->>C: add assistant final message
+    A-->>Client: final answer
+  end
