@@ -4,13 +4,13 @@
 
 ## 项目定位
 
-`walle` 是一个轻量级 Go + Eino Agent runtime。默认 CLI 自动启动或复用 daemon，再把 TUI attach 到由 daemon 托管的交互 Agent。
+`walle` 是一个轻量级 Go + Eino Agent runtime。默认 CLI 自动启动或复用用户级 daemon，再为当前 workspace 打开新的交互 Runtime 并把 TUI attach 上去；只有 `-c/--continue` 才续接最近交互 Runtime 或 session。
 
 交互边界：
 
 - TUI：`internal/tui` 是独立 Bubble Tea 客户端，通过 Unix Socket attach daemon Agent。
-- Daemon：`walle daemon` 固定托管一个可 attach 的交互 Agent；没有 `--poll` 或 `--interactive` 模式。
-- Process：`ps`、`attach`、`stop` 和 `internal/systemd` 的通用 process 能力保留；Runtime 不内置 TaskList、task watcher、task report/status。
+- Daemon：`walle daemon` 是用户级 supervisor，按 `open` 请求托管多个 workspace interactive Runtime；没有 `--poll` 或 `--interactive` 模式。
+- Process：`ps`、`attach`、`stop` 和 `internal/agentd` 的通用 process 能力保留；Runtime 不内置 TaskList、task watcher、task report/status。
 - Session：对话消息默认持久化到 `~/.walle/sessions/*.jsonl`。
 
 
@@ -21,7 +21,7 @@
 - 主入口：`cmd/walle/main.go`
 - Bubble Tea TUI：`internal/tui/*.go`
 - CLI 基础输出：`internal/cli/ui.go`
-- daemon IPC：`internal/systemd/control.go`
+- daemon IPC：`internal/agentd/control.go`
 - daemon 交互会话：`internal/runtime/daemon_session.go`
 - 共享运行时：`internal/runtime/runtime.go`
 - ReAct 主循环：`internal/agent/agent.go`
@@ -52,7 +52,7 @@
 
 - LLM 当前模型只用 `LLM_MODEL=provider/model` 选择；`provider` 对应 `LLM_<PROVIDER>_*` 配置块，`model` 原样发送给上游 API。
 - `LLM_<PROVIDER>_FORMAT=claude|openai` 表示接口协议，不是 provider 名；API 地址、密钥、token、stream 都绑定在对应 provider 块。
-- 本地 Ollama 作为 provider `ollama` 配置，通过 `LLM_MODEL=ollama/<model>` + `LLM_OLLAMA_FORMAT=openai` + `LLM_OLLAMA_BASE_URL=http://localhost:11434/v1` 接入；默认安装配置使用本机已验证的 `ollama/ornith:9b`。
+- 本地 OpenAI-compatible 服务可作为普通 provider 配置，例如 `LLM_MODEL=local/<model>` + `LLM_LOCAL_FORMAT=openai` + `LLM_LOCAL_BASE_URL=<...>/v1`；默认安装配置只提供模板，不预设具体模型。
 - CLI 可用 `--model provider/model` 临时切换完整模型引用；`--llm-format`、`--llm-model` 只临时覆盖当前 provider 的接口格式或模型名。
 - Agent 配置包括 `AGENT_NAME`、`AGENT_MAX_TOTAL_TOKENS`、`AGENT_REPEAT_TOOL_LIMIT`、`AGENT_CONTEXT_AUTO_COMPRESS`。
 - Prompts 从 `~/.walle/prompt/*.md` 加载；主 prompt 是 `main.md`，模型专用前缀是 `prefix.<provider>.<model-slug>.md`。
@@ -118,17 +118,17 @@ LLM 可见工具当前包括：
 
 `context.context` 支持 `inspect/pin/audit/compress`。它依赖 `Agent.RunStream()` 通过 `agentctx.WithToolRuntime(ctx, manager, messageCtx)` 注入当前上下文；脱离当前 Agent 上下文直接调用会失败。
 
-## Agent Systemd 当前边界
+## Agentd 当前边界
 
-- `internal/systemd` 是纯调度核心，只依赖标准库；不要在该包重新引入 `agentctx`、`skill`、`task` 等执行层或业务包。
+- `internal/agentd` 是纯调度核心，只依赖标准库；不要在该包重新引入 `agentctx`、`skill`、`task` 等执行层或业务包。
 - `ProcessSpec` 只包含 `SystemPrompt` 和 `ExitCondition`；Project、WorkDir、SessionID、工具白名单等执行期细节仍归 runtime 或工具层处理。
-- `AgentSystemd.Run(ctx, runner)` 保留通用事件调度循环；当前 daemon 入口只托管 interactive session，不内置文件事件源。
+- `Agentd.Run(ctx, runner)` 保留通用事件调度循环；当前 daemon 入口只托管 interactive session，不内置文件事件源。
 - 启动事件固定为 `process.start`，payload 为 `ProcessStartPayload{process_spec}`；严格解析并拒绝未知字段。
 - `AgentProcess` 不再保存 `SourceTask`，`ProcessSnapshot` 用 `Name` 作为展示字段。
 - `ProcessRunner` 当前签名是 `RunProcess(ctx, proc)`；Runtime 只负责执行通用 AgentProcess。
 - 非空事件 ID 会进入 `seen` 去重表；`RunProcess` 结束后投递 `process.exited/process.failed`。
 - Session 持久化归 `runtime/context`；process report/status 不属于当前 Runtime 接口。
-- `cmd/walle/main.go` 的 `daemon` 子命令固定创建 `DaemonSession` 和 control server。
+- `cmd/walle/main.go` 的 `daemon` 子命令只启动 control server，并按 `open` 请求创建 `DaemonSession`。
 
 ## 上下文和压缩
 
@@ -149,7 +149,7 @@ LLM 可见工具当前包括：
 | `learn/stage-3-skill-prompt` | Stage 3 学习快照：Skill 系统、prompt 管理、Skill 注入机制。 |
 | `learn/stage-4-mcp-session-tui` | Stage 4 学习快照：MCP、session 持久化、TUI 和日志体验。 |
 | `learn/stage-5-current` | Stage 5 学习快照：当前公开 baseline，对齐 `master` / `origin/master`。 |
-| Stage 6 设计 | Agent Systemd 顶层调度设计：启动只传 system prompt / exit condition，context 默认视作进程内存；先记录在 `doc/runtime/agent-systemd.md`，尚未对应稳定学习分支。 |
+| Stage 6 设计 | Agentd 顶层调度设计：启动只传 system prompt / exit condition，context 默认视作进程内存；先记录在 `doc/runtime/agent-agentd.md`，尚未对应稳定学习分支。 |
 | `master` | 公开稳定 baseline；当前指向 `learn/stage-5-current`。 |
 | `develop` | 当前开发主线；在 `master` 之后继续开发 runtime、Ollama baseline、context 工具和文档。 |
 

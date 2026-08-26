@@ -108,7 +108,7 @@ func (m *AppModel) refreshView() {
 		parts = append(parts, m.renderConversationEntryCached(i, contentWidth))
 	}
 	if len(parts) == 0 {
-		parts = append(parts, renderEmptyState(contentWidth, m.viewport.Height))
+		parts = append(parts, m.renderEmptyState(contentWidth, m.viewport.Height))
 	}
 	m.viewText = strings.Join(parts, "\n\n")
 	m.viewport.SetContent(m.viewText)
@@ -118,45 +118,106 @@ func (m *AppModel) refreshView() {
 	}
 }
 
-func renderEmptyState(width int, height int) string {
-	padBottom := func(content string) string {
-		return content + strings.Repeat("\n", max(0, height-renderedLineCount(content)))
+// renderEmptyState 渲染首次进入 TUI 时的欢迎页。
+func (m *AppModel) renderEmptyState(width int, height int) string {
+	padFrame := func(content string) string {
+		contentHeight := renderedLineCount(content)
+		top := 0
+		if height > contentHeight {
+			top = max(0, (height-contentHeight)/3)
+		}
+		return strings.Repeat("\n", top) + content + strings.Repeat("\n", max(0, height-top-contentHeight))
 	}
-	if width >= 40 && height >= 8 {
+
+	snapshot := m.snapshot()
+	meta := snapshot.Runtime
+	model := truncateMiddle(fallback(m.modelName, "-"), 34)
+	workdir := truncateMiddle(fallback(meta.Workdir, "-"), 34)
+	session := truncateMiddle(fallback(meta.SessionID, "-"), 22)
+	gitLine := "-"
+	if meta.Git.Repo {
+		branch := fallback(meta.Git.Branch, "detached")
+		if meta.Git.Dirty {
+			branch += "*"
+		}
+		gitPrefix := "git"
+		if meta.Git.Worktree {
+			gitPrefix = "worktree"
+		}
+		gitLine = gitPrefix + " " + branch
+		if meta.Git.Shortstat != "" {
+			gitLine += " · " + meta.Git.Shortstat
+		}
+	}
+
+	stateLine := renderState(fallback(meta.State, "idle"), meta.Busy)
+	statusRows := []string{
+		statusRow("daemon", lipgloss.NewStyle().Foreground(colorGreen).Render("connected")),
+		statusRow("state", stateLine),
+		statusRow("model", lipgloss.NewStyle().Foreground(colorCommand).Render(model)),
+		statusRow("workspace", lipgloss.NewStyle().Foreground(colorWhite).Render(workdir)),
+		statusRow("session", lipgloss.NewStyle().Foreground(colorPurple).Render(session)),
+		statusRow("repo", lipgloss.NewStyle().Foreground(colorBlue).Render(truncateMiddle(gitLine, 34))),
+	}
+
+	if width >= 70 && height >= 14 {
+		cardWidth := min(78, width-8)
+		badge := lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("CONNECTED")
+		title := lipgloss.NewStyle().Foreground(colorYellow).Bold(true).Render("walle") + lipgloss.NewStyle().Foreground(colorMuted).Render("  daemon attached")
 		info := lipgloss.JoinVertical(lipgloss.Left,
-			lipgloss.NewStyle().Bold(true).Foreground(colorYellow).Render("walle"),
-			lipgloss.NewStyle().Foreground(colorMuted).Render("Go Agent Runtime"),
-			lipgloss.NewStyle().Foreground(colorMuted).Render("Inspect · Patch · Run"),
-			lipgloss.NewStyle().Foreground(colorMuted).Render("type / for commands"),
+			badge,
+			title,
+			"",
+			strings.Join(statusRows, "\n"),
 		)
-		return padBottom(lipgloss.NewStyle().PaddingLeft(1).Render(lipgloss.JoinHorizontal(
-			lipgloss.Top,
+		body := lipgloss.JoinHorizontal(lipgloss.Top,
 			renderWallePixelIcon(),
 			"   ",
 			info,
-		)))
+		)
+		card := lipgloss.NewStyle().
+			Width(cardWidth).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorGray).
+			Padding(1, 2).
+			Render(body)
+		return padFrame(lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(card))
 	}
-	if width >= 16 && height >= 8 {
-		return padBottom(lipgloss.NewStyle().
-			Width(width).
-			Align(lipgloss.Center).
-			Render(renderWallePixelIcon()))
+
+	if width >= 44 && height >= 10 {
+		info := lipgloss.JoinVertical(lipgloss.Left,
+			lipgloss.NewStyle().Bold(true).Foreground(colorYellow).Render("walle · daemon connected"),
+			statusRow("model", lipgloss.NewStyle().Foreground(colorCommand).Render(truncateMiddle(model, 26))),
+			statusRow("workspace", lipgloss.NewStyle().Foreground(colorWhite).Render(truncateMiddle(workdir, 26))),
+		)
+		content := lipgloss.JoinVertical(lipgloss.Center,
+			renderWallePixelIcon(),
+			"",
+			info,
+		)
+		return padFrame(lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(content))
 	}
+
 	if width >= 12 && height >= 4 {
-		return padBottom(lipgloss.NewStyle().
-			Width(width).
-			Align(lipgloss.Center).
-			Render(renderWallePixelIconCompact()))
+		content := lipgloss.JoinVertical(lipgloss.Center,
+			renderWallePixelIconCompact(),
+			lipgloss.NewStyle().Foreground(colorGreen).Render("connected"),
+		)
+		return padFrame(lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(content))
 	}
+
 	lines := []string{
-		lipgloss.NewStyle().Foreground(colorYellow).Render("walle 已就绪"),
-		lipgloss.NewStyle().Foreground(colorMuted).Render("type a prompt to start"),
-		lipgloss.NewStyle().Foreground(colorMuted).Render("type / for commands"),
+		lipgloss.NewStyle().Foreground(colorYellow).Render("walle"),
+		lipgloss.NewStyle().Foreground(colorGreen).Render("ok"),
 	}
 	for i, line := range lines {
-		lines[i] = truncateMiddle(line, max(20, width-2))
+		lines[i] = truncateMiddle(line, max(1, width))
 	}
-	return padBottom(strings.Join(lines, "\n"))
+	return padFrame(strings.Join(lines, "\n"))
+}
+
+func statusRow(label string, value string) string {
+	return lipgloss.NewStyle().Foreground(colorMuted).Render(fmt.Sprintf("%-9s", label)) + value
 }
 
 func renderWallePixelIcon() string {
@@ -246,21 +307,6 @@ func (m *AppModel) renderSlashHint(width int) string {
 	if !strings.HasPrefix(text, "/") {
 		return ""
 	}
-	if isModelHintInput(raw, text) {
-		matches := m.modelHintMatches(modelArgPrefix(raw))
-		if len(matches) == 0 {
-			return ""
-		}
-		limit := min(len(matches), maxHintRows)
-		lines := make([]string, 0, limit+1)
-		for _, option := range matches[:limit] {
-			lines = append(lines, wrapVisibleText("  "+option, max(8, width-2)))
-		}
-		if len(matches) > limit {
-			lines = append(lines, fmt.Sprintf("  ... %d more", len(matches)-limit))
-		}
-		return slashHintStyle.Width(width).Render(strings.Join(lines, "\n"))
-	}
 	matches := slashHintMatches(text)
 	if len(matches) == 0 {
 		return slashHintStyle.Width(width).Render("unknown slash command")
@@ -290,39 +336,6 @@ func slashHintMatches(input string) []slashCommandHint {
 		if strings.HasPrefix(hint.Name, prefix) {
 			matches = append(matches, hint)
 		}
-	}
-	return matches
-}
-
-func isModelHintInput(raw string, trimmed string) bool {
-	return trimmed == "/model" || strings.HasPrefix(trimmed, "/model ")
-}
-
-func modelArgPrefix(input string) string {
-	fields := strings.Fields(input)
-	if len(fields) < 2 {
-		return ""
-	}
-	return fields[1]
-}
-
-func (m *AppModel) modelHintMatches(prefix string) []string {
-	seen := map[string]bool{}
-	matches := make([]string, 0, len(modelHints)+1)
-	add := func(ref string) {
-		ref = strings.TrimSpace(ref)
-		if ref == "" || !strings.Contains(ref, "/") || seen[ref] {
-			return
-		}
-		if prefix != "" && !strings.HasPrefix(ref, prefix) {
-			return
-		}
-		seen[ref] = true
-		matches = append(matches, ref)
-	}
-	add(m.modelName)
-	for _, hint := range modelHints {
-		add(hint)
 	}
 	return matches
 }

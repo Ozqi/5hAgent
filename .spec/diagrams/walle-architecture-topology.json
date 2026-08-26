@@ -1,16 +1,17 @@
 {
   "name": "walle architecture topology",
-  "version": "2026-08-24",
+  "version": "2026-08-26",
   "generated_by": "Claude Fable 5",
   "scope": "Facts used by .spec Mermaid diagrams. Keep this small; detailed contracts live in .spec/*.md.",
   "nodes": {
     "cli": "cmd/walle: root command, daemon command, ps, attach, default TUI start",
     "tui": "internal/tui: Bubble Tea render/input client",
-    "socket": "~/.walle/run/supervisor.sock: NDJSON list/attach/input/stop/detach",
-    "daemon": "walle daemon: long-running host for one interactive Runtime",
-    "daemon_session": "internal/runtime.DaemonSession: interactive adapter and event history",
-    "systemd": "internal/systemd.AgentSystemd: generic process table and scheduler",
-    "runtime": "internal/runtime: composition root",
+    "socket": "~/.walle/run/supervisor.sock: NDJSON open/list/attach/input/stop/detach",
+    "daemon": "walle daemon: user-level supervisor for interactive Runtime processes",
+    "interactive_registry": "daemon-owned registry of workspace interactive Runtime processes",
+    "daemon_session": "internal/runtime.DaemonSession: adapter for one interactive Runtime and its event history",
+    "agentd": "internal/agentd.Agentd: generic process table and scheduler",
+    "runtime": "internal/runtime: composition root; one instance per interactive process or generic process runner",
     "agent": "internal/agent: ReAct loop and tool execution",
     "context": "internal/context.Manager: messages, session, compression metadata",
     "llm": "internal/llm + internal/codex: provider/model adapters",
@@ -20,22 +21,28 @@
   },
   "implemented_edges": [
     ["cli", "daemon", "spawn if supervisor socket is missing"],
-    ["cli", "socket", "ps / attach"],
+    ["cli", "socket", "open / ps / attach"],
     ["cli", "tui", "launch attached UI"],
     ["tui", "socket", "input / stop / detach / events"],
-    ["daemon", "runtime", "create once"],
-    ["daemon", "daemon_session", "create interactive process"],
-    ["daemon", "systemd", "create generic scheduler"],
-    ["systemd", "socket", "serve control protocol"],
-    ["socket", "daemon_session", "route interactive"],
+    ["daemon", "interactive_registry", "create or attach workspace interactive processes"],
+    ["interactive_registry", "daemon_session", "one session adapter per Runtime"],
     ["daemon_session", "runtime", "RunStream and slash commands"],
-    ["systemd", "runtime", "ProcessRunner.RunProcess"],
+    ["daemon", "agentd", "create generic scheduler"],
+    ["agentd", "socket", "serve control protocol"],
+    ["socket", "interactive_registry", "route interactive by process id"],
+    ["agentd", "runtime", "ProcessRunner.RunProcess"],
     ["runtime", "agent", "own"],
     ["runtime", "context", "own"],
     ["runtime", "llm", "create model"],
     ["runtime", "tools", "register and bind"],
     ["context", "session_store", "append / replace messages"],
     ["runtime", "process_output", "write generic process reports and worklogs"]
+  ],
+  "entry_invariants": [
+    "default walle creates a new interactive Runtime for the current workspace",
+    "walle -c / --continue is the only default-entry mode that may continue the latest workspace Runtime or latest session",
+    "walle attach <id> attaches an existing process and never creates a Runtime",
+    "daemon is a supervisor and must not be modeled as one fixed interactive Runtime"
   ],
   "optional_or_planned": [
     "mcp.<server>.<tool> only appears after explicit MCP connection and RegisterMCPTools",
@@ -45,7 +52,8 @@
   "forbidden": [
     "no fixed TaskList, /task, task watcher, or .walle/task.md source of truth",
     "no daemon --poll or daemon --interactive modes",
-    "internal/systemd must not import Runtime or task/business packages",
-    "TUI must not hold Runtime or Agent pointers in attached mode"
+    "internal/agentd must not import Runtime or task/business packages",
+    "TUI must not hold Runtime or Agent pointers in attached mode",
+    "default walle must not silently attach the last interactive Runtime"
   ]
 }

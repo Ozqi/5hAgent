@@ -1,6 +1,6 @@
 # Runtime 与 daemon 边界
 
-一句话：`runtime` 是 Agent 工作实例；`walle daemon` 固定托管一个可 attach 的交互实例，`internal/systemd` 保留通用 process 能力。
+一句话：`runtime` 是 Agent 工作实例；`walle daemon` 固定托管一个可 attach 的交互实例，`internal/agentd` 保留通用 process 能力。
 
 ## 一图流
 
@@ -12,7 +12,7 @@ graph LR
     daemon --> session["DaemonSession"]
     daemon --> runtime["runtime instance"]
     sock --> session
-    systemd["AgentSystemd"] -->|generic ProcessRunner| runtime
+    agentd["Agentd"] -->|generic ProcessRunner| runtime
     runtime --> agent["internal/agent"]
 ```
 
@@ -22,7 +22,7 @@ graph LR
 | --- | --- |
 | `runtime` | 装配 Agent/Context/LLM/Tools，执行交互或通用 AgentProcess |
 | `walle daemon` | 创建 Runtime、DaemonSession 和 control server |
-| `internal/systemd` | 通用 process.start 调度、进程表和 socket 控制 |
+| `internal/agentd` | 通用 process.start 调度、进程表和 socket 控制 |
 | `CLI/TUI` | 启动或选择目标、输入、展示事件 |
 
 当前控制协议是 `list / attach / input / stop`，另有客户端断开的内部 `detach`。

@@ -1,12 +1,15 @@
 %% 事实源: .spec/diagrams/walle-architecture-topology.json view_daemon_control
 flowchart LR
   CLI["walle CLI"] -->|spawn if missing| Daemon["walle daemon"]
-  CLI -->|ps / attach| Socket["supervisor.sock"]
+  CLI -->|open / ps / attach| Socket["supervisor.sock"]
   TUI["attached TUI"] <--> Socket
-  Daemon --> Runtime["Runtime"]
-  Daemon --> Session["DaemonSession\ninteractive"]
-  Daemon --> Systemd["AgentSystemd\ngeneric process table"]
-  Systemd --> Socket
-  Socket -->|interactive route| Session
-  Systemd -->|RunProcess| Runtime
-  Runtime --> Output[".walle/reports + worklog"]
+  Daemon --> Registry["interactive runtime registry"]
+  Registry --> SessionA["DaemonSession\nworkspace A"]
+  Registry --> SessionB["DaemonSession\nworkspace B"]
+  SessionA --> RuntimeA["Runtime A"]
+  SessionB --> RuntimeB["Runtime B"]
+  Daemon --> Agentd["Agentd\ngeneric process table"]
+  Agentd --> Socket
+  Socket -->|route by process id| Registry
+  Agentd -->|RunProcess| RuntimeProc["Runtime process runner"]
+  RuntimeProc --> Output[".walle/reports + worklog"]

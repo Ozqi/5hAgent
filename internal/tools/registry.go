@@ -107,8 +107,7 @@ func (r *Registry) ReplaceContextTool(llm model.ToolCallingChatModel, promptDir 
 	defer r.mu.Unlock()
 	filtered := r.tools[:0]
 	for _, t := range r.tools {
-		info, err := t.Info(context.Background())
-		if err == nil && info.Name == "context.context" {
+		if _, ok := t.(*ContextTool); ok {
 			continue
 		}
 		filtered = append(filtered, t)

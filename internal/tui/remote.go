@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Ozqi/walle/internal/systemd"
+	"github.com/Ozqi/walle/internal/agentd"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 // RemoteClient 是任意 attached TUI 所需的最小 daemon 客户端契约。
 type RemoteClient interface {
-	Snapshot() systemd.ProcessSnapshot
-	Events() <-chan systemd.ProcessEvent
+	Snapshot() agentd.ProcessSnapshot
+	Events() <-chan agentd.ProcessEvent
 	Submit(string) error
 	Stop() error
 	Close() error
@@ -26,7 +26,7 @@ func LaunchAttachedTUI(ctx context.Context, client RemoteClient) error {
 	model.remoteTurn = snapshot.Turn
 	model.remoteSubmit = client.Submit
 	model.remoteStop = client.Stop
-	model.busy = snapshot.State == systemd.ProcessRunning
+	model.busy = snapshot.State == agentd.ProcessRunning
 	if model.busy {
 		model.currentStatus = "attached"
 	}

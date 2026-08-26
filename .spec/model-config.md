@@ -50,7 +50,7 @@ provider 字段优先级：CLI `--llm-format`、`--llm-model` > 进程环境变�
 - `LLM_<PROVIDER>_FORMAT` 是协议格式：`claude`、`openai`、`codex`。
 - `LLM_<PROVIDER>_BASE_URL/API_KEY/MAX_TOKENS/STREAM` 绑定当前 provider。
 - `openai/` + `default_auth=chatgpt` 时走 Codex；`codex/` 默认走 Codex。
-- 安装默认配置是 `LLM_MODEL=ollama/ornith:9b` + Ollama OpenAI-compatible `/v1`。
+- 安装默认配置只提供模板；用户必须设置 `LLM_MODEL=<provider>/<model>` 和对应 `LLM_<PROVIDER>_*` 配置块。
 
 ## Prompt 规则
 

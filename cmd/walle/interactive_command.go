@@ -6,15 +6,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
-	"github.com/Ozqi/walle/internal/systemd"
+	"github.com/Ozqi/walle/internal/agentd"
 	"github.com/Ozqi/walle/internal/utils"
 )
 
 // startInteractiveClient 启动脱离当前终端的 daemon，并等待其 Unix Socket 可接入。
-func startInteractiveClient(ctx context.Context) (*systemd.ProcessClient, error) {
+func startInteractiveClient(ctx context.Context) (*agentd.ProcessClient, error) {
 	// 1. 解析可执行文件和运行目录，优先复用已就绪的交互 daemon。
 	executable, err := os.Executable()
 	if err != nil {
@@ -28,8 +29,14 @@ func startInteractiveClient(ctx context.Context) (*systemd.ProcessClient, error)
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create daemon run dir: %w", err)
 	}
-	if client, err := systemd.AttachProcess(runDir, "interactive"); err == nil {
+	openReq, err := interactiveOpenRequest()
+	if err != nil {
+		return nil, err
+	}
+	if client, err := agentd.OpenProcess(runDir, openReq); err == nil {
 		return client, nil
+	} else if !agentd.IsSupervisorUnavailable(err) {
+		return nil, err
 	}
 
 	// 2. daemon 不存在时脱离当前终端启动，并把 stdout/stderr 追加到固定日志。
@@ -50,46 +57,62 @@ func startInteractiveClient(ctx context.Context) (*systemd.ProcessClient, error)
 	go func() {
 		exited <- process.Wait()
 	}()
-	target := "interactive"
 	deadline := time.NewTimer(30 * time.Second)
 	defer deadline.Stop()
-	// 3. 轮询 Socket 就绪状态，同时响应调用方取消和启动超时。
+	// 3. 轮询 open，直到 Socket 就绪并成功创建本次 workspace Runtime。
 	for {
-		client, err := systemd.AttachProcess(runDir, target)
+		client, err := agentd.OpenProcess(runDir, openReq)
 		if err == nil {
 			return client, nil
+		}
+		if !agentd.IsSupervisorUnavailable(err) {
+			return nil, err
 		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case err := <-exited:
-			return nil, fmt.Errorf("interactive daemon exited before ready: %w; see %s", err, filepath.Join(runDir, "interactive.log"))
+			return nil, daemonStartError(runDir, fmt.Sprintf("interactive daemon exited before ready: %v", err))
 		case <-deadline.C:
-			return nil, fmt.Errorf("interactive daemon %s did not become ready; see %s", target, filepath.Join(runDir, "interactive.log"))
+			return nil, daemonStartError(runDir, "interactive daemon did not become ready")
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
 }
 
+func daemonStartError(runDir string, summary string) error {
+	logPath := filepath.Join(runDir, "interactive.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil || len(data) == 0 {
+		return fmt.Errorf("%s; see %s", summary, logPath)
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return fmt.Errorf("%s; see %s", summary, logPath)
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) > 8 {
+		lines = lines[len(lines)-8:]
+	}
+	return fmt.Errorf("%s; see %s\n%s", summary, logPath, strings.Join(lines, "\n"))
+}
+
+func interactiveOpenRequest() (agentd.OpenRequest, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return agentd.OpenRequest{}, fmt.Errorf("get workspace: %w", err)
+	}
+	return agentd.OpenRequest{
+		Workspace: cwd, Continue: continueLast, SessionID: sessionID,
+		ModelRef: modelRef, LLMFormat: llmFormat, LLMModel: llmModel,
+		Debug: debugMode, PromptBase: "tui",
+	}, nil
+}
+
 func interactiveDaemonArgs() []string {
-	args := make([]string, 0, 12)
+	args := make([]string, 0, 2)
 	if debugMode {
 		args = append(args, "--debug")
-	}
-	if sessionID != "" {
-		args = append(args, "--session", sessionID)
-	}
-	if continueLast {
-		args = append(args, "--continue")
-	}
-	if llmFormat != "" {
-		args = append(args, "--llm-format", llmFormat)
-	}
-	if llmModel != "" {
-		args = append(args, "--llm-model", llmModel)
-	}
-	if modelRef != "" {
-		args = append(args, "--model", modelRef)
 	}
 	return append(args, "daemon")
 }

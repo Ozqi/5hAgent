@@ -4,7 +4,7 @@ flowchart LR
   CLI --> TUI["internal/tui"]
   Daemon["walle daemon"] --> Runtime["internal/runtime"]
   Daemon --> Session["DaemonSession"]
-  Daemon --> Systemd["internal/systemd"]
+  Daemon --> Agentd["internal/agentd"]
   Socket <--> TUI
   Socket --> Session
   Session --> Runtime

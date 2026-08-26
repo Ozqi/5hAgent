@@ -9,7 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/Ozqi/walle/internal/systemd"
+	"github.com/Ozqi/walle/internal/agentd"
 	"github.com/Ozqi/walle/internal/tui"
 	"github.com/Ozqi/walle/internal/utils"
 	"github.com/spf13/cobra"
@@ -55,9 +55,9 @@ func runPS(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(writer, "PROCESS\tSTATE\tNAME\tSTARTED\tWORKSPACE")
+	fmt.Fprintln(writer, "PROCESS\tSTATE\tNAME\tSTARTED\tMODEL\tSESSION\tWORKSPACE")
 	for _, proc := range processes {
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", proc.ID, proc.State, processLabel(proc), proc.StartedAt.Local().Format("15:04:05"), proc.Workspace)
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", proc.ID, proc.State, processLabel(proc), proc.StartedAt.Local().Format("15:04:05"), emptyDash(proc.Model), emptyDash(proc.SessionID), proc.Workspace)
 	}
 	return writer.Flush()
 }
@@ -77,7 +77,7 @@ func runAttach(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return err
 			}
-			client, err := systemd.AttachProcess(configDir+"/run", proc.ID)
+			client, err := agentd.AttachProcess(configDir+"/run", proc.ID)
 			if err != nil {
 				return err
 			}
@@ -91,19 +91,26 @@ func runAttach(cmd *cobra.Command, args []string) error {
 	return fmt.Errorf("running process %q not found", args[0])
 }
 
-func runningProcesses() ([]systemd.ProcessSnapshot, error) {
+func runningProcesses() ([]agentd.ProcessSnapshot, error) {
 	configDir, err := utils.GetConfigDir()
 	if err != nil {
 		return nil, err
 	}
-	return systemd.ListProcesses(configDir + "/run")
+	return agentd.ListProcesses(configDir + "/run")
 }
 
-func processLabel(proc systemd.ProcessSnapshot) string {
+func processLabel(proc agentd.ProcessSnapshot) string {
 	if proc.Name != "" {
 		return proc.Name
 	}
 	return "-"
+}
+
+func emptyDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }
 
 func followFile(ctx context.Context, out io.Writer, path string) error {

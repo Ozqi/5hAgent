@@ -1,11 +1,11 @@
 # TUI
 
-> 由 Claude Fable 5 于 2026-08-23 阅读 `cmd/walle/*.go`、`internal/tui/*.go`、`internal/runtime/daemon_session.go` 与 `internal/systemd/control.go` 后更新。
+> 由 Claude Fable 5 于 2026-08-23 阅读 `cmd/walle/*.go`、`internal/tui/*.go`、`internal/runtime/daemon_session.go` 与 `internal/agentd/control.go` 后更新。
 > 覆盖范围：默认 TUI、daemon attach、slash command 与状态渲染。
 
 ## 职责
 
-`internal/tui` 是独立 Bubble Tea 客户端包，只负责输入、渲染和事件转发。默认 `walle` 自动启动或复用 daemon，再通过 Unix Socket attach 其交互 Agent；daemon 不依赖具体 TUI 实现。
+`internal/tui` 是独立 Bubble Tea 客户端包，只负责输入、渲染和事件转发。默认 `walle` 自动启动或复用 daemon，再通过 Unix Socket 为当前 workspace 打开新的交互 Runtime 并 attach；`-c/--continue` 才续接最近 Runtime 或 session。daemon 不依赖具体 TUI 实现。
 
 ## 关键文件
 

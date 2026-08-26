@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Ozqi/walle/internal/systemd"
+	"github.com/Ozqi/walle/internal/agentd"
 	"github.com/Ozqi/walle/internal/toolevent"
 	"github.com/Ozqi/walle/internal/tools"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -150,7 +150,7 @@ type toolEventMsg struct {
 	event toolevent.ToolEvent
 }
 
-type remoteEventMsg struct{ event systemd.ProcessEvent }
+type remoteEventMsg struct{ event agentd.ProcessEvent }
 
 type remoteDisconnectedMsg struct{}
 
@@ -216,17 +216,8 @@ var slashCommandHints = []slashCommandHint{
 	{Name: "/mcp", Usage: "/mcp <list|add|remove|enable|disable>", Desc: "mcp servers"},
 	{Name: "/session", Usage: "/session <new|list|id>", Desc: "sessions"},
 	{Name: "/stop", Usage: "/stop", Desc: "stop current run"},
-	{Name: "/model", Usage: "/model <provider/model>", Desc: "ollama/gemma4, mira/gpt-5.5"},
+	{Name: "/model", Usage: "/model [name]", Desc: "models from daemon"},
 	{Name: "/provider", Usage: "/provider [name]", Desc: "select and authenticate provider"},
-}
-
-var modelHints = []string{
-	"ollama/gemma4",
-	"ollama/qwen3:14b",
-	"mira/gpt-5.4",
-	"mira/gpt-5.5",
-	"mira/glm-5.2",
-	"mira/claude-opus-4-6",
 }
 
 // NewAppModel 创建 attached TUI 的初始模型。
@@ -325,48 +316,51 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.remoteTurn = event.Turn
 		}
 		switch event.Type {
-		case systemd.ProcessEventUser:
+		case agentd.ProcessEventUser:
 			m.entries = append(m.entries, conversationEntry{Role: roleUser, Content: event.Text})
 			m.refreshView()
 			return m, nil
-		case systemd.ProcessEventState:
+		case agentd.ProcessEventState:
 			m.busy = event.Busy
 			if event.Busy {
 				m.currentStatus = "running"
 				m.refreshView()
 				return m, m.queueSpinner()
 			}
-			m.currentStatus = "idle"
+			if m.currentStatus != "error" {
+				m.currentStatus = "idle"
+			}
 			m.refreshView()
 			return m, m.submitPendingInputCmd()
-		case systemd.ProcessEventAssistant:
+		case agentd.ProcessEventAssistant:
 			return m.Update(assistantTokenMsg{token: event.Text})
-		case systemd.ProcessEventThinking:
+		case agentd.ProcessEventThinking:
 			return m.Update(assistantThinkingMsg{token: event.Text})
-		case systemd.ProcessEventTool:
+		case agentd.ProcessEventTool:
 			return m.Update(toolEventMsg{event: toolevent.ToolEvent{Kind: event.Kind, Name: event.Name, Args: event.Args, Text: event.Text, Result: event.Result, Error: event.Error}})
-		case systemd.ProcessEventSystem:
+		case agentd.ProcessEventSystem:
 			m.busy = false
 			m.currentStatus = "idle"
 			m.entries = append(m.entries, conversationEntry{Role: roleSystem, Content: event.Text})
 			m.refreshView()
 			return m, nil
-		case systemd.ProcessEventPicker:
+		case agentd.ProcessEventPicker:
 			m.busy = false
 			m.currentStatus = "select " + event.Kind
 			m.picker = &pickerState{Kind: event.Kind, Provider: event.Name, Options: append([]string(nil), event.Options...)}
 			m.refreshView()
 			return m, nil
-		case systemd.ProcessEventModel:
+		case agentd.ProcessEventModel:
 			m.busy = false
 			m.modelName = event.Text
 			m.currentStatus = "idle"
 			m.refreshView()
 			return m, nil
-		case systemd.ProcessEventDone:
+		case agentd.ProcessEventDone:
 			return m.Update(assistantDoneMsg{})
-		case systemd.ProcessEventError:
-			return m.Update(assistantErrorMsg{err: fmt.Errorf("%s", event.Error)})
+		case agentd.ProcessEventError:
+			message := fallback(event.Error, event.Text)
+			return m.Update(assistantErrorMsg{err: fmt.Errorf("%s", message)})
 		}
 		return m, nil
 	case remoteDisconnectedMsg:
@@ -518,23 +512,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.submit()
 		case "tab":
-			raw := m.input.Value()
-			text := strings.TrimSpace(raw)
-			if text == "/model" {
-				m.input.SetValue("/model ")
-				m.input.CursorEnd()
-				m.refreshView()
-				return m, nil
-			}
-			if isModelHintInput(raw, text) {
-				matches := m.modelHintMatches(modelArgPrefix(raw))
-				if len(matches) == 1 {
-					m.input.SetValue("/model " + matches[0])
-					m.input.CursorEnd()
-				}
-				m.refreshView()
-				return m, nil
-			}
+			text := strings.TrimSpace(m.input.Value())
 			if strings.HasPrefix(text, "/") && !strings.Contains(text, " ") {
 				if matches := slashHintMatches(text); len(matches) == 1 {
 					m.input.SetValue(matches[0].Name + " ")

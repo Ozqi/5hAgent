@@ -5,7 +5,7 @@
 
 ## 职责
 
-`internal/runtime` 是 Agent 装配层。它创建配置、session、LLM、Agent、本地工具与 daemon session，也保留 `internal/systemd.ProcessRunner` 所需的通用 process 执行能力。
+`internal/runtime` 是 Agent 装配层。它创建配置、session、LLM、Agent、本地工具与 daemon session，也保留 `internal/agentd.ProcessRunner` 所需的通用 process 执行能力。
 
 Runtime 不再内置 TaskList、文件任务入口、task watcher 或 task report/status。
 
@@ -41,8 +41,9 @@ runtime.New
 
 | 入口 | 行为 |
 | --- | --- |
-| `walle` | 连接 `supervisor.sock`，attach `interactive`，必要时自动启动 daemon |
-| `walle daemon` | 固定托管一个可 attach 的交互 Agent；无 `--poll`、`--interactive` |
+| `walle` | 连接 `supervisor.sock`，为当前 workspace 打开新的 interactive Runtime，必要时自动启动 daemon |
+| `walle -c` | 连接当前 workspace 最近 interactive Runtime；没有可复用 Runtime 时继续最近 session 创建 |
+| `walle daemon` | 启动用户级 supervisor；按 open 请求托管多个 interactive Runtime，无 `--poll`、`--interactive` |
 | `walle ps` | 查询 control socket 的 `ProcessSnapshot` |
 | `walle attach <id>` | attach 交互进程，或跟随通用 process worklog |
 | `/model` | 调 `SwitchModel`，只更新当前 Runtime 内存模型 |
@@ -50,9 +51,9 @@ runtime.New
 
 ## 通用 ProcessRunner
 
-`Runtime.RunProcess` 接收 `systemd.AgentProcess`，根据 `ProcessSpec` 启动一轮 Agent，写 process worklog/report，并把路径回填到进程对象。它不依赖任务 ID、任务标题或任务状态。
+`Runtime.RunProcess` 接收 `agentd.AgentProcess`，根据 `ProcessSpec` 启动一轮 Agent，写 process worklog/report，并把路径回填到进程对象。它不依赖任务 ID、任务标题或任务状态。
 
-`internal/systemd` 的启动事件固定为 `process.start`，payload 为 `ProcessStartPayload{process_spec}`。`AgentProcess` 和 `ProcessSnapshot` 使用 `Name`，不携带 `SourceTask`、`TaskID` 或 `TaskTitle`。
+`internal/agentd` 的启动事件固定为 `process.start`，payload 为 `ProcessStartPayload{process_spec}`。`AgentProcess` 和 `ProcessSnapshot` 使用 `Name`，不携带 `SourceTask`、`TaskID` 或 `TaskTitle`。
 
 ## 输出位置
 

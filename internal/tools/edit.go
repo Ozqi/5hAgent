@@ -63,8 +63,8 @@ func NewEditTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
 			}
 
 			originalContent := string(content)
-
-			if !strings.Contains(originalContent, input.OldString) {
+			replacements := strings.Count(originalContent, input.OldString)
+			if replacements == 0 {
 				return nil, fmt.Errorf("old_string not found in '%s'. The string you provided does not match any part of the file. Use read_file to confirm the exact text, including spaces and indentation.", input.Path)
 			}
 
@@ -73,7 +73,7 @@ func NewEditTool(workspaceRoot ...string) (tool.EnhancedInvokableTool, error) {
 			if err := os.WriteFile(input.Path, []byte(newContent), 0644); err != nil {
 				return nil, fmt.Errorf("failed to write file: %w. Check file permissions.", err)
 			}
-			return JSONResult(EditOutput{Success: true, Message: fmt.Sprintf("Replaced %d occurrence(s)", strings.Count(originalContent, input.OldString)), Replacements: strings.Count(originalContent, input.OldString)})
+			return JSONResult(EditOutput{Success: true, Message: fmt.Sprintf("Replaced %d occurrence(s)", replacements), Replacements: replacements})
 		},
 	)
 }

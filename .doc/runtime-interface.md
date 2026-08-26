@@ -22,7 +22,7 @@ graph LR
 | --- | --- |
 | `runtime.New(ctx, Options)` | 创建可工作的 Runtime |
 | `Runtime.SwitchModel(ctx, modelRef)` | 切 provider/model，不改默认配置 |
-| `Runtime.RunProcess(ctx, *systemd.AgentProcess)` | 执行通用 AgentProcess |
+| `Runtime.RunProcess(ctx, *agentd.AgentProcess)` | 执行通用 AgentProcess |
 | `runtime.NewDaemonSession(ctx, rt)` | 包装 attachable interactive Agent |
 | `Runtime.RecordToolEvent(event)` | 记录交互工具事件 |
 

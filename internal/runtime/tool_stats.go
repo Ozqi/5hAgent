@@ -45,12 +45,12 @@ func (r *Runtime) recordToolFailure(event toolevent.ToolEvent, processID string)
 	if stat.Error == "" {
 		stat.Error = logger.TruncateString(event.Text, 500)
 	}
-	if err := writeToolFailureStats(r, stat); err != nil {
+	if err := r.writeToolFailureStats(stat); err != nil {
 		logger.WarnTag("TOOL", "record tool failure: %v", err)
 	}
 }
 
-func writeToolFailureStats(r *Runtime, stat toolFailureStat) error {
+func (r *Runtime) writeToolFailureStats(stat toolFailureStat) error {
 	// 1. 单条记录编码为一行，避免错误文本破坏 JSONL 边界。
 	data, err := json.Marshal(stat)
 	if err != nil {
@@ -66,7 +66,7 @@ func writeToolFailureStats(r *Runtime, stat toolFailureStat) error {
 	if err := appendToolStat(filepath.Join(configDir, "tool-stats", "failures.jsonl"), line); err != nil {
 		return err
 	}
-	if r != nil && r.ProjectDir != "" && r.Agent != nil {
+	if r.ProjectDir != "" && r.Agent != nil {
 		projectPath := filepath.Join(projectDataDir(r.ProjectDir), "agents", safeName(r.Agent.Name()), "logs", "tool-failures.jsonl")
 		if err := appendToolStat(projectPath, line); err != nil {
 			return err

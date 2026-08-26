@@ -1,3 +1,6 @@
+// 功能：把通用 AgentProcess 的 token、工具事件和最终状态写入控制台与 Markdown worklog。
+// 调用方：被 internal/runtime.RunProcess 创建，通过 Agent token 回调和 ToolEvent sink 写入。
+// 全局状态：ansiPattern 用于清理工具事件中的 ANSI 颜色码，避免污染 Markdown 日志。
 package runtime
 
 import (
@@ -82,24 +85,19 @@ func (l *processWorkLog) End(runErr error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	status := "completed"
+	fileStatus := "completed"
 	if runErr != nil {
-		if l.console {
-			if l.printedHeader {
-				fmt.Fprintln(os.Stdout)
-			}
-			fmt.Fprintf(os.Stdout, "status: failed (%v)\n", runErr)
-		}
-		l.writeFileStringLocked(fmt.Sprintf("\n## Status %s\n\nfailed: %v\n", worklogTime(), runErr))
-		l.stopLocked()
-		return
+		status = fmt.Sprintf("failed (%v)", runErr)
+		fileStatus = fmt.Sprintf("failed: %v", runErr)
 	}
 	if l.console {
 		if l.printedHeader {
 			fmt.Fprintln(os.Stdout)
 		}
-		fmt.Fprintln(os.Stdout, "status: completed")
+		fmt.Fprintf(os.Stdout, "status: %s\n", status)
 	}
-	l.writeFileStringLocked(fmt.Sprintf("\n## Status %s\n\ncompleted\n", worklogTime()))
+	l.writeFileStringLocked(fmt.Sprintf("\n## Status %s\n\n%s\n", worklogTime(), fileStatus))
 	l.stopLocked()
 }
 

@@ -8,15 +8,21 @@ sequenceDiagram
   participant Runtime as internal/runtime
 
   User->>CLI: walle
-  CLI->>Socket: attach interactive
+  CLI->>Socket: open workspace interactive(cwd, continue=false)
   alt socket missing
     CLI->>Daemon: spawn "walle daemon"
-    Daemon->>Runtime: New(PromptBase=tui)
-    CLI->>Socket: retry attach
+    Daemon-->>Socket: supervisor ready
+    CLI->>Socket: retry open
   end
+  Socket->>Daemon: create Runtime(ProjectDir=cwd, ContinueLast=false)
+  Daemon-->>Socket: process id
   Socket-->>CLI: attached + history + ready
   CLI->>TUI: LaunchAttachedTUI
   TUI->>Socket: input / stop / detach
   Socket->>Runtime: DaemonSession routes request
   Runtime-->>Socket: assistant / tool / state events
   Socket-->>TUI: render
+
+  User->>CLI: walle -c
+  CLI->>Socket: open workspace interactive(cwd, continue=true)
+  Socket->>Daemon: attach latest matching Runtime or create Runtime(ContinueLast=true)

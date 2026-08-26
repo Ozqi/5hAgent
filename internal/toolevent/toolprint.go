@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Ozqi/walle/internal/logger"
+	"github.com/Ozqi/walle/internal/tools"
 )
 
 const toolIndent = "  "
@@ -125,7 +126,7 @@ func formatToolErrorText(indent string, name string, args string, err error) (st
 
 func summarizeToolError(name string, err error) string {
 	if err == nil {
-		return toolsDisplayName(name) + " failed"
+		return tools.DisplayName(name) + " failed"
 	}
 
 	message := err.Error()
@@ -152,7 +153,7 @@ func summarizeToolError(name string, err error) string {
 		reason = message[idx+2:]
 	}
 
-	displayName := toolsDisplayName(name)
+	displayName := tools.DisplayName(name)
 	if path != "" {
 		return fmt.Sprintf("%s failed: %s (%s)", displayName, shortenPath(path), reason)
 	}
@@ -191,7 +192,7 @@ func FormatToolError(name string, args string, err error) (string, string) {
 }
 
 func summarizeToolCall(name string, args string) toolCallSummary {
-	displayName := toolsDisplayName(name)
+	displayName := tools.DisplayName(name)
 	summary := toolCallSummary{Title: displayName}
 
 	var raw map[string]interface{}
@@ -246,7 +247,7 @@ func summarizeToolCall(name string, args string) toolCallSummary {
 }
 
 func summarizeToolResult(name string, args string, result string) toolResultSummary {
-	displayName := toolsDisplayName(name)
+	displayName := tools.DisplayName(name)
 	var raw map[string]interface{}
 	if err := json.Unmarshal([]byte(result), &raw); err != nil {
 		return toolResultSummary{Lines: splitDisplayLines(result, 4, 150)}
@@ -485,11 +486,4 @@ func min(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func toolsDisplayName(name string) string {
-	if idx := strings.LastIndex(name, "."); idx >= 0 && idx < len(name)-1 {
-		return name[idx+1:]
-	}
-	return name
 }

@@ -1,6 +1,6 @@
 # Prompt 目录
 
-本目录存放运行时直接读取的 Markdown prompt 文件。安装后会复制到 `~/.walle/prompt/`，运行时以用户目录为准。
+本目录存放运行时直接读取的 Markdown prompt 文件。安装脚本只把基础运行 prompt 复制到 `~/.walle/prompt/`，模型专用 `prefix.*.md` 默认留在仓库作为可选参考；运行时以用户目录为准。
 
 ## 约定
 
@@ -17,11 +17,8 @@
 示例：
 
 ```text
-qwen3:14b
-=> prefix.openai.qwen3-14b.md
-
-hf.co/bartowski/Qwen_Qwen3.6-27B-GGUF:Q3_K_M
-=> prefix.openai.hf-co-bartowski-qwen-qwen3-6-27b-gguf-q3-k-m.md
+provider=mygateway, model=family/model:tag
+=> prefix.mygateway.family-model-tag.md
 ```
 
 ## 当前文件

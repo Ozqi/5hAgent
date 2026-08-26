@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/Ozqi/walle/internal/agent"
+	"github.com/Ozqi/walle/internal/agentd"
 	agentctx "github.com/Ozqi/walle/internal/context"
 	"github.com/Ozqi/walle/internal/llm"
 	"github.com/Ozqi/walle/internal/logger"
-	"github.com/Ozqi/walle/internal/systemd"
 	"github.com/Ozqi/walle/internal/toolevent"
 	"github.com/Ozqi/walle/internal/tools"
 	"github.com/Ozqi/walle/internal/utils"
@@ -261,15 +261,15 @@ func bindTools(ctx context.Context, m model.ToolCallingChatModel, registry *tool
 }
 
 // =============================================================================
-// Agent Systemd 适配：Runtime 作为 ProcessRunner
+// Agentd 适配：Runtime 作为 ProcessRunner
 // =============================================================================
 
-// RunProcess 让 Runtime 作为 Agent Systemd 的同步执行 runner。
+// RunProcess 让 Runtime 作为 Agentd 的同步执行 runner。
 // 参数：读取 proc 的身份和 ProcessSpec，写回 WorkLogPath、ReportPath；Project/WorkDir 由外层决定。
-// 调用层级：systemd.AgentSystemd.RunProcess -> Runtime.RunProcess -> Agent.RunStream。
+// 调用层级：agentd.Agentd.RunProcess -> Runtime.RunProcess -> Agent.RunStream。
 // 步骤：创建内存 context -> 注入 ProcessSpec.Prompt -> 调用 Agent.RunStream -> 写进程 report/worklog。
-// 边界：process.exited/process.failed 由 AgentSystemd 发布，Runtime 只执行并返回结果。
-func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess) error {
+// 边界：process.exited/process.failed 由 Agentd 发布，Runtime 只执行并返回结果。
+func (r *Runtime) RunProcess(ctx context.Context, proc *agentd.AgentProcess) error {
 	if proc == nil {
 		return fmt.Errorf("process is nil")
 	}
@@ -295,7 +295,7 @@ func (r *Runtime) RunProcess(ctx context.Context, proc *systemd.AgentProcess) er
 		r.handleToolEvent(event, proc.ID)
 	})
 	defer r.Agent.SetToolEventSink(prevSink)
-	input := fmt.Sprintf(`你正在以 Agent Systemd 进程模式运行。
+	input := fmt.Sprintf(`你正在以 Agentd 进程模式运行。
 
 Exit Condition:
 %s
@@ -306,7 +306,7 @@ Exit Condition:
 	workLog.End(runErr)
 	// 4. 无论 Agent 成功或失败都写报告；报告写入失败会覆盖本次函数返回错误。
 	report := &processReport{ProcessID: proc.ID, WorkLog: workLog.path, ExitCondition: proc.Spec.ExitCondition, Response: response, Err: runErr, StartedAt: started, EndedAt: time.Now().UTC()}
-	path, writeErr := r.writeProcessReport("", report)
+	path, writeErr := r.writeProcessReport(report)
 	proc.ReportPath = path
 	if writeErr != nil {
 		return writeErr
@@ -355,10 +355,8 @@ func openMessageCtx(manager *agentctx.Manager, sessionID string, continueLast bo
 // 报告和 worklog 辅助：文件命名、渲染、路径清理
 // =============================================================================
 
-func (r *Runtime) writeProcessReport(dir string, report *processReport) (string, error) {
-	if dir == "" {
-		dir = filepath.Join(projectDataDir(r.ProjectDir), "reports")
-	}
+func (r *Runtime) writeProcessReport(report *processReport) (string, error) {
+	dir := filepath.Join(projectDataDir(r.ProjectDir), "reports")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create process report dir: %w", err)
 	}

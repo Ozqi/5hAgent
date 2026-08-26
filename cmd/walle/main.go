@@ -7,11 +7,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
 	"syscall"
 
+	"github.com/Ozqi/walle/internal/agentd"
 	"github.com/Ozqi/walle/internal/cli"
 	agentrt "github.com/Ozqi/walle/internal/runtime"
-	"github.com/Ozqi/walle/internal/systemd"
 	"github.com/Ozqi/walle/internal/tui"
 	"github.com/Ozqi/walle/internal/utils"
 	"github.com/spf13/cobra"
@@ -38,12 +41,12 @@ func main() {
 	rootCmd.PersistentFlags().BoolVarP(&continueLast, "continue", "c", false, "Resume from the last session")
 	rootCmd.PersistentFlags().StringVar(&llmFormat, "llm-format", "", "Temporarily select LLM API format: claude or openai")
 	rootCmd.PersistentFlags().StringVar(&llmModel, "llm-model", "", "Temporarily override the selected LLM model")
-	rootCmd.PersistentFlags().StringVarP(&modelRef, "model", "m", "", "Model ref in provider/model format, for example openrouter/openrouter/owl-alpha")
+	rootCmd.PersistentFlags().StringVarP(&modelRef, "model", "m", "", "Temporarily select model as provider/model")
 	rootCmd.AddCommand(newPSCommand(), newAttachCommand())
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "daemon",
-		Short: "Host the attachable interactive Agent",
-		Long:  "Host one interactive Agent and expose it through the local supervisor socket.",
+		Short: "Host attachable interactive Agents",
+		Long:  "Host workspace interactive Agents and expose them through the local supervisor socket.",
 		Run:   runDaemon,
 	})
 
@@ -59,50 +62,151 @@ func runTUI(cmd *cobra.Command, args []string) {
 	client, err := startInteractiveClient(cmd.Context())
 	if err != nil {
 		cli.PrintError(err)
-		return
+		os.Exit(1)
 	}
 	if err := tui.LaunchAttachedTUI(cmd.Context(), client); err != nil {
 		cli.PrintError(fmt.Errorf("tui error: %w", err))
+		os.Exit(1)
 	}
 }
 
-// runDaemon 托管一个可通过本地 Unix Socket attach 的交互 Agent。
+// runDaemon 启动用户级 supervisor，按 open 请求创建 workspace interactive Runtime。
 func runDaemon(cmd *cobra.Command, args []string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	opts := runtimeOptions()
-	opts.PromptBase = "tui"
-	rt, err := agentrt.New(ctx, opts)
-	if err != nil {
-		cli.PrintError(err)
-		os.Exit(1)
-	}
-	defer rt.Close()
-
 	configDir, err := utils.GetConfigDir()
 	if err != nil {
 		cli.PrintError(err)
 		os.Exit(1)
 	}
-	sys := systemd.New()
-	session := agentrt.NewDaemonSession(ctx, rt)
-	control, err := systemd.StartControlServer(ctx, filepath.Join(configDir, "run"), sys, rt.ProjectDir, session)
+	sys := agentd.New()
+	registry := newInteractiveRegistry(ctx)
+	defer registry.Close()
+	control, err := agentd.StartControlServer(ctx, filepath.Join(configDir, "run"), sys, "", registry)
 	if err != nil {
 		cli.PrintError(err)
 		return
 	}
 	defer control.Close()
-	fmt.Println("interactive agent: interactive")
+	fmt.Println("interactive supervisor ready")
 	<-ctx.Done()
 }
 
-func runtimeOptions() agentrt.Options {
-	return agentrt.Options{
-		Debug:        debugMode,
-		SessionID:    sessionID,
-		ContinueLast: continueLast,
-		LLMFormat:    llmFormat,
-		LLMModel:     llmModel,
-		ModelRef:     modelRef,
+type interactiveRegistry struct {
+	ctx      context.Context
+	mu       sync.Mutex
+	nextID   int
+	sessions map[string]*agentrt.DaemonSession
+}
+
+func newInteractiveRegistry(ctx context.Context) *interactiveRegistry {
+	return &interactiveRegistry{ctx: ctx, sessions: make(map[string]*agentrt.DaemonSession)}
+}
+
+func (r *interactiveRegistry) OpenInteractive(ctx context.Context, req agentd.OpenRequest) (agentd.InteractiveProcess, error) {
+	workspace := strings.TrimSpace(req.Workspace)
+	if workspace == "" {
+		return nil, fmt.Errorf("workspace is required")
 	}
+	workspace, err := filepath.Abs(workspace)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace: %w", err)
+	}
+	r.mu.Lock()
+	if req.SessionID != "" {
+		if session := r.findSessionLocked(workspace, req.SessionID, false); session != nil {
+			r.mu.Unlock()
+			return session, nil
+		}
+	} else if req.Continue {
+		if session := r.findSessionLocked(workspace, "", true); session != nil {
+			r.mu.Unlock()
+			return session, nil
+		}
+	}
+	r.nextID++
+	id := fmt.Sprintf("interactive-%d", r.nextID)
+	r.mu.Unlock()
+
+	opts := agentrt.Options{
+		Debug:        req.Debug,
+		SessionID:    req.SessionID,
+		ContinueLast: req.Continue && req.SessionID == "",
+		ProjectDir:   workspace,
+		LLMFormat:    req.LLMFormat,
+		LLMModel:     req.LLMModel,
+		ModelRef:     req.ModelRef,
+		PromptBase:   req.PromptBase,
+	}
+	if opts.PromptBase == "" {
+		opts.PromptBase = "tui"
+	}
+	rt, err := agentrt.New(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	session := agentrt.NewDaemonSession(r.ctx, rt, id, workspaceName(workspace))
+	r.mu.Lock()
+	r.sessions[id] = session
+	r.mu.Unlock()
+	return session, nil
+}
+
+func (r *interactiveRegistry) ListInteractive() []agentd.ProcessSnapshot {
+	r.mu.Lock()
+	processes := make([]agentd.ProcessSnapshot, 0, len(r.sessions))
+	for _, session := range r.sessions {
+		processes = append(processes, session.Snapshot())
+	}
+	r.mu.Unlock()
+	sort.Slice(processes, func(i, j int) bool { return processes[i].StartedAt.Before(processes[j].StartedAt) })
+	return processes
+}
+
+func (r *interactiveRegistry) FindInteractive(id string) agentd.InteractiveProcess {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sessions[id]
+}
+
+func (r *interactiveRegistry) Close() {
+	r.mu.Lock()
+	sessions := make([]*agentrt.DaemonSession, 0, len(r.sessions))
+	for _, session := range r.sessions {
+		sessions = append(sessions, session)
+	}
+	r.mu.Unlock()
+	for _, session := range sessions {
+		_ = session.Close()
+	}
+}
+
+func (r *interactiveRegistry) findSessionLocked(workspace string, sessionID string, idleOnly bool) *agentrt.DaemonSession {
+	var latest *agentrt.DaemonSession
+	var latestSnapshot agentd.ProcessSnapshot
+	for _, session := range r.sessions {
+		snapshot := session.Snapshot()
+		if snapshot.Workspace != workspace {
+			continue
+		}
+		if sessionID != "" && snapshot.SessionID != sessionID {
+			continue
+		}
+		if idleOnly && snapshot.State != agentd.ProcessIdle {
+			continue
+		}
+		if latest == nil || snapshot.StartedAt.After(latestSnapshot.StartedAt) {
+			latest = session
+			latestSnapshot = snapshot
+		}
+	}
+	return latest
+}
+
+func workspaceName(workspace string) string {
+	name := filepath.Base(workspace)
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return workspace
+	}
+	return name
 }

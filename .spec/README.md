@@ -40,7 +40,7 @@ Spec 长度不设固定上限，按模块代码复杂度和设计边界决定；
 | [context.md](context.md) | `internal/context` | 消息、session JSONL、压缩、上下文元数据。 |
 | [capability.md](capability.md) | `internal/tools`、`internal/toolmeta`、`internal/toolevent`、`internal/mcp`、`internal/commands` | LLM 可调用工具、工具事件、MCP 和 slash commands。 |
 | [knowledge.md](knowledge.md) | `internal/skill` | Skill 知识加载与注入快照。 |
-| [daemon.md](daemon.md) | `internal/systemd`、daemon control 协议 | AgentProcess 调度和 Unix Socket 控制面。 |
+| [daemon.md](daemon.md) | `internal/agentd`、daemon control 协议 | AgentProcess 调度和 Unix Socket 控制面。 |
 | [model-config.md](model-config.md) | `internal/llm`、`internal/codex`、`internal/utils`、`internal/logger` | provider/model 配置、prompt、Codex OAuth、模型 adapter 和进程日志。 |
 
 ## 架构图
@@ -59,7 +59,7 @@ Spec 长度不设固定上限，按模块代码复杂度和设计边界决定；
 
 ## 全局边界
 
-- 默认交互入口是可分离 TUI：CLI 拉起或复用固定的 `daemon`，再通过 Unix Socket attach。
+- 默认交互入口是可分离 TUI：CLI 拉起或复用用户级 `daemon`，再通过 Unix Socket `open` 当前 workspace 的新 interactive Runtime；`-c/--continue` 才续接。
 - `Runtime` 是装配层；具体工具行为在 Capability，调度在 Daemon，渲染在 Entry/UI。
 - Runtime 不内置 TaskList、`walle run`、task watcher 或任务 report/status；任务管理由 Skill、MCP 或外置动态工具提供。
 - Session 默认写 `~/.walle/sessions/*.jsonl`。
@@ -84,7 +84,7 @@ Spec 长度不设固定上限，按模块代码复杂度和设计边界决定；
 Entry/UI -> Runtime -> Agent -> Context
                   |       |-> Capability -> Knowledge
                   |       |-> Model/Config
-                  |-> Daemon adapter -> Systemd core
+                  |-> Daemon adapter -> Agentd core
 ```
 
 允许的方向：
@@ -93,7 +93,7 @@ Entry/UI -> Runtime -> Agent -> Context
 - Runtime 可以组合 Agent、Context、Capability、Knowledge、Model/Config 和 Daemon adapter。
 - Agent 可以调用 Context、Skill manager、Tool instances、ToolEvent、Logger。
 - Capability 可以调用 Skill/MCP/Context 的窄接口。
-- `internal/systemd` 只依赖标准库和本包类型。
+- `internal/agentd` 只依赖标准库和本包类型。
 - `internal/logger` 是低层横切能力，禁止反向依赖业务包。
 
 ## 改动前检查
@@ -129,7 +129,7 @@ Entry/UI -> Runtime -> Agent -> Context
 - `internal/mcp`
 - `internal/runtime`
 - `internal/skill`
-- `internal/systemd`
+- `internal/agentd`
 - `internal/toolevent`
 - `internal/toolmeta`
 - `internal/tools`

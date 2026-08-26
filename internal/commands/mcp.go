@@ -150,39 +150,14 @@ func removeMCPServer(name string) (string, error) {
 }
 
 func enableMCPServer(name string) (string, error) {
-	if name == "" {
-		return "", fmt.Errorf("server name is required")
-	}
-
-	config, err := loadMCPConfig()
-	if err != nil {
-		return "", fmt.Errorf("failed to load config: %w", err)
-	}
-
-	found := false
-	for i, s := range config.Servers {
-		if s.Name == name {
-			found = true
-			if config.Servers[i].Enabled {
-				return fmt.Sprintf("MCP server '%s' is already enabled", name), nil
-			}
-			config.Servers[i].Enabled = true
-			break
-		}
-	}
-
-	if !found {
-		return "", fmt.Errorf("server '%s' not found", name)
-	}
-
-	if err := saveMCPConfig(config); err != nil {
-		return "", fmt.Errorf("failed to save config: %w", err)
-	}
-
-	return fmt.Sprintf("MCP server '%s' enabled (restart required to activate)", name), nil
+	return setMCPServerEnabled(name, true)
 }
 
 func disableMCPServer(name string) (string, error) {
+	return setMCPServerEnabled(name, false)
+}
+
+func setMCPServerEnabled(name string, enabled bool) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("server name is required")
 	}
@@ -192,27 +167,28 @@ func disableMCPServer(name string) (string, error) {
 		return "", fmt.Errorf("failed to load config: %w", err)
 	}
 
-	found := false
+	state := "disabled"
+	result := fmt.Sprintf("MCP server '%s' disabled (restart required)", name)
+	if enabled {
+		state = "enabled"
+		result = fmt.Sprintf("MCP server '%s' enabled (restart required to activate)", name)
+	}
+
 	for i, s := range config.Servers {
-		if s.Name == name {
-			found = true
-			if !config.Servers[i].Enabled {
-				return fmt.Sprintf("MCP server '%s' is already disabled", name), nil
-			}
-			config.Servers[i].Enabled = false
-			break
+		if s.Name != name {
+			continue
 		}
+		if config.Servers[i].Enabled == enabled {
+			return fmt.Sprintf("MCP server '%s' is already %s", name, state), nil
+		}
+		config.Servers[i].Enabled = enabled
+		if err := saveMCPConfig(config); err != nil {
+			return "", fmt.Errorf("failed to save config: %w", err)
+		}
+		return result, nil
 	}
 
-	if !found {
-		return "", fmt.Errorf("server '%s' not found", name)
-	}
-
-	if err := saveMCPConfig(config); err != nil {
-		return "", fmt.Errorf("failed to save config: %w", err)
-	}
-
-	return fmt.Sprintf("MCP server '%s' disabled (restart required)", name), nil
+	return "", fmt.Errorf("server '%s' not found", name)
 }
 
 func loadMCPConfig() (*mcpConfigFile, error) {

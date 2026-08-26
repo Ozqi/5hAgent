@@ -11,7 +11,7 @@
   ],
   "components": [
     {"id": "tui", "path": "internal/tui", "role": "renders provider/model picker and OAuth status events"},
-    {"id": "ipc", "path": "internal/systemd/control.go", "role": "structured picker and auth events"},
+    {"id": "ipc", "path": "internal/agentd/control.go", "role": "structured picker and auth events"},
     {"id": "session", "path": "internal/runtime/daemon_session.go", "role": "owns provider selection and login lifecycle"},
     {"id": "auth", "path": "internal/codex/auth.go", "role": "ChatGPT OAuth PKCE login, callback, token refresh and storage"},
     {"id": "model", "path": "internal/codex/model.go", "role": "Codex Responses SSE adapter and tool calls"},

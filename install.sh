@@ -36,6 +36,13 @@ append_if_missing() {
     fi
 }
 
+model_ref_ready() {
+    local file="$1"
+    local ref
+    ref=$(env_value "$file" "LLM_MODEL")
+    [ -n "$ref" ] && [ "${ref#*/}" != "$ref" ] && [ "${ref%%/*}" != "" ] && [ "${ref#*/}" != "" ]
+}
+
 install_skill() {
     local name="$1"
     local source="$SRC_DIR/skills/$name"
@@ -49,13 +56,25 @@ install_skill() {
     ok "已预装 Skill: $name"
 }
 
+install_prompt() {
+    local source="$1"
+    local name
+    name=$(basename "$source")
+    local target="$CONFIG_DIR/prompt/$name"
+    if [ -e "$target" ] || [ -L "$target" ]; then
+        warn "Prompt 已存在，保留用户版本: $target"
+        return
+    fi
+    cp "$source" "$target"
+    ok "已安装 prompt 模板: $name"
+}
+
 daemon_pids() {
-    {
-        pgrep -f "(^|[ /])${BINARY_NAME} daemon" 2>/dev/null || true
-        if command -v lsof >/dev/null 2>&1 && [ -e "${INSTALL_DIR}/${BINARY_NAME}" ]; then
-            lsof -t "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null || true
-        fi
-    } | sort -u
+    local target="${INSTALL_DIR}/${BINARY_NAME}"
+    [ -e "$target" ] || return 0
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -t "$target" 2>/dev/null | sort -u
+    fi
 }
 
 stop_daemon_for_install() {
@@ -181,13 +200,20 @@ fi
 
 # ── 6. 初始化配置目录 ──
 mkdir -p "$CONFIG_DIR"
+cp "$SRC_DIR/.env.example" "$CONFIG_DIR/.env.example"
+ok "已更新配置参考模板: $CONFIG_DIR/.env.example"
 if [ ! -f "$CONFIG_DIR/.env" ]; then
     cp "$SRC_DIR/.env.example" "$CONFIG_DIR/.env"
-    ok "已创建默认配置: $CONFIG_DIR/.env"
+    ok "已创建配置模板: $CONFIG_DIR/.env"
     migrate_legacy_env "$CONFIG_DIR/.env"
 else
-    warn "配置文件已存在，跳过: $CONFIG_DIR/.env"
+    warn "配置文件已存在，保留用户版本: $CONFIG_DIR/.env"
     migrate_legacy_env "$CONFIG_DIR/.env"
+fi
+if model_ref_ready "$CONFIG_DIR/.env"; then
+    CONFIG_READY=1
+else
+    CONFIG_READY=0
 fi
 
 if [ ! -f "$CONFIG_DIR/mcp.json" ]; then
@@ -201,10 +227,13 @@ else
     warn "MCP 配置已存在，跳过: $CONFIG_DIR/mcp.json"
 fi
 
-# ── 6.5. 安装 prompt 模板 ──
+# ── 6.5. 安装运行必需 prompt；已有同名文件视为用户版本，不覆盖 ──
 mkdir -p "$CONFIG_DIR/prompt"
-cp -r "$SRC_DIR/prompt/"*.md "$CONFIG_DIR/prompt/" 2>/dev/null || true
-ok "已安装 prompt 模板到 $CONFIG_DIR/prompt/"
+for name in main.md tui.md compress.md plan.md remind.md worker.md; do
+    prompt="$SRC_DIR/prompt/$name"
+    [ -e "$prompt" ] || continue
+    install_prompt "$prompt"
+done
 
 # ── 6.6. 安装内置 Skill；已有同名目录视为用户版本，不覆盖 ──
 install_skill "tmux-skill"
@@ -221,16 +250,22 @@ fi
 # ── 8. 完成 ──
 restart_daemon_after_install
 echo ""
-ok "安装完成！运行方式:"
-echo "  $INSTALL_DIR/$BINARY_NAME"
+ok "安装完成！"
 echo ""
-echo "默认配置使用本地 Ollama:"
-echo "  LLM_MODEL=ollama/ornith:9b"
-echo "  LLM_OLLAMA_BASE_URL=http://localhost:11434/v1"
-echo ""
-echo "如未安装默认模型，请执行:"
-echo "  ollama pull ornith:9b"
-echo ""
-echo "如需切换远端模型，请编辑:"
-echo "  $CONFIG_DIR/.env"
-echo "配置文件内已包含 OpenAI-compatible、DeepSeek、OpenRouter、Claude 和 ChatGPT OAuth 示例。"
+if [ "${CONFIG_READY:-0}" = "1" ]; then
+    echo "模型配置已存在。查看已有 daemon:"
+    echo "  $INSTALL_DIR/$BINARY_NAME ps"
+    echo ""
+    echo "进入 TUI（会自动启动或复用 daemon）:"
+    echo "  $INSTALL_DIR/$BINARY_NAME"
+else
+    echo "下一步：先编辑模型配置"
+    echo "  $CONFIG_DIR/.env"
+    echo ""
+    echo "配置入口是 LLM_MODEL=<provider>/<model>。"
+    echo "同名 provider 块使用 LLM_<PROVIDER>_*。最新模板可参考:"
+    echo "  $CONFIG_DIR/.env.example"
+    echo ""
+    echo "配置完成后运行:"
+    echo "  $INSTALL_DIR/$BINARY_NAME"
+fi

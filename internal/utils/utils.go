@@ -335,7 +335,7 @@ func loadLLMConfig(env map[string]string, defaults LLMConfig, opts LoadConfigOpt
 		return LLMConfig{}, err
 	}
 	if refSupplier == "" || refModel == "" {
-		return LLMConfig{}, fmt.Errorf("LLM_MODEL is required and must use provider/model format")
+		return LLMConfig{}, fmt.Errorf("LLM_MODEL is required and must use provider/model format; edit ~/.walle/.env or run with --model <provider>/<model>")
 	}
 	cfg, err := loadProviderConfig(env, refSupplier, defaults)
 	if err != nil {
@@ -351,7 +351,7 @@ func parseModelRef(ref string) (supplier string, model string, err error) {
 	}
 	before, after, ok := strings.Cut(ref, "/")
 	if !ok || before == "" || after == "" {
-		return "", "", fmt.Errorf("LLM_MODEL must use provider/model format, got %q", ref)
+		return "", "", fmt.Errorf("LLM_MODEL must use provider/model format, got %q; example: mygateway/<model>", ref)
 	}
 	return before, after, nil
 }

@@ -54,6 +54,19 @@ Projection 草图见：[`diagrams/walle-context-projection.mmd`](diagrams/walle-
 - `saveToFile` 写临时文件后 `os.Rename`，避免半写入。
 - 解析旧文件时忽略未知字段，跳过缺 role 的行。
 
+## Session 选择语义
+
+Session 恢复必须由入口显式表达，不能由 daemon 或 Context 层隐式猜测：
+
+| 入口意图 | Context 行为 |
+| --- | --- |
+| 默认 `walle` | `CreateContext("")`，创建新 session。 |
+| `walle -c` / `--continue` | `GetLatestSessionID` 后 `CreateContext(latest)`；没有 latest 时创建新 session。 |
+| `walle --session <id>` | `CreateContext(id)`，打开指定 session。 |
+| `walle attach <process>` | 不调用 `CreateContext`；使用目标 Runtime 已持有的 `MessageCtx`。 |
+
+默认 `walle` 禁止自动恢复最近 session。自动恢复最近 session 只属于 `-c/--continue`。
+
 ## `context.context` actions
 
 | action | 行为 |

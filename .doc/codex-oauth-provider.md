@@ -1,6 +1,6 @@
 # Codex OAuth Provider 设计
 
-> 由 GPT-5.6 于 2026-08-04 阅读 `internal/llm`、`internal/runtime`、`internal/systemd`、`internal/tui` 及 OpenAI Codex 官方认证源码后生成。
+> 由 GPT-5.6 于 2026-08-04 阅读 `internal/llm`、`internal/runtime`、`internal/agentd`、`internal/tui` 及 OpenAI Codex 官方认证源码后生成。
 > 范围：daemon/runtime 侧 provider/model 选择、ChatGPT OAuth、Codex Responses 调用和用户级持久化；TUI 只展示事件并回传选择。
 
 ## 目标

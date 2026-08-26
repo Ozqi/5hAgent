@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Ozqi/walle/internal/agentd"
 	"github.com/Ozqi/walle/internal/commands"
-	"github.com/Ozqi/walle/internal/systemd"
 	"github.com/Ozqi/walle/internal/toolevent"
 )
 
@@ -18,42 +18,52 @@ type DaemonSession struct {
 	mu        sync.Mutex
 	ctx       context.Context
 	runtime   *Runtime
+	id        string
+	name      string
 	started   time.Time
 	busy      bool
 	provider  string
 	runCancel context.CancelFunc
 	seq       uint64
-	events    []systemd.ProcessEvent
-	subs      map[chan systemd.ProcessEvent]struct{}
+	events    []agentd.ProcessEvent
+	subs      map[chan agentd.ProcessEvent]struct{}
 }
 
 // NewDaemonSession 为一个 Runtime 创建长驻交互会话。
-func NewDaemonSession(ctx context.Context, rt *Runtime) *DaemonSession {
+func NewDaemonSession(ctx context.Context, rt *Runtime, idName ...string) *DaemonSession {
 	provider, _, _ := strings.Cut(rt.ModelRef, "/")
-	return &DaemonSession{ctx: ctx, runtime: rt, provider: provider, started: time.Now().UTC(), subs: make(map[chan systemd.ProcessEvent]struct{})}
+	id := "interactive"
+	name := "interactive"
+	if len(idName) > 0 && strings.TrimSpace(idName[0]) != "" {
+		id = idName[0]
+	}
+	if len(idName) > 1 && strings.TrimSpace(idName[1]) != "" {
+		name = idName[1]
+	}
+	return &DaemonSession{ctx: ctx, runtime: rt, id: id, name: name, provider: provider, started: time.Now().UTC(), subs: make(map[chan agentd.ProcessEvent]struct{})}
 }
 
 // Snapshot 返回 control socket 使用的只读会话状态。
-func (s *DaemonSession) Snapshot() systemd.ProcessSnapshot {
+func (s *DaemonSession) Snapshot() agentd.ProcessSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	state := systemd.ProcessIdle
+	state := agentd.ProcessIdle
 	if s.busy {
-		state = systemd.ProcessRunning
+		state = agentd.ProcessRunning
 	}
-	return systemd.ProcessSnapshot{
-		ID: "interactive", Name: "interactive", State: state, StartedAt: s.started,
+	return agentd.ProcessSnapshot{
+		ID: s.id, Name: s.name, State: state, StartedAt: s.started,
 		Workspace: s.runtime.ProjectDir, Model: s.runtime.ModelRef, SessionID: s.runtime.SessionID,
 		Turn: s.runtime.Agent.CurrentTurn(), Interactive: true,
 	}
 }
 
 // Attach 原子返回历史事件并注册实时订阅者。
-func (s *DaemonSession) Attach() ([]systemd.ProcessEvent, <-chan systemd.ProcessEvent, func()) {
+func (s *DaemonSession) Attach() ([]agentd.ProcessEvent, <-chan agentd.ProcessEvent, func()) {
 	// 在同一临界区复制历史并注册订阅者，避免 history 与实时流之间出现事件缺口。
 	s.mu.Lock()
-	history := append([]systemd.ProcessEvent(nil), s.events...)
-	ch := make(chan systemd.ProcessEvent, 256)
+	history := append([]agentd.ProcessEvent(nil), s.events...)
+	ch := make(chan agentd.ProcessEvent, 256)
 	s.subs[ch] = struct{}{}
 	s.mu.Unlock()
 	return history, ch, func() {
@@ -74,14 +84,14 @@ func (s *DaemonSession) Submit(text string) error {
 		return fmt.Errorf("input is required")
 	}
 	if strings.HasPrefix(text, "/") {
-		s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventUser, Text: text})
+		s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventUser, Text: text})
 		if text == "/stop" {
 			return s.stop()
 		}
 		if s.handlePickerSlash(text) {
 			return nil
 		}
-		s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: s.handleSlash(text)})
+		s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventSystem, Text: s.handleSlash(text)})
 		return nil
 	}
 	// 普通输入只允许单轮执行；取消函数与 busy 在启动 goroutine 前一起发布。
@@ -94,8 +104,8 @@ func (s *DaemonSession) Submit(text string) error {
 	s.busy = true
 	s.runCancel = cancel
 	s.mu.Unlock()
-	s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventUser, Text: text})
-	s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventState, Busy: true})
+	s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventUser, Text: text})
+	s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventState, Busy: true})
 	go s.run(runCtx, text)
 	return nil
 }
@@ -105,12 +115,20 @@ func (s *DaemonSession) Stop() error {
 	return s.stop()
 }
 
+// Close 释放当前 Runtime 持有的进程级资源。
+func (s *DaemonSession) Close() error {
+	if s == nil || s.runtime == nil {
+		return nil
+	}
+	return s.runtime.Close()
+}
+
 func (s *DaemonSession) stop() error {
 	s.mu.Lock()
 	cancel := s.runCancel
 	if !s.busy || cancel == nil {
 		s.mu.Unlock()
-		s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "no active run"})
+		s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventSystem, Text: "no active run"})
 		return nil
 	}
 	s.mu.Unlock()
@@ -129,7 +147,7 @@ func (s *DaemonSession) handlePickerSlash(text string) bool {
 	busy := s.busy
 	s.mu.Unlock()
 	if busy {
-		s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "agent is busy"})
+		s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventSystem, Text: "agent is busy"})
 		return true
 	}
 	if fields[0] == "/provider" {
@@ -140,11 +158,11 @@ func (s *DaemonSession) handlePickerSlash(text string) bool {
 			for _, provider := range providers {
 				options = append(options, provider.Name)
 			}
-			s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventPicker, Kind: "provider", Options: options})
+			s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventPicker, Kind: "provider", Options: options})
 			return true
 		}
 		if len(fields) != 2 {
-			s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "usage: /provider [name]"})
+			s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventSystem, Text: "usage: /provider [name]"})
 			return true
 		}
 		s.setProvider(fields[1])
@@ -158,16 +176,16 @@ func (s *DaemonSession) handlePickerSlash(text string) bool {
 			}
 			loginURL, done, err := s.runtime.StartOpenAILogin(s.ctx)
 			if err != nil {
-				s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: err.Error()})
+				s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventSystem, Text: err.Error()})
 				return true
 			}
-			s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "Open this URL to sign in with ChatGPT:\n" + loginURL})
+			s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventSystem, Text: "Open this URL to sign in with ChatGPT:\n" + loginURL})
 			go func() {
 				if err := <-done; err != nil {
-					s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "Codex login failed: " + err.Error()})
+					s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventSystem, Text: "Codex login failed: " + err.Error()})
 					return
 				}
-				s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "Codex login complete"})
+				s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventSystem, Text: "Codex login complete"})
 				go s.publishModels("openai")
 			}()
 			return true
@@ -181,7 +199,7 @@ func (s *DaemonSession) handlePickerSlash(text string) bool {
 		return true
 	}
 	if len(fields) != 2 {
-		s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "usage: /model [name]"})
+		s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventSystem, Text: "usage: /model [name]"})
 		return true
 	}
 	modelRef := fields[1]
@@ -196,13 +214,13 @@ func (s *DaemonSession) switchModel(modelRef string) {
 	// handlePickerSlash 已在启动 goroutine 前检查 busy；SwitchModel 自身只串行化多个切换请求。
 	result, err := s.runtime.SwitchModel(s.ctx, modelRef)
 	if err != nil {
-		s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: err.Error()})
+		s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventSystem, Text: err.Error()})
 		return
 	}
 	provider, _, _ := strings.Cut(result, "/")
 	s.setProvider(provider)
-	s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventModel, Text: result})
-	s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "Switched model: " + result})
+	s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventModel, Text: result})
+	s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventSystem, Text: "Switched model: " + result})
 }
 
 func (s *DaemonSession) currentProvider() string {
@@ -220,10 +238,10 @@ func (s *DaemonSession) setProvider(provider string) {
 func (s *DaemonSession) publishModels(provider string) {
 	models, err := s.runtime.ProviderModels(s.ctx, provider)
 	if err != nil {
-		s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: err.Error()})
+		s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventSystem, Text: err.Error()})
 		return
 	}
-	s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventPicker, Kind: "model", Name: provider, Options: models})
+	s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventPicker, Kind: "model", Name: provider, Options: models})
 }
 
 func (s *DaemonSession) handleSlash(text string) string {
@@ -260,38 +278,39 @@ func (s *DaemonSession) run(runCtx context.Context, text string) {
 	// 1. 当前轮临时接管 Agent 工具事件 sink，并把 token/tool 事件转成 daemon 事件。
 	prev := s.runtime.Agent.SetToolEventSink(func(event toolevent.ToolEvent) {
 		s.runtime.RecordToolEvent(event)
-		s.publish(systemd.ProcessEvent{
-			Type: systemd.ProcessEventTool, Kind: event.Kind, Name: event.Name, Args: event.Args,
+		s.publish(agentd.ProcessEvent{
+			Type: agentd.ProcessEventTool, Kind: event.Kind, Name: event.Name, Args: event.Args,
 			Text: event.Text, Result: event.Result, Error: event.Error,
 		})
 	})
 	defer s.runtime.Agent.SetToolEventSink(prev)
 	_, err := s.runtime.Agent.RunStream(runCtx, s.runtime.MessageCtx, text,
-		func(token string) { s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventAssistant, Text: token}) },
-		func(token string) { s.publish(systemd.ProcessEvent{Type: systemd.ProcessEventThinking, Text: token}) },
+		func(token string) { s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventAssistant, Text: token}) },
+		func(token string) { s.publish(agentd.ProcessEvent{Type: agentd.ProcessEventThinking, Text: token}) },
 	)
 	// 2. 在锁内发布终态并清理运行状态，避免新 Submit 观察到半完成状态。
 	s.mu.Lock()
 	if runCtx.Err() != nil {
-		s.publishLocked(systemd.ProcessEvent{Type: systemd.ProcessEventSystem, Text: "stopped current run"})
+		s.publishLocked(agentd.ProcessEvent{Type: agentd.ProcessEventSystem, Text: "stopped current run"})
 	} else if err != nil {
-		s.publishLocked(systemd.ProcessEvent{Type: systemd.ProcessEventError, Error: err.Error()})
+		message := "LLM error: " + err.Error()
+		s.publishLocked(agentd.ProcessEvent{Type: agentd.ProcessEventError, Text: message, Error: message})
 	} else {
-		s.publishLocked(systemd.ProcessEvent{Type: systemd.ProcessEventDone})
+		s.publishLocked(agentd.ProcessEvent{Type: agentd.ProcessEventDone})
 	}
-	s.publishLocked(systemd.ProcessEvent{Type: systemd.ProcessEventState})
+	s.publishLocked(agentd.ProcessEvent{Type: agentd.ProcessEventState})
 	s.busy = false
 	s.runCancel = nil
 	s.mu.Unlock()
 }
 
-func (s *DaemonSession) publish(event systemd.ProcessEvent) {
+func (s *DaemonSession) publish(event agentd.ProcessEvent) {
 	s.mu.Lock()
 	s.publishLocked(event)
 	s.mu.Unlock()
 }
 
-func (s *DaemonSession) publishLocked(event systemd.ProcessEvent) {
+func (s *DaemonSession) publishLocked(event agentd.ProcessEvent) {
 	if event.Turn == 0 && s.runtime != nil && s.runtime.Agent != nil {
 		event.Turn = s.runtime.Agent.CurrentTurn()
 	}

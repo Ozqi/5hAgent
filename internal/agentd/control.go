@@ -1,4 +1,4 @@
-package systemd
+package agentd
 
 import (
 	"context"
@@ -69,20 +69,47 @@ type InteractiveProcess interface {
 	Stop() error
 }
 
+// OpenRequest 表达一次 CLI 打开 workspace interactive Runtime 的用户意图。
+type OpenRequest struct {
+	Workspace  string `json:"workspace,omitempty"`
+	Continue   bool   `json:"continue,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+	ModelRef   string `json:"model_ref,omitempty"`
+	LLMFormat  string `json:"llm_format,omitempty"`
+	LLMModel   string `json:"llm_model,omitempty"`
+	Debug      bool   `json:"debug,omitempty"`
+	PromptBase string `json:"prompt_base,omitempty"`
+}
+
+// InteractiveRegistry 由 daemon 层实现，agentd 只通过接口打开或查找交互进程。
+type InteractiveRegistry interface {
+	OpenInteractive(context.Context, OpenRequest) (InteractiveProcess, error)
+	ListInteractive() []ProcessSnapshot
+	FindInteractive(string) InteractiveProcess
+}
+
 // controlMessage 是 Unix Socket 上的一帧 NDJSON；ID 只关联 input/stop 请求与对应结果。
 type controlMessage struct {
-	Type      string            `json:"type"`
-	ID        uint64            `json:"id,omitempty"`
-	ProcessID string            `json:"process_id,omitempty"`
-	Text      string            `json:"text,omitempty"`
-	Processes []ProcessSnapshot `json:"processes,omitempty"`
-	Process   *ProcessSnapshot  `json:"process,omitempty"`
-	Event     *ProcessEvent     `json:"event,omitempty"`
-	Error     string            `json:"error,omitempty"`
+	Type       string            `json:"type"`
+	ID         uint64            `json:"id,omitempty"`
+	ProcessID  string            `json:"process_id,omitempty"`
+	Text       string            `json:"text,omitempty"`
+	Workspace  string            `json:"workspace,omitempty"`
+	Continue   bool              `json:"continue,omitempty"`
+	SessionID  string            `json:"session_id,omitempty"`
+	ModelRef   string            `json:"model_ref,omitempty"`
+	LLMFormat  string            `json:"llm_format,omitempty"`
+	LLMModel   string            `json:"llm_model,omitempty"`
+	Debug      bool              `json:"debug,omitempty"`
+	PromptBase string            `json:"prompt_base,omitempty"`
+	Processes  []ProcessSnapshot `json:"processes,omitempty"`
+	Process    *ProcessSnapshot  `json:"process,omitempty"`
+	Event      *ProcessEvent     `json:"event,omitempty"`
+	Error      string            `json:"error,omitempty"`
 }
 
 // Processes 返回当前运行中进程的副本，不外泄进程表中的可变指针。
-func (s *AgentSystemd) Processes(workspace string) []ProcessSnapshot {
+func (s *Agentd) Processes(workspace string) []ProcessSnapshot {
 	if s == nil {
 		return nil
 	}
@@ -109,8 +136,8 @@ type ControlServer struct {
 	once     sync.Once
 }
 
-// StartControlServer 在 controlDir 创建用户级唯一 supervisor socket。
-func StartControlServer(ctx context.Context, controlDir string, sys *AgentSystemd, workspace string, interactive ...InteractiveProcess) (*ControlServer, error) {
+// StartControlServer 启动按 open 请求创建 interactive Runtime 的 supervisor socket。
+func StartControlServer(ctx context.Context, controlDir string, sys *Agentd, workspace string, registry InteractiveRegistry) (*ControlServer, error) {
 	// 1. 清理旧版 socket，并探测固定 supervisor socket 是否已有活跃 daemon。
 	if err := os.MkdirAll(controlDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create daemon control dir: %w", err)
@@ -140,49 +167,62 @@ func StartControlServer(ctx context.Context, controlDir string, sys *AgentSystem
 	}
 	_ = os.Chmod(path, 0o600)
 	server := &ControlServer{listener: listener, path: path}
-	go server.serve(ctx, sys, workspace, interactive)
+	go server.serve(ctx, sys, workspace, registry)
 	return server, nil
 }
 
-func (s *ControlServer) serve(ctx context.Context, sys *AgentSystemd, workspace string, interactive []InteractiveProcess) {
+func (s *ControlServer) serve(ctx context.Context, sys *Agentd, workspace string, registry InteractiveRegistry) {
 	go func() { <-ctx.Done(); _ = s.Close() }()
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
 			return
 		}
-		go handleControlConn(conn, sys, workspace, interactive)
+		go handleControlConn(ctx, conn, sys, workspace, registry)
 	}
 }
 
-// handleControlConn 处理 list 短连接或 attach 长连接。
+// handleControlConn 处理 list 短连接、open 创建连接或 attach 长连接。
 // attach 按 attached -> history events -> ready -> live events 的顺序建立双向通道。
-func handleControlConn(conn net.Conn, sys *AgentSystemd, workspace string, interactive []InteractiveProcess) {
+func handleControlConn(ctx context.Context, conn net.Conn, sys *Agentd, workspace string, registry InteractiveRegistry) {
 	defer conn.Close()
 	dec, enc := json.NewDecoder(conn), json.NewEncoder(conn)
 	var first controlMessage
 	if err := dec.Decode(&first); err != nil {
 		return
 	}
-	// 1. 首帧决定短连接 list 或长连接 attach，其他请求不会进入双向循环。
+	// 1. 首帧决定短连接 list、open 或长连接 attach，其他请求不会进入双向循环。
 	if first.Type == "list" {
 		processes := sys.Processes(workspace)
-		for _, proc := range interactive {
-			processes = append(processes, proc.Snapshot())
+		if registry != nil {
+			processes = append(processes, registry.ListInteractive()...)
 		}
 		_ = enc.Encode(controlMessage{Type: "list", Processes: processes})
 		return
 	}
-	if first.Type != "attach" {
-		_ = enc.Encode(controlMessage{Type: "error", Error: "expected list or attach"})
-		return
-	}
 	var target InteractiveProcess
-	for _, proc := range interactive {
-		if proc.Snapshot().ID == first.ProcessID {
-			target = proc
-			break
+	if first.Type == "open" {
+		if registry == nil {
+			_ = enc.Encode(controlMessage{Type: "error", Error: "open is not supported"})
+			return
 		}
+		proc, err := registry.OpenInteractive(ctx, OpenRequest{
+			Workspace: first.Workspace, Continue: first.Continue, SessionID: first.SessionID,
+			ModelRef: first.ModelRef, LLMFormat: first.LLMFormat, LLMModel: first.LLMModel,
+			Debug: first.Debug, PromptBase: first.PromptBase,
+		})
+		if err != nil {
+			_ = enc.Encode(controlMessage{Type: "error", Error: err.Error()})
+			return
+		}
+		target = proc
+	} else if first.Type == "attach" {
+		if registry != nil {
+			target = registry.FindInteractive(first.ProcessID)
+		}
+	} else {
+		_ = enc.Encode(controlMessage{Type: "error", Error: "expected list, open or attach"})
+		return
 	}
 	if target == nil {
 		_ = enc.Encode(controlMessage{Type: "error", Error: "interactive process not found"})
@@ -268,6 +308,11 @@ func (s *ControlServer) Close() error {
 	return err
 }
 
+// IsSupervisorUnavailable 判断错误是否来自 supervisor socket 尚未就绪。
+func IsSupervisorUnavailable(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)
+}
+
 // ListProcesses 查询用户级唯一 supervisor 中的进程。
 func ListProcesses(controlDir string) ([]ProcessSnapshot, error) {
 	path := filepath.Join(controlDir, supervisorSocket)
@@ -305,16 +350,29 @@ type ProcessClient struct {
 	events   chan ProcessEvent
 }
 
+// OpenProcess 请求 daemon 为当前 workspace 打开 interactive Runtime，并订阅其事件。
+func OpenProcess(controlDir string, req OpenRequest) (*ProcessClient, error) {
+	return attachWithMessage(controlDir, "open", controlMessage{
+		Type: "open", Workspace: req.Workspace, Continue: req.Continue, SessionID: req.SessionID,
+		ModelRef: req.ModelRef, LLMFormat: req.LLMFormat, LLMModel: req.LLMModel,
+		Debug: req.Debug, PromptBase: req.PromptBase,
+	}, 30*time.Second)
+}
+
 // AttachProcess 连接 target 对应的 daemon 并订阅交互 Agent 事件。
 func AttachProcess(controlDir string, target string) (*ProcessClient, error) {
+	return attachWithMessage(controlDir, target, controlMessage{Type: "attach", ProcessID: target}, 2*time.Second)
+}
+
+func attachWithMessage(controlDir string, label string, first controlMessage, deadline time.Duration) (*ProcessClient, error) {
 	// 1. 建立连接并完成 attached 握手；握手阶段设置总期限，避免无响应 daemon 卡住。
 	conn, err := net.DialTimeout("unix", filepath.Join(controlDir, supervisorSocket), time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("connect %s: %w", target, err)
+		return nil, fmt.Errorf("connect %s: %w", label, err)
 	}
 	client := &ProcessClient{conn: conn, enc: json.NewEncoder(conn), events: make(chan ProcessEvent, 256), pending: make(map[uint64]chan error), done: make(chan struct{})}
-	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
-	if err := client.enc.Encode(controlMessage{Type: "attach", ProcessID: target}); err != nil {
+	_ = conn.SetDeadline(time.Now().Add(deadline))
+	if err := client.enc.Encode(first); err != nil {
 		conn.Close()
 		return nil, err
 	}
@@ -326,10 +384,9 @@ func AttachProcess(controlDir string, target string) (*ProcessClient, error) {
 	}
 	if response.Type != "attached" || response.Process == nil {
 		conn.Close()
-		return nil, fmt.Errorf("attach %s: %s", target, response.Error)
+		return nil, fmt.Errorf("%s: %s", label, response.Error)
 	}
 	client.snapshot = *response.Process
-	client.snapshot.ID = target
 	// 2. 同步收齐 ready 之前的历史事件，随后清除 deadline 并启动实时读取协程。
 	var replay []ProcessEvent
 	for {
